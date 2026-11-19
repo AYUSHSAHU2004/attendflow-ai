@@ -8,7 +8,7 @@
       "category": "missed_punch",
       "severity": "high",
       "auto_resolve": false,
-      "params": {}
+      "params": { "open_shift_grace_hours": 4 }
     },
     "P2": {
       "title": "Duplicate punches are merged",
@@ -36,7 +36,11 @@
       "category": "overtime",
       "severity": "high",
       "auto_resolve": false,
-      "params": { "weekly_overtime_after_hours": 40 }
+      "params": {
+        "weekly_overtime_after_hours": 40,
+        "planned_break_after_hours": 6,
+        "planned_break_minutes": 60
+      }
     },
     "P6": {
       "title": "Minimum rest between shifts",
@@ -106,7 +110,12 @@
       "category": "attribution",
       "severity": "info",
       "auto_resolve": false,
-      "params": { "attribute_to": "shift_start_date" }
+      "params": {
+        "attribute_to": "shift_start_date",
+        "match_before_start_hours": 4,
+        "match_after_end_hours": 6,
+        "max_shift_hours": 16
+      }
     },
     "P16": {
       "title": "Maximum consecutive working days",

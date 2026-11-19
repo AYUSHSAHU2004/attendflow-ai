@@ -14,6 +14,7 @@ dependencies = [
 attendflow-generate-data = "attendflow.scripts.generate_data:main"
 attendflow-validate = "attendflow.scripts.validate_data:main"
 attendflow-llm-test = "attendflow.scripts.llm_smoke_test:main"
+attendflow-detect = "attendflow.scripts.detect:main"
 
 [dependency-groups]
 dev = [

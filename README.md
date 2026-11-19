@@ -30,14 +30,14 @@ with the LLM switched off.
 ## Repo layout
 
 ```
-backend/attendflow/   Python package (config, data loading, policy, LLM client, scripts)
+backend/attendflow/   Python package (config, data loading, policy, rule engine, LLM client, scripts)
 frontend/             React + TypeScript app (from a later phase)
 data/                 Demo CSVs, policy.json (limits), policy.md (plain-language policy)
 docs/                 PROGRESS, PLANTED_CASES, LLM_LICENCE
 tests/                pytest suite
 ```
 
-## Quickstart (Phase 0)
+## Quickstart
 
 Needs Python 3.12 and [uv](https://docs.astral.sh/uv/) (`pip install uv`).
 
@@ -51,6 +51,7 @@ cp .env.example .env   # then put your Groq key in LLM_API_KEY
 
 ```bash
 uv run attendflow-validate        # checks all CSVs + policy files
+uv run attendflow-detect         # rule engine: prints every timecard exception (P1-P7)
 uv run attendflow-llm-test        # sends one prompt to the configured model
 uv run pytest                     # runs the tests
 uv run attendflow-generate-data   # rebuilds data/*.csv (deterministic)

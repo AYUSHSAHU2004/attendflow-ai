@@ -17,16 +17,22 @@ POLICY_IDS = [f"P{i}" for i in range(1, 17)]
 # Params each policy must define. Loading fails if one is missing, so the engine can
 # rely on them without defensive checks.
 REQUIRED_PARAMS: dict[str, set[str]] = {
+    "P1": {"open_shift_grace_hours"},
     "P2": {"duplicate_window_minutes"},
     "P3": {"max_hours_per_day"},
     "P4": {"break_required_after_hours", "min_break_minutes"},
-    "P5": {"weekly_overtime_after_hours"},
+    "P5": {"weekly_overtime_after_hours", "planned_break_after_hours", "planned_break_minutes"},
     "P6": {"min_rest_hours"},
     "P7": {"grace_minutes"},
     "P12": {"max_sick_days_without_certificate"},
     "P13": {"half_day_hours"},
     "P14": {"compensation_options"},
-    "P15": {"attribute_to"},
+    "P15": {
+        "attribute_to",
+        "match_before_start_hours",
+        "match_after_end_hours",
+        "max_shift_hours",
+    },
     "P16": {"max_consecutive_days"},
 }
 
@@ -73,6 +79,13 @@ class PolicyConfig(BaseModel):
 
     def param(self, policy_id: str, name: str) -> ParamValue:
         return self.policies[policy_id].params[name]
+
+    def number(self, policy_id: str, name: str) -> float:
+        """A numeric limit as a float. Fails loudly if the param is not a number."""
+        value = self.param(policy_id, name)
+        if isinstance(value, bool) or not isinstance(value, int | float):
+            raise TypeError(f"{policy_id}.{name} is not a number: {value!r}")
+        return float(value)
 
 
 def load_policy(path: Path) -> PolicyConfig:

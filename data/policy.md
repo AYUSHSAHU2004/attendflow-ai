@@ -16,7 +16,9 @@ says the case is auto-resolved. Every auto-resolution is written to the audit lo
 underpay or overpay the worker.
 
 **How it is checked:** A shift with an "in" punch but no matching "out" punch (or the
-reverse) is a missed punch. A shift is still open only while it is in progress.
+reverse) is a missed punch. A shift is still open only while it is in progress: a missing
+clock-out is flagged once 4 hours have passed after the scheduled shift end (or, for an
+unscheduled shift, once the maximum shift length in P15 has passed since the clock-in).
 
 **Allowed fixes:** Add the missing punch at the time the worker confirms, or at the
 scheduled shift end if the worker confirms they left on time. The supervisor must approve.
@@ -69,7 +71,11 @@ supervisor approval.
 adjust the rota before it happens.
 
 **How it is checked:** Hours already worked this week plus hours still scheduled this week.
-If the total is above 40 hours, the system raises an overtime risk before the week ends.
+If the total is above 40 hours, the system raises an overtime risk before the week ends
+(or a breach if the hours already worked are above 40). Hours still scheduled are the
+shift length minus a planned 60-minute unpaid lunch for shifts longer than 6 hours, so a
+09:00-18:00 shift counts as 8 hours. A past shift with a missing punch counts at its
+scheduled hours until it is corrected.
 
 **Allowed fixes:** Approve the overtime, or shorten or reassign upcoming shifts. Worked
 hours in the past are never changed by this policy.
@@ -90,11 +96,13 @@ shift if it is still in the future.
 
 **Rule:** Clocking in up to 10 minutes after the scheduled start is within grace and is not
 counted as late. Clocking in more than 10 minutes after the start is a late arrival.
+Clocking out more than 10 minutes before the scheduled end is an early leave.
 
 **Why:** Small delays (a queue at the gate) should not create paperwork. Real lateness
 should be visible.
 
-**How it is checked:** First clock-in of the shift compared with the scheduled start.
+**How it is checked:** First clock-in of the shift compared with the scheduled start, and
+last clock-out compared with the scheduled end.
 
 **Allowed fixes:** Arrivals within grace are auto-resolved and audit-logged. Late arrivals
 beyond grace go to the supervisor, who may accept a reason from the worker. The clock-in
@@ -196,7 +204,10 @@ be approved first.
 
 **How it is checked:** This is an attribution rule, not an exception. The engine uses it
 when grouping punches into shifts. A correct night shift must never be flagged as a missed
-punch, an absence or holiday work just because it crosses midnight.
+punch, an absence or holiday work just because it crosses midnight. A punch belongs to a
+scheduled shift if it falls between 4 hours before the scheduled start and 6 hours after the
+scheduled end. Punches outside any scheduled shift are grouped from clock-in to clock-out,
+and no shift is longer than 16 hours.
 
 **Allowed fixes:** None needed. It shapes how other policies are checked.
 

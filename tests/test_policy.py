@@ -19,6 +19,13 @@ EXPECTED_LIMITS = {
     ("P12", "max_sick_days_without_certificate"): 2,
     ("P13", "half_day_hours"): 4,
     ("P16", "max_consecutive_days"): 6,
+    # Added in Phase 1 for the rule engine.
+    ("P1", "open_shift_grace_hours"): 4,
+    ("P5", "planned_break_after_hours"): 6,
+    ("P5", "planned_break_minutes"): 60,
+    ("P15", "match_before_start_hours"): 4,
+    ("P15", "match_after_end_hours"): 6,
+    ("P15", "max_shift_hours"): 16,
 }
 
 
