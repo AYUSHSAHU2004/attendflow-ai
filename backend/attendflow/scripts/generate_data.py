@@ -71,6 +71,25 @@ USED_OVERRIDES = {
 
 PUNCH_ORDER = {"in": 0, "break_start": 1, "break_end": 2, "out": 3}
 
+# Real terminals record seconds. Each worker gets one fixed seconds offset for ALL their
+# punches, so durations (hours, breaks, lateness) stay exactly the same, but two workers
+# never share a second on the same device (that would be a P17 "same second" conflict).
+# Offsets are negative (a few seconds earlier) so no one becomes late by seconds, and
+# under 30 s so times shown rounded to the minute still read as planted (08:57, not 08:56).
+# Amit and Karan keep :00 (they use different gates), so their planted times stay exact.
+SECONDS_OFFSET = {
+    "E001": 0,
+    "E002": -13,
+    "E003": -17,
+    "E004": -23,
+    "E005": -29,
+    "E006": 0,
+    "E007": -7,
+    "E008": -19,
+    "E009": -11,
+    "E010": -3,
+}
+
 
 def at(d: date, hhmm: str, next_day: bool = False) -> datetime:
     return datetime.combine(d + timedelta(days=1 if next_day else 0), time.fromisoformat(hhmm))
@@ -236,8 +255,18 @@ def generate(out_dir: Path) -> dict[str, int]:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     punches = sorted(build_punches().rows, key=lambda r: (r[0], r[1], PUNCH_ORDER[r[2]]))
+    # IDs follow the whole-minute order; the seconds offset is applied afterwards, so the
+    # punch IDs (cited in docs and tests) do not depend on it.
     punch_rows = [
-        (f"P{i:04d}", emp, ts, kind, src, dev, loc)
+        (
+            f"P{i:04d}",
+            emp,
+            ts + timedelta(seconds=SECONDS_OFFSET[emp]),
+            kind,
+            src,
+            dev,
+            loc,
+        )
         for i, (ts, emp, kind, src, dev, loc) in enumerate(punches, start=1)
     ]
 

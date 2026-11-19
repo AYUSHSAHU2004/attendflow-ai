@@ -103,12 +103,12 @@ and CI, 10-minute demo video, 5 slides.
     holiday duty).
   - Farah gets P13 (not P9). Dev gets P11 and P12 (not P10). Ramesh's night shifts must
     trigger nothing (P15 attribution).
-- **P16 (max 6 consecutive days) has no planted case**, and neither does P6. Test them later
-  with small synthetic fixtures. Add a P16 demo case only if the user asks.
+- **P6, P16 and P17 have no planted case**; they are tested with synthetic fixtures. Add a
+  demo case (e.g. for P17) only if the user asks. The full demo run gives 17 exceptions.
 - Full answer key: [docs/PLANTED_CASES.md](docs/PLANTED_CASES.md).
 
 **Rule engine (Phase 1)**
-- Phase 1 covers P1-P7 + P15 only. P8-P14 and P16 are Phase 2.
+- Phase 1 covered P1-P7 + P15. Phase 1 demo tests run with `policies=P1-P7`.
 - Engine params added to policy.json (and mirrored in policy.md): P1 `open_shift_grace_hours` 4;
   P5 `planned_break_after_hours` 6 + `planned_break_minutes` 60 (09:00-18:00 = 8 h planned,
   09:00-15:00 = 6 h); P15 `match_before_start_hours` 4, `match_after_end_hours` 6,
@@ -119,7 +119,34 @@ and CI, 10-minute demo video, 5 slides.
 - P7 covers late arrival and early leave. Late within grace -> auto-resolved record; early
   leave within grace -> nothing (keeps Amit's 2-5 min early exits clean).
 - fix_options are filled for P1 (clock-in/out = scheduled start/end) and P5 (approve overtime,
-  or cut the exact hours from the latest upcoming shifts). Other policies: later phases.
+  or cut the exact hours from the latest upcoming shifts). P3, P4 and P7: still empty.
+
+**Rule engine (Phase 2)**
+- P8-P14, P16 and new **P17 "Possible punch conflict, needs review"** (never "fraud"; a test
+  checks this). P17 has 3 checks: 2+ workers on one terminal at the same second (device
+  punches only); one worker at 2 *sites* < 60 min apart (`sites` map location -> site in
+  policy.json); app punch from a location not in `approved_app_locations`.
+- Generator: each worker has a fixed seconds offset (0 to -29 s) on all punches, so no
+  same-second clashes, unchanged durations, unchanged punch IDs. Displayed times are rounded
+  to the minute.
+- Check order: leave is applied to the schedule when RuleContext is built (before any
+  check). Approved and pending full days count as 0 h, half days as -4 h. Used by P5, P6 and
+  P16 forecasts. Shift grouping, P8 and P1-P4/P7 still use the full schedule.
+- P9 and P13 cover approved **and pending** leave; rejected leave is ignored. P10 skips any
+  leave of any status and fires after scheduled end + P1 grace. P7 skips leave days.
+- P11: applied = pending days (half = 0.5) vs total - used (approved is already in used).
+  Paid days go to the earliest dates. Fixes: split paid/unpaid, move to another type with
+  room (casual first), reject extra days.
+- P12: sort first; holidays and unscheduled days don't break a run; a scheduled working day
+  or a worked day does. Any certificate in the run is enough.
+- P13: 4 h +/- `tolerance_hours` 1. Over 5 h = worked full day; under 3 h (incl. none,
+  after the day) = working half missing.
+- P14: national and company holidays only. Severity **low** when scheduled (holiday duty),
+  **medium** when unscheduled (with P8). Comp-off 0.5 day if <= 4 h, else 1. `depends_on`
+  lists P1/P8 to fix first.
+- P16: breach from worked days, risk from the leave-adjusted upcoming schedule.
+- Exception `evidence` can hold punches, leave, balance, schedule and holiday rows. Rows dump
+  to JSON in their CSV formats (so JSON loads back).
 
 ## Repo map
 
@@ -128,10 +155,14 @@ backend/attendflow/
   config.py              Settings from env/.env (as-of, data dir, LLM)
   data/schemas.py        Pydantic row model per CSV (strict formats, no tz, no extra cols)
   data/loader.py         load_dataset(): row + cross-file validation, all errors at once
-  policy/models.py       load_policy() (P1-P16, required params), load_policy_text() for policy.md
+  policy/models.py       load_policy() (P1-P17, required params), load_policy_text() for policy.md
   engine/models.py       Shift, TimecardException, FixOption, EngineResult (Pydantic)
   engine/shifts.py       P2 de-dup, then punches -> shifts (P15 windows), scheduled_hours()
-  engine/rules.py        one check per policy (P1-P7), CHECKS registry
+  engine/rules.py        RuleContext (leave-adjusted schedule), helpers, checks P1-P7
+  engine/rules_schedule.py  P8, P10, P14, P16
+  engine/rules_leave.py  P9, P11, P12, P13
+  engine/rules_review.py P17 possible punch conflict
+  engine/checks.py       ordered CHECKS registry + the check-order note
   engine/engine.py       run_engine(dataset, policy, as_of) -> EngineResult
   llm/client.py          OpenAI-compatible chat_once()/list_models(); failures -> LLMError
   scripts/               generate_data, validate_data, llm_smoke_test, detect (CLI entry points)
@@ -147,7 +178,7 @@ frontend/                React app (from a later phase)
 ```bash
 python -m uv sync                          # install
 python -m uv run attendflow-validate       # validate CSVs + policy files
-python -m uv run attendflow-detect         # rule engine table (--fixes, --json, --employee E002)
+python -m uv run attendflow-detect         # rule engine table (--fixes, --json, --employee E002, --policy P11,P12)
 python -m uv run attendflow-llm-test       # one prompt to the model (add --list-models)
 python -m uv run attendflow-generate-data  # rebuild data/*.csv
 python -m uv run pytest                    # tests

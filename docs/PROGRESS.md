@@ -117,3 +117,63 @@ Neha P4 (Mon), Sana P2 (Mon, auto-resolved), Karan P7 (Mon). No Ramesh, Arjun or
   consecutive days), with a synthetic fixture for P16.
 - Make the P5 forecast leave-aware (Dev's scheduled Thursday is a sick day but still counts
   as 8 forecast hours today).
+
+## Phase 2: Advanced rules P8-P14, P16 and P17 punch review (2026-11-19) ✅
+
+**Built**
+- New rule modules, extending the Phase 1 engine (no rewrite):
+  - `rules_schedule.py`: P8 unscheduled work, P10 unexplained absence, P14 holiday work,
+    P16 consecutive days (breach from punches, risk from the upcoming schedule).
+  - `rules_leave.py`: P9 punches on a full-day leave, P11 leave over balance (balance is
+    computed as total - used), P12 sick run without a certificate (sorted first; holidays
+    and days off don't break a run), P13 half-day leave vs hours worked.
+  - `rules_review.py`: new **P17 "Possible punch conflict, needs review"**: same terminal at
+    the same second, two sites less than 60 min apart, and an app punch from an unapproved
+    location. It never says "fraud" (a test checks this).
+  - `checks.py`: ordered registry of all checks, with a note on the check order.
+- **Check order:** leave is applied to the schedule when the rule context is built, before
+  any check runs. P5, P6 and P16 forecasts never count a leave day. This fixes Dev's sick
+  Thursday (now 0 h).
+- Every new exception has severity, details, evidence and fix_options. Evidence can now
+  include leave, balance, schedule and holiday rows, not only punches.
+- CLI: `--policy P11,P12` filter and a "By policy" count line.
+- 63 new tests (154 total): pass and fail cases for every new check, boundaries, the
+  check-order test, the full answer key on the demo data, and the CLI Done-when output.
+
+**Decisions** (all defaults accepted, plus one addition)
+- P14 severity is **low** for planned holiday duty (Amit, Meena) and **medium** for
+  unscheduled holiday work (Sana, together with P8). This is a policy.json param.
+- Seconds on punches: the generator gives each worker a fixed offset (0 to -29 s) on all
+  of their punches. Without it, the round-minute demo data had about 10 false "same second"
+  clashes. Durations, punch IDs and the Phase 1 answer key are unchanged.
+- P17 config in policy.json: `sites` (location -> site), `approved_app_locations`,
+  `location_switch_minutes` 60, `same_second_min_employees` 2. App punches are not compared
+  for "same second". No planted demo case (synthetic tests only).
+- P9 and P13 also flag **pending** leave. P10 waits for scheduled end + 4 h grace. P7 skips
+  leave days. P13 uses 4 h ± 1 h (`tolerance_hours`). P14 counts national and company
+  holidays; comp-off is 0.5 day if 4 h or less. P11 counts pending days; the balance pays
+  the earliest dates first.
+- Phase 1 test edits (assertions unchanged): `test_engine_demo.py` now runs P1-P7 only,
+  because the default run includes Phase 2 policies. One validation test points at Meena's
+  new first timestamp (`06:59:47`).
+- CSV row models now dump JSON in their CSV formats (`09:00`, `yes`), so the engine JSON
+  loads back. A round-trip test found this.
+
+**How to run and verify** (from `C:\dev\attendflow-ai`)
+```bash
+python -m uv run attendflow-generate-data           # data unchanged after this (a test checks it)
+python -m uv run attendflow-validate                # expect 17 policies, "OK"
+python -m uv run attendflow-detect --fixes          # expect 17 exceptions (16 open, 1 auto-resolved)
+python -m uv run attendflow-detect --policy P1,P2,P3,P4,P5,P6,P7   # Phase 1 view: the same 8 as before
+python -m uv run pytest                             # expect 154 passed
+```
+Done-when check: Dev shows "Sick leave applied 3, balance 1" (P11) and "3 sick days in a
+row ... no medical certificate" (P12). Karan shows P9 on Wed. Sana shows P8 + P14 on Tue.
+Farah shows P13 (8.03 h on a half-day leave). Amit and Meena show P14 (low). Ramesh, Arjun
+and Pooja show nothing.
+
+**Next: Phase 3**
+- The LLM layer: tools the agent can call over the engine results (read-only), plain-language
+  explanations and worker messages grounded in `details` and `evidence`, Pydantic-validated
+  output with retry and a template fallback.
+- Still open: fix_options for P3, P4 and P7; an optional P17 demo case.

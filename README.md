@@ -51,7 +51,8 @@ cp .env.example .env   # then put your Groq key in LLM_API_KEY
 
 ```bash
 uv run attendflow-validate        # checks all CSVs + policy files
-uv run attendflow-detect         # rule engine: prints every timecard exception (P1-P7)
+uv run attendflow-detect         # rule engine: every timecard exception (P1-P17)
+                                  #   --fixes, --json, --employee E007, --policy P11,P12
 uv run attendflow-llm-test        # sends one prompt to the configured model
 uv run pytest                     # runs the tests
 uv run attendflow-generate-data   # rebuilds data/*.csv (deterministic)

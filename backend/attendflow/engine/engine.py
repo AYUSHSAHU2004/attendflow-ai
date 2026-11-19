@@ -5,8 +5,9 @@ from __future__ import annotations
 from datetime import datetime
 
 from attendflow.data.loader import Dataset
+from attendflow.engine.checks import CHECKS
 from attendflow.engine.models import EngineResult
-from attendflow.engine.rules import CHECKS, RuleContext
+from attendflow.engine.rules import RuleContext
 from attendflow.engine.shifts import process_punches
 from attendflow.policy.models import PolicyConfig
 
@@ -30,12 +31,17 @@ def run_engine(
         raise ValueError("as_of must be a plain local time (no timezone)")
     processed = process_punches(dataset, policy, as_of)
     workers = {e.employee_id for e in dataset.employees if e.role == "worker"}
+    # Building the context also applies leave to the schedule (stage 1, see checks.py).
     ctx = RuleContext(
         policy=policy,
         as_of=as_of,
         shifts=processed.shifts,
         schedule=[r for r in dataset.schedule if r.employee_id in workers],
         duplicate_runs=processed.duplicate_runs,
+        leave_records=[r for r in dataset.leave_records if r.employee_id in workers],
+        leave_balances=[b for b in dataset.leave_balances if b.employee_id in workers],
+        holidays=list(dataset.holidays),
+        punches=[p for p in dataset.punches if p.employee_id in workers and p.timestamp <= as_of],
     )
     selected = policies or list(CHECKS)
     unknown = [p for p in selected if p not in CHECKS]

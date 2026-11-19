@@ -11,7 +11,14 @@ import re
 from datetime import date, datetime, time
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    PlainSerializer,
+    model_validator,
+)
 
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _TIME_RE = re.compile(r"^\d{2}:\d{2}$")
@@ -58,10 +65,24 @@ def _empty_to_none(v: Any) -> Any:
     return None if v == "" else v
 
 
+# JSON output uses the same formats the CSVs use, so a dumped row loads back unchanged
+# (the engine puts these rows in exception evidence, which the API will send as JSON).
 LocalDate = Annotated[date, BeforeValidator(_parse_date)]
-LocalTime = Annotated[time, BeforeValidator(_parse_time)]
-LocalTimestamp = Annotated[datetime, BeforeValidator(_parse_timestamp)]
-YesNo = Annotated[bool, BeforeValidator(_parse_yes_no)]
+LocalTime = Annotated[
+    time,
+    BeforeValidator(_parse_time),
+    PlainSerializer(lambda t: t.strftime("%H:%M"), return_type=str, when_used="json"),
+]
+LocalTimestamp = Annotated[
+    datetime,
+    BeforeValidator(_parse_timestamp),
+    PlainSerializer(lambda ts: ts.isoformat(timespec="seconds"), return_type=str, when_used="json"),
+]
+YesNo = Annotated[
+    bool,
+    BeforeValidator(_parse_yes_no),
+    PlainSerializer(lambda b: "yes" if b else "no", return_type=str, when_used="json"),
+]
 EmployeeId = Annotated[str, Field(pattern=r"^E\d{3}$")]
 LeaveType = Literal["sick", "casual", "earned"]
 

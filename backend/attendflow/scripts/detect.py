@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections import Counter
 from pathlib import Path
 
 from attendflow.config import get_settings, parse_local_timestamp
@@ -56,6 +57,9 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--data-dir", type=Path, default=None)
     parser.add_argument("--as-of", default=None, help="local time like 2026-04-16T08:00")
     parser.add_argument("--employee", default=None, help="only this employee id, e.g. E002")
+    parser.add_argument(
+        "--policy", default=None, help="only these policies, comma separated, e.g. P1,P5,P14"
+    )
     parser.add_argument("--fixes", action="store_true", help="also print the fix options")
     parser.add_argument("--json", action="store_true", help="print the full result as JSON")
     args = parser.parse_args(argv)
@@ -69,7 +73,12 @@ def main(argv: list[str] | None = None) -> None:
         print(exc, file=sys.stderr)
         sys.exit(1)
     policy = load_policy(data_dir / "policy.json")
-    result = run_engine(dataset, policy, as_of)
+    selected = [p.strip().upper() for p in args.policy.split(",")] if args.policy else None
+    try:
+        result = run_engine(dataset, policy, as_of, selected)
+    except ValueError as exc:
+        print(exc, file=sys.stderr)
+        sys.exit(2)
     if args.employee:
         result = result.model_copy(
             update={"exceptions": [e for e in result.exceptions if e.employee_id == args.employee]}
@@ -91,6 +100,12 @@ def main(argv: list[str] | None = None) -> None:
         f"{len(result.shifts)} shifts built, {len(result.voided_punch_ids)} duplicate punch(es) "
         f"voided, {result.ignored_future_punches} punch(es) after as-of ignored."
     )
+    counts = Counter(e.policy_id for e in result.exceptions)
+    if counts:
+        by_policy = ", ".join(
+            f"{pid} {n}" for pid, n in sorted(counts.items(), key=lambda kv: int(kv[0][1:]))
+        )
+        print(f"By policy: {by_policy}")
 
 
 if __name__ == "__main__":

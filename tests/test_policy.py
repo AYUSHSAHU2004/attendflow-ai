@@ -67,6 +67,21 @@ def test_non_positive_limit_fails(raw_policy):
         PolicyConfig.model_validate(broken)
 
 
+def test_p14_duty_severity_must_be_a_real_severity(raw_policy):
+    broken = json.loads(json.dumps(raw_policy))
+    broken["policies"]["P14"]["params"]["scheduled_duty_severity"] = "critical"
+    with pytest.raises(ValidationError, match="scheduled_duty_severity"):
+        PolicyConfig.model_validate(broken)
+
+
+def test_p17_review_params_are_present():
+    policy = load_policy(DATA_DIR / "policy.json")
+    assert policy.policies["P17"].title == "Possible punch conflict, needs review"
+    assert policy.number("P17", "location_switch_minutes") == 60
+    assert "Warehouse 1 - Mobile app (geofenced)" in policy.strings("P17", "approved_app_locations")
+    assert set(policy.mapping("P17", "sites").values()) == {"Warehouse 1"}
+
+
 def test_policy_md_has_a_section_per_id():
     sections = load_policy_text(DATA_DIR / "policy.md")
     assert sorted(sections, key=lambda p: int(p[1:])) == POLICY_IDS

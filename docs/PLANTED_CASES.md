@@ -42,7 +42,33 @@ check that the data really contains each case.
 | Everyone, Thu-Fri | Future (after as-of). Must not be flagged as absences. |
 | Ravi, Sunita, Priya | No schedule or punches. Not workers, so never flagged. |
 
+## Full engine output (Phase 2)
+
+`attendflow-detect` on the demo data gives exactly **17 exceptions** (16 open, 1
+auto-resolved): the 11 cases above plus their documented side effects.
+
+| Employee | Policies |
+|---|---|
+| Amit (E001) | P1 Tue, P14 Tue (low: planned holiday duty, fix P1 first) |
+| Meena (E002) | P3 Mon/Tue/Wed, P5 week (risk), P14 Tue (low) |
+| Neha (E004) | P4 Mon, P10 Wed |
+| Sana (E005) | P2 Mon (auto-resolved), P8 Tue, P14 Tue (medium: unscheduled, approve P8 first) |
+| Karan (E006) | P7 Mon, P9 Wed |
+| Dev (E007) | P11 ("applied 3, balance 1"), P12 (3 days, no certificate), both dated Mon |
+| Farah (E008) | P13 Wed (8.03 h on a half-day leave) |
+
+Dev's P5 forecast leaves out his sick Thursday (0 h), so his week counts only Fri (8 h).
+
+## Punch timestamps carry seconds
+
+Each worker has one fixed seconds offset (0 to -29 s) on all of their punches, set in the
+generator. Durations and lateness stay exactly as planted, punch IDs do not change, and
+times shown rounded to the minute still read as planted (Sana 08:57 / 08:59). No two workers
+punch on the same terminal at the same second, so P17 stays quiet on the demo data. Amit
+and Karan keep :00 (different gates).
+
 ## Policies not planted in this week
 
-**P6** (rest between shifts) and **P16** (consecutive days) have no planted breach. The
-engine tests in later phases will use small synthetic fixtures for them.
+**P6** (rest between shifts), **P16** (consecutive days) and **P17** (possible punch
+conflict) have no planted case. They are tested with small synthetic fixtures in
+`tests/test_engine_rules.py` and `tests/test_engine_rules_phase2.py`.

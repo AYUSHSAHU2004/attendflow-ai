@@ -6,7 +6,14 @@ import json
 from datetime import datetime
 
 from attendflow.data import Dataset
-from attendflow.data.schemas import Employee, Punch, ScheduleRow
+from attendflow.data.schemas import (
+    Employee,
+    Holiday,
+    LeaveBalance,
+    LeaveRecord,
+    Punch,
+    ScheduleRow,
+)
 from attendflow.engine import EngineResult, TimecardException, run_engine
 from attendflow.policy import PolicyConfig, load_policy
 from tests.conftest import DATA_DIR
@@ -27,10 +34,18 @@ def policy_with(changes: dict[tuple[str, str], object]) -> PolicyConfig:
 
 
 def make_dataset(
-    punches: list[tuple[str, str]] | list[tuple[str, str, str]],
+    punches: list[tuple],
     schedule: list[tuple[str, str, str]] | list[tuple[str, str, str, str]] = (),
+    *,
+    leave: list[tuple] = (),
+    balances: list[tuple] = (),
+    holidays: list[tuple[str, str, str]] = (),
 ) -> Dataset:
-    """punches: (timestamp, type[, employee]); schedule: (date, start, end[, employee]).
+    """punches: (timestamp, type[, employee[, {source/device_id/location overrides}]]);
+    schedule: (date, start, end[, employee]);
+    leave: (date, leave_type, duration, status[, certificate "yes"/"no"[, employee]]);
+    balances: (leave_type, total_per_year, used[, employee]);
+    holidays: (date, name, type).
     The employee defaults to E001."""
     employees = [
         Employee(employee_id="E101", name="Sup", role="supervisor", team="T"),
@@ -47,6 +62,7 @@ def make_dataset(
                 "source": "device",
                 "device_id": "GATE-01",
                 "location": "Test",
+                **(p[3] if len(p) > 3 else {}),
             }
         )
         for i, p in enumerate(punches, start=1)
@@ -62,13 +78,38 @@ def make_dataset(
         )
         for s in schedule
     ]
+    leave_rows = [
+        LeaveRecord.model_validate(
+            {
+                "employee_id": r[5] if len(r) > 5 else "E001",
+                "date": r[0],
+                "leave_type": r[1],
+                "duration": r[2],
+                "status": r[3],
+                "certificate_uploaded": r[4] if len(r) > 4 else "no",
+            }
+        )
+        for r in leave
+    ]
+    balance_rows = [
+        LeaveBalance(
+            employee_id=b[3] if len(b) > 3 else "E001",
+            leave_type=b[0],
+            total_per_year=b[1],
+            used=b[2],
+        )
+        for b in balances
+    ]
+    holiday_rows = [
+        Holiday.model_validate({"date": d, "name": n, "type": t}) for d, n, t in holidays
+    ]
     return Dataset(
         employees=employees,
         punches=punch_rows,
         schedule=schedule_rows,
-        leave_records=[],
-        leave_balances=[],
-        holidays=[],
+        leave_records=leave_rows,
+        leave_balances=balance_rows,
+        holidays=holiday_rows,
     )
 
 
@@ -87,8 +128,10 @@ def run(
     as_of: datetime = LATE_AS_OF,
     policy: PolicyConfig = POLICY,
     policies: list[str] | None = None,
+    **extra,
 ) -> EngineResult:
-    return run_engine(make_dataset(punches, schedule), policy, as_of, policies)
+    """extra: leave=, balances=, holidays= (see make_dataset)."""
+    return run_engine(make_dataset(punches, schedule, **extra), policy, as_of, policies)
 
 
 def only(result: EngineResult, policy_id: str) -> list[TimecardException]:

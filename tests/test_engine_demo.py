@@ -1,4 +1,8 @@
-"""Rule engine on the real demo data: output must equal docs/PLANTED_CASES.md for P1-P7."""
+"""Rule engine on the real demo data: output must equal docs/PLANTED_CASES.md for P1-P7.
+
+Phase 2 added more policies to the default run, so these Phase 1 tests now run P1-P7 only
+(same assertions as before). The full answer key is in test_engine_demo_phase2.py.
+"""
 
 from datetime import date, datetime
 
@@ -13,6 +17,7 @@ from tests.conftest import DATA_DIR, replace_in_file
 
 AS_OF = parse_local_timestamp(DEFAULT_AS_OF)
 MON, TUE, WED = date(2026, 4, 13), date(2026, 4, 14), date(2026, 4, 15)
+P1_TO_P7 = ["P1", "P2", "P3", "P4", "P5", "P6", "P7"]
 
 # PLANTED_CASES.md filtered to P1-P7. P8-P14 and P16 come in Phase 2.
 EXPECTED = {
@@ -29,7 +34,7 @@ EXPECTED = {
 
 @pytest.fixture(scope="module")
 def result(dataset):
-    return run_engine(dataset, load_policy(DATA_DIR / "policy.json"), AS_OF)
+    return run_engine(dataset, load_policy(DATA_DIR / "policy.json"), AS_OF, P1_TO_P7)
 
 
 def keys(result):
@@ -136,7 +141,9 @@ def test_changing_a_limit_in_policy_json_changes_the_result(data_copy):
 
 
 def test_cli_prints_table_with_meena_numbers(capsys):
-    detect.main(["--data-dir", str(DATA_DIR), "--as-of", DEFAULT_AS_OF])
+    detect.main(
+        ["--data-dir", str(DATA_DIR), "--as-of", DEFAULT_AS_OF, "--policy", ",".join(P1_TO_P7)]
+    )
     out = capsys.readouterr().out
     assert "36 h worked + 12 h scheduled = 48 h > 40 h (over by 8 h)" in out
     assert "E002 Meena Iyer" in out
@@ -148,7 +155,17 @@ def test_cli_json_output(capsys):
     import json
 
     detect.main(
-        ["--data-dir", str(DATA_DIR), "--as-of", DEFAULT_AS_OF, "--json", "--employee", "E002"]
+        [
+            "--data-dir",
+            str(DATA_DIR),
+            "--as-of",
+            DEFAULT_AS_OF,
+            "--json",
+            "--employee",
+            "E002",
+            "--policy",
+            ",".join(P1_TO_P7),
+        ]
     )
     data = json.loads(capsys.readouterr().out)
     assert {e["policy_id"] for e in data["exceptions"]} == {"P3", "P5"}

@@ -70,7 +70,8 @@ def test_bad_dates(data_copy, bad):
 
 @pytest.mark.parametrize("bad", ["2026-04-13T07:00:00+05:30", "2026-04-13 07:00", "07:00"])
 def test_bad_or_timezone_timestamps(data_copy, bad):
-    replace_in_file(data_copy / "timecards.csv", "2026-04-13T07:00:00", bad)
+    # Meena's first punch (07:00 shift start, minus her fixed 13 s seconds offset).
+    replace_in_file(data_copy / "timecards.csv", "2026-04-13T06:59:47", bad)
     assert any(": timestamp:" in e for e in errors_for(data_copy))
 
 

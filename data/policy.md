@@ -75,7 +75,9 @@ If the total is above 40 hours, the system raises an overtime risk before the we
 (or a breach if the hours already worked are above 40). Hours still scheduled are the
 shift length minus a planned 60-minute unpaid lunch for shifts longer than 6 hours, so a
 09:00-18:00 shift counts as 8 hours. A past shift with a missing punch counts at its
-scheduled hours until it is corrected.
+scheduled hours until it is corrected. Leave is taken out of the schedule first: an
+upcoming day with approved or pending full-day leave counts as 0 hours, and a half-day
+leave takes 4 hours off that day (see P13).
 
 **Allowed fixes:** Approve the overtime, or shorten or reassign upcoming shifts. Worked
 hours in the past are never changed by this policy.
@@ -114,19 +116,22 @@ time itself is never moved earlier.
 
 **Why:** Unplanned work may be a mistake, a swap that was not recorded, or real extra work.
 
-**How it is checked:** Punches on a date where the worker has no row in the schedule.
+**How it is checked:** A shift whose punches do not belong to any scheduled shift (see the
+matching window in P15). Normally this is a date where the worker has no row in the schedule.
 
 **Allowed fixes:** The supervisor approves the work (for example, a shift swap) or rejects
-it after asking the worker.
+it after asking the worker. If the day is also a public holiday, this approval comes before
+the P14 choice.
 
 ## P9: No punches on an approved leave day
 
-**Rule:** A worker on approved full-day leave should have no punches that day.
+**Rule:** A worker on approved full-day leave should have no punches that day. The same
+applies to a pending full-day leave request: it must be settled before it is approved.
 
 **Why:** Either the leave or the punches are wrong, and both affect pay and leave balance.
 
-**How it is checked:** Punches on a date with an approved full-day leave record. Half-day
-leave is handled by P13 instead.
+**How it is checked:** Punches on a date with an approved or pending full-day leave record.
+Rejected leave is ignored. Half-day leave is handled by P13 instead.
 
 **Allowed fixes:** Cancel the leave (the day becomes a worked day and the balance is
 restored) or void the punches if they were made by mistake. The worker is asked first.
@@ -137,8 +142,9 @@ restored) or void the punches if they were made by mistake. The worker is asked 
 
 **Why:** Payroll needs to know whether to pay the day, deduct it, or record leave.
 
-**How it is checked:** A scheduled date that has fully passed, with no punches and no leave
-record of any status.
+**How it is checked:** A scheduled shift with no punches and no leave record of any status,
+once its scheduled end plus the P1 grace (4 hours) has passed. This includes a worker on
+holiday duty who did not come in.
 
 **Allowed fixes:** Record leave (if the worker applies and has balance), mark as unpaid
 absence, or add punches if the worker was present and the device failed. Supervisor approval
@@ -176,11 +182,15 @@ pending. The supervisor decides what happens if no certificate is provided.
 **Why:** Working a full day on a half-day leave means the leave was not needed, or the
 punches are wrong.
 
-**How it is checked:** Worked hours on a date with an approved half-day leave, compared with
-4 hours.
+**How it is checked:** Worked hours on a date with an approved or pending half-day leave,
+compared with 4 hours, allowing 1 hour either way. More than 5 hours means the worker
+worked a full day. Less than 3 hours (including no punches at all, once the shift is over)
+means the working half is missing. Late arrival and early leave (P7) are not checked on a
+half-day leave day. A short day with no leave on file is a P7 case, not P13.
 
 **Allowed fixes:** Cancel the half-day leave (restoring the balance) if the worker worked the
-full day, or correct the punches. The worker is asked first.
+full day, or correct the punches. If the working half is missing, record a full day of leave
+or unpaid hours. The worker is asked first.
 
 ## P14: Holiday work earns holiday pay or comp-off
 
@@ -189,12 +199,14 @@ full day, or correct the punches. The worker is asked first.
 
 **Why:** Holiday work must be compensated, and payroll needs to know which option applies.
 
-**How it is checked:** Punches attributed to a date listed in the holiday calendar. Because
-of P15, a night shift that started the day before a holiday and ends on the holiday is not
-holiday work.
+**How it is checked:** Punches attributed to a national or company holiday in the holiday
+calendar (optional holidays do not count). Because of P15, a night shift that started the
+day before a holiday and ends on the holiday is not holiday work. Planned holiday duty (the
+worker was scheduled) is low severity. Unscheduled holiday work is medium severity.
 
-**Allowed fixes:** Choose holiday pay or comp-off. If the work was also unscheduled, P8 must
-be approved first.
+**Allowed fixes:** Choose holiday pay or comp-off. Comp-off is a full day, or half a day
+when 4 hours or less were worked. If the work was also unscheduled, P8 must be approved
+first. If a punch is missing (P1), fix it first so the hours are known.
 
 ## P15: Night shifts belong to the date they started
 
@@ -218,7 +230,29 @@ and no shift is longer than 16 hours.
 **Why:** Workers need regular full days of rest.
 
 **How it is checked:** Count consecutive dates with worked shifts (by P15 attribution).
-A 7th consecutive day is a breach. The same check runs on the schedule to warn in advance.
+A 7th consecutive day is a breach. The same check runs on the upcoming schedule to warn in
+advance (a risk). Upcoming days with full-day leave do not count, and a day off, a leave
+day or a holiday without work ends the run.
 
 **Allowed fixes:** The supervisor gives the worker a rest day or records an approved
 exception.
+
+## P17: Possible punch conflict, needs review
+
+**Rule:** Punches that look physically impossible or unusual are sent to a person to review
+before payroll. This is a check of the data, not an accusation: there is often an innocent
+reason (a shared device, a phone with bad GPS, a clock that was wrong).
+
+**Why:** Payroll should only pay for punches that a person has checked when they look odd.
+
+**How it is checked:** Three checks, each raised as "possible punch conflict, needs review":
+1. Same second: 2 or more workers punch on the same terminal at exactly the same second
+   (mobile app punches are not compared, since each phone is separate).
+2. Two places: one worker has two punches at different sites less than 60 minutes apart.
+   Gates and app locations are mapped to a site in `policy.json`. All three current
+   locations belong to Warehouse 1.
+3. App outside the workplace: a mobile app punch whose location is not an approved app
+   location. The only approved one today is "Warehouse 1 - Mobile app (geofenced)".
+
+**Allowed fixes:** The supervisor confirms the punches are valid (nothing changes), or, after
+asking the worker, voids the punches that were wrong. Nothing is changed automatically.

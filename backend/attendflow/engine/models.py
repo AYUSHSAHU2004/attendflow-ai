@@ -11,7 +11,11 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from attendflow.data.schemas import Punch, ScheduleRow
+from attendflow.data.schemas import Holiday, LeaveBalance, LeaveRecord, Punch, ScheduleRow
+
+# A source row an exception is based on. Punches come first; leave, balance, schedule and
+# holiday rows are evidence for checks that are not about punches (P10, P11, P12, ...).
+EvidenceRow = Punch | LeaveRecord | LeaveBalance | ScheduleRow | Holiday
 
 ShiftStatus = Literal["complete", "in_progress", "missing_in", "missing_out"]
 
@@ -62,10 +66,34 @@ class Shift(EngineModel):
 
 
 FixAction = Literal[
+    # Phase 1
     "set_clock_in",
     "set_clock_out",
     "approve_overtime",
     "reduce_scheduled_hours",
+    # Phase 2: schedule and holidays
+    "approve_unscheduled_work",
+    "reject_unscheduled_work",
+    "add_punches",
+    "mark_unpaid_absence",
+    "record_leave",
+    "holiday_pay",
+    "comp_off",
+    "give_rest_day",
+    "approve_exception",
+    # Phase 2: leave
+    "cancel_leave",
+    "void_punches",
+    "edit_punches",
+    "split_paid_unpaid_leave",
+    "move_leave_type",
+    "reject_leave_days",
+    "request_certificate",
+    "approve_without_certificate",
+    "convert_to_full_day_leave",
+    "mark_unpaid_hours",
+    # Phase 2: punch review (P17)
+    "confirm_punches_valid",
 ]
 
 
@@ -83,13 +111,13 @@ class TimecardException(EngineModel):
     policy_id: str
     title: str
     employee_id: str
-    date: date  # shift date; for P5 the Monday that starts the week
+    date: date  # shift date; P5: the Monday of the week; P11/P12: first leave day
     severity: Literal["low", "medium", "high"]
     kind: Literal["breach", "risk"] = "breach"  # risk = forecast, has not happened yet
     status: Literal["open", "auto_resolved"] = "open"
     summary: str  # one line with the numbers, built by code
     details: dict[str, Any]  # the actual numbers and the limit used
-    evidence: list[Punch] = Field(default_factory=list)
+    evidence: list[EvidenceRow] = Field(default_factory=list)
     fix_options: list[FixOption] = Field(default_factory=list)
 
 

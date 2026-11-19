@@ -12,7 +12,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-POLICY_IDS = [f"P{i}" for i in range(1, 17)]
+POLICY_IDS = [f"P{i}" for i in range(1, 18)]  # P17 = possible punch conflict (Phase 2)
+SEVERITIES = ("low", "medium", "high")
 
 # Params each policy must define. Loading fails if one is missing, so the engine can
 # rely on them without defensive checks.
@@ -25,8 +26,13 @@ REQUIRED_PARAMS: dict[str, set[str]] = {
     "P6": {"min_rest_hours"},
     "P7": {"grace_minutes"},
     "P12": {"max_sick_days_without_certificate"},
-    "P13": {"half_day_hours"},
-    "P14": {"compensation_options"},
+    "P13": {"half_day_hours", "tolerance_hours"},
+    "P14": {
+        "compensation_options",
+        "counted_holiday_types",
+        "comp_off_half_day_max_hours",
+        "scheduled_duty_severity",
+    },
     "P15": {
         "attribute_to",
         "match_before_start_hours",
@@ -34,9 +40,15 @@ REQUIRED_PARAMS: dict[str, set[str]] = {
         "max_shift_hours",
     },
     "P16": {"max_consecutive_days"},
+    "P17": {
+        "same_second_min_employees",
+        "location_switch_minutes",
+        "approved_app_locations",
+        "sites",
+    },
 }
 
-ParamValue = int | float | bool | str | list[str]
+ParamValue = int | float | bool | str | list[str] | dict[str, str]
 
 
 class PolicyRule(BaseModel):
@@ -75,10 +87,25 @@ class PolicyConfig(BaseModel):
             absent = required - self.policies[pid].params.keys()
             if absent:
                 raise ValueError(f"{pid} is missing param(s) {sorted(absent)}")
+        duty = self.policies["P14"].params["scheduled_duty_severity"]
+        if duty not in SEVERITIES:
+            raise ValueError(f"P14 scheduled_duty_severity must be one of {SEVERITIES}")
         return self
 
     def param(self, policy_id: str, name: str) -> ParamValue:
         return self.policies[policy_id].params[name]
+
+    def strings(self, policy_id: str, name: str) -> list[str]:
+        value = self.param(policy_id, name)
+        if not isinstance(value, list):
+            raise TypeError(f"{policy_id}.{name} is not a list: {value!r}")
+        return value
+
+    def mapping(self, policy_id: str, name: str) -> dict[str, str]:
+        value = self.param(policy_id, name)
+        if not isinstance(value, dict):
+            raise TypeError(f"{policy_id}.{name} is not a mapping: {value!r}")
+        return value
 
     def number(self, policy_id: str, name: str) -> float:
         """A numeric limit as a float. Fails loudly if the param is not a number."""

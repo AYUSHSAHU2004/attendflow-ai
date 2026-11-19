@@ -96,14 +96,19 @@
       "category": "leave_conflict",
       "severity": "medium",
       "auto_resolve": false,
-      "params": { "half_day_hours": 4 }
+      "params": { "half_day_hours": 4, "tolerance_hours": 1 }
     },
     "P14": {
       "title": "Holiday work earns holiday pay or comp-off",
       "category": "holiday",
       "severity": "medium",
       "auto_resolve": false,
-      "params": { "compensation_options": ["holiday_pay", "comp_off"] }
+      "params": {
+        "compensation_options": ["holiday_pay", "comp_off"],
+        "counted_holiday_types": ["national", "company"],
+        "comp_off_half_day_max_hours": 4,
+        "scheduled_duty_severity": "low"
+      }
     },
     "P15": {
       "title": "Night shifts belong to the date they started",
@@ -123,6 +128,22 @@
       "severity": "high",
       "auto_resolve": false,
       "params": { "max_consecutive_days": 6 }
+    },
+    "P17": {
+      "title": "Possible punch conflict, needs review",
+      "category": "punch_review",
+      "severity": "medium",
+      "auto_resolve": false,
+      "params": {
+        "same_second_min_employees": 2,
+        "location_switch_minutes": 60,
+        "approved_app_locations": ["Warehouse 1 - Mobile app (geofenced)"],
+        "sites": {
+          "Warehouse 1 - Inbound Gate": "Warehouse 1",
+          "Warehouse 1 - Outbound Gate": "Warehouse 1",
+          "Warehouse 1 - Mobile app (geofenced)": "Warehouse 1"
+        }
+      }
     }
   }
 }
