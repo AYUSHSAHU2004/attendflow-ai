@@ -13,9 +13,12 @@ from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from attendflow import __version__, demo_clock
+from attendflow.activity import feed as activity
 from attendflow.api.schemas import (
     EMPLOYEE_ID,
     POLICY_ID,
+    ActivityFeedOut,
+    ActivitySummaryOut,
     ActorType,
     AdminCaseOut,
     AdminOverviewOut,
@@ -25,6 +28,7 @@ from attendflow.api.schemas import (
     AskWorkerIn,
     AuditEntryOut,
     AuditListOut,
+    AutonomyTableOut,
     AutoResolveMetricOut,
     DemoClockIn,
     DemoClockOut,
@@ -37,6 +41,7 @@ from attendflow.api.schemas import (
     ExceptionDetailOut,
     ExceptionListOut,
     ExceptionOut,
+    FeedMode,
     HealthOut,
     InvestigationJobOut,
     NoReplyFilter,
@@ -736,6 +741,100 @@ def admin_exception(
             actor_id=actor_id,
             now=clock.now(),
         )
+
+
+# ---------------------------------------------------------------- activity (Phase 14)
+
+ACTIVITY_SCOPE = (
+    "The payroll admin sees everything; a supervisor only rows of cases whose worker is on "
+    "their team (rows without a case are payroll-only); workers get 403. "
+)
+
+
+@router.get(
+    "/activity",
+    response_model=ActivityFeedOut,
+    tags=["activity"],
+    summary="Activity Center feed: what the system, the LLM agent and people did",
+    description=ACTIVITY_SCOPE + "Built from the audit log, newest first, one plain sentence "
+    "per row from fixed templates (no LLM). Never returns before/after data, tool "
+    "outputs, prompts or model diagnostics. Page with `before_id` = `next_before_id`.",
+    responses=_errors(403, 422),
+)
+def activity_feed(
+    actor_id: ActorId,
+    session: SessionDep,
+    actor_type: Annotated[ActorType | None, Query(description="audit_log actor")] = None,
+    mode: Annotated[
+        FeedMode, Query(description="autonomous = system, agent, device; human = people")
+    ] = "all",
+    policy_id: Annotated[str | None, Query(pattern=POLICY_ID)] = None,
+    employee_id: Annotated[str | None, Query(pattern=EMPLOYEE_ID)] = None,
+    exception_id: Annotated[str | None, Query(max_length=80)] = None,
+    date_from: Annotated[date | None, Query(description="Workflow date, inclusive")] = None,
+    date_to: Annotated[date | None, Query(description="Workflow date, inclusive")] = None,
+    before_id: Annotated[int | None, Query(ge=1)] = None,
+    limit: Annotated[int, Query(ge=1, le=activity.MAX_LIMIT)] = activity.DEFAULT_LIMIT,
+):
+    with session.begin():
+        return activity.feed(
+            session,
+            actor_id,
+            actor_type=actor_type,
+            mode=mode,
+            policy_id=policy_id,
+            employee_id=employee_id,
+            exception_id=exception_id,
+            date_from=date_from,
+            date_to=date_to,
+            before_id=before_id,
+            limit=limit,
+        )
+
+
+@router.get(
+    "/activity/summary",
+    response_model=ActivitySummaryOut,
+    tags=["activity"],
+    summary="Activity Center summary strip, counted by the database",
+    description=ACTIVITY_SCOPE + "Same scope and filters as the feed (actor type and "
+    "autonomous/human do not apply). `definitions` lists the audit actions behind each "
+    "count.",
+    responses=_errors(403, 422),
+)
+def activity_summary(
+    actor_id: ActorId,
+    session: SessionDep,
+    policy_id: Annotated[str | None, Query(pattern=POLICY_ID)] = None,
+    employee_id: Annotated[str | None, Query(pattern=EMPLOYEE_ID)] = None,
+    exception_id: Annotated[str | None, Query(max_length=80)] = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
+):
+    with session.begin():
+        return activity.summary(
+            session,
+            actor_id,
+            policy_id=policy_id,
+            employee_id=employee_id,
+            exception_id=exception_id,
+            date_from=date_from,
+            date_to=date_to,
+        )
+
+
+@router.get(
+    "/autonomy",
+    response_model=AutonomyTableOut,
+    tags=["activity"],
+    summary="The Autonomy Table: who may do what, approval, undo and guardrail",
+    description="Generated from the registry in activity/autonomy.py (the README section is "
+    "generated from the same registry). Supervisors and the payroll admin; workers get 403.",
+    responses=_errors(403, 422),
+)
+def autonomy_table(actor_id: ActorId, session: SessionDep):
+    with session.begin():
+        return activity.autonomy_table(session, actor_id)
 
 
 # ---------------------------------------------------------------- logs

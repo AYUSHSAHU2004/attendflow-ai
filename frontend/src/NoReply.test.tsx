@@ -120,6 +120,8 @@ function card(overrides: Partial<SupervisorCase> = {}): SupervisorCase {
     options: [clockOut],
     applied_fix: null,
     min_note_length: 3,
+    can_decide: true,
+    trace: [],
     no_reply: stage2,
     ...overrides,
   }

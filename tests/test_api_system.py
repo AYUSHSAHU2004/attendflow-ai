@@ -38,6 +38,9 @@ EXPECTED_PATHS = {
     ("post", "/api/exceptions/{exception_id}/worker-reply"),
     ("post", "/api/exceptions/{exception_id}/worker-confirm-time"),
     ("post", "/api/exceptions/{exception_id}/worker-manual-time"),
+    ("get", "/api/activity"),  # Phase 14
+    ("get", "/api/activity/summary"),
+    ("get", "/api/autonomy"),
     ("get", "/api/audit-log"),
     ("get", "/api/tool-calls"),
     ("get", "/api/worker/messages"),

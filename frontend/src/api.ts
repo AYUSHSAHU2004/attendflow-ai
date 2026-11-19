@@ -1,5 +1,5 @@
 import type { components, paths } from './api.generated'
-import { adminActor, supervisorActor, workerActor } from './actors'
+import { activityActor, adminActor, supervisorActor, workerActor } from './actors'
 
 type Schemas = components['schemas']
 type ReplyInput = paths['/api/exceptions/{exception_id}/worker-reply']['post']['requestBody']['content']['application/json']
@@ -234,4 +234,37 @@ export async function getTeamAutoFixes(signal?: AbortSignal, actor = supervisorA
   return (await request<Schemas['TeamAutoFixesOut']>(
     '/api/supervisor/auto-resolved', actor, { signal },
   )).body.items
+}
+
+// ---------------------------------------------------------------- activity (Phase 14)
+
+export type ActivityFeed = Schemas['ActivityFeedOut']
+export type ActivityItem = Schemas['ActivityItemOut']
+export type ActivitySummary = Schemas['ActivitySummaryOut']
+export type AutonomyRow = Schemas['AutonomyRowOut']
+export type ActivityFilters = NonNullable<paths['/api/activity']['get']['parameters']['query']>
+export type ActivitySummaryFilters = NonNullable<paths['/api/activity/summary']['get']['parameters']['query']>
+
+function queryString(filters: Record<string, unknown>): string {
+  // Built by hand, like getAdminOverview: the Phase 22 bundle check greps for URLSearchParams.
+  const query = Object.entries(filters)
+    .filter(([, value]) => value !== undefined && value !== null && String(value) !== '')
+    .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`)
+  return query.length ? `?${query.join('&')}` : ''
+}
+
+export async function getActivity(filters: ActivityFilters, actor = activityActor.id, signal?: AbortSignal) {
+  return (await request<ActivityFeed>('/api/activity' + queryString(filters), actor, { signal })).body
+}
+
+export async function getActivitySummary(
+  filters: ActivitySummaryFilters, actor = activityActor.id, signal?: AbortSignal,
+) {
+  return (await request<ActivitySummary>(
+    '/api/activity/summary' + queryString(filters), actor, { signal },
+  )).body
+}
+
+export async function getAutonomy(actor = activityActor.id, signal?: AbortSignal) {
+  return (await request<Schemas['AutonomyTableOut']>('/api/autonomy', actor, { signal })).body.items
 }

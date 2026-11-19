@@ -14,6 +14,7 @@ from typing import Any
 from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session
 
+from attendflow.activity.trace import result_summary
 from attendflow.cases import no_reply as ladder
 from attendflow.cases.auto_fix import auto_fix_info
 from attendflow.cases.supervisor import (
@@ -399,6 +400,7 @@ def _tool_call(call: ToolCallRow) -> dict[str, Any]:
         "ok": call.ok,
         "error_code": error.get("code") if error else None,
         "duration_ms": call.duration_ms,
+        "result_summary": result_summary(call.tool_name, call.ok, call.output),
     }
 
 

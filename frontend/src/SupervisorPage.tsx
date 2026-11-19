@@ -1,5 +1,5 @@
 import { type FormEvent, useEffect, useState } from 'react'
-import { supervisorActor } from './actors'
+import { reviewers, supervisorActor } from './actors'
 import {
   ApiError,
   approveCase,
@@ -434,7 +434,27 @@ export function CaseCard({
         </section>
       ) : null}
 
-      {!decided && (
+      {data.trace.length > 0 && (
+        <section aria-label="Investigation trace">
+          <h3>How it was checked</h3>
+          <ol className="trace">
+            {data.trace.map((step) => (
+              <li key={`${step.step_no}-${step.tool_name}`}>
+                <code>{step.tool_name}</code>{' '}
+                <span className={step.ok === false ? 'warn-text' : undefined}>{step.result_summary}</span>
+              </li>
+            ))}
+          </ol>
+        </section>
+      )}
+
+      {!decided && !data.can_decide && (
+        <section aria-label="Read only" className="notice">
+          <p>Read only: this case is with {(data.assigned_to && reviewers[data.assigned_to]?.name) || data.assigned_to || 'nobody'}. Only they can decide it.</p>
+        </section>
+      )}
+
+      {!decided && data.can_decide && (
         <section aria-label="Fix options">
           <h3>Choose a fix</h3>
           {data.options.length === 0 && <p>No fix options. This case can only be rejected.</p>}
@@ -624,7 +644,11 @@ export function SupervisorPage() {
   return (
     <main className="page wide" id="main">
       <h1>Decisions</h1>
-      <p className="lede">Signed in as {supervisorActor.name} ({supervisorActor.id})</p>
+      <p className="lede">
+        Signed in as {supervisorActor.name} ({supervisorActor.id}) ·{' '}
+        {/* Dev builds keep the acting reviewer; the Phase 15 role switcher replaces this. */}
+        <a href={import.meta.env.DEV ? `/activity?as=${supervisorActor.id}` : '/activity'}>Team activity</a>
+      </p>
       {notice && <p role="status" className="notice">{notice}</p>}
       <div className="split">
         <section aria-label="Queue" className="queue">

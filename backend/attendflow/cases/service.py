@@ -20,7 +20,7 @@ import logging
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -761,7 +761,7 @@ def detect_after_fix(
     *,
     auto_resolve: bool = True,
     changed: bool | None = None,
-    after: str = "fix",
+    after: Literal["fix", "undo"] = "fix",
 ) -> dict[str, Any]:
     """After an approved fix (or an undo, `after="undo"`) that changed data: run detection
     so that exceptions the change created appear as new open cases. Runs in its own

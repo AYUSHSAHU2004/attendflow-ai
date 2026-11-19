@@ -51,3 +51,7 @@ export function workerFor(search: string, dev: boolean): Actor {
 }
 
 export const workerActor: Actor = import.meta.env.DEV ? workerFor(search, true) : defaultWorker
+
+// The Activity Center (/activity, Phase 14) acts as Priya, who sees everything. Dev builds
+// only: `?as=E101` (or E102) shows a supervisor's team-only view. The API enforces the scope.
+export const activityActor: Actor = adminActor

@@ -424,6 +424,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Activity Center feed: what the system, the LLM agent and people did
+         * @description The payroll admin sees everything; a supervisor only rows of cases whose worker is on their team (rows without a case are payroll-only); workers get 403. Built from the audit log, newest first, one plain sentence per row from fixed templates (no LLM). Never returns before/after data, tool outputs, prompts or model diagnostics. Page with `before_id` = `next_before_id`.
+         */
+        get: operations["activity_feed_api_activity_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/activity/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Activity Center summary strip, counted by the database
+         * @description The payroll admin sees everything; a supervisor only rows of cases whose worker is on their team (rows without a case are payroll-only); workers get 403. Same scope and filters as the feed (actor type and autonomous/human do not apply). `definitions` lists the audit actions behind each count.
+         */
+        get: operations["activity_summary_api_activity_summary_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/autonomy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The Autonomy Table: who may do what, approval, undo and guardrail
+         * @description Generated from the registry in activity/autonomy.py (the README section is generated from the same registry). Supervisors and the payroll admin; workers get 403.
+         */
+        get: operations["autonomy_table_api_autonomy_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/audit-log": {
         parameters: {
             query?: never;
@@ -620,6 +680,143 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** ActivityCaseOut */
+        ActivityCaseOut: {
+            /** Exception Id */
+            exception_id: string;
+            /** Policy Id */
+            policy_id: string;
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Title */
+            title: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "open" | "awaiting_worker" | "awaiting_supervisor" | "resolved" | "rejected" | "escalated";
+        };
+        /** ActivityCountsOut */
+        ActivityCountsOut: {
+            /**
+             * Investigated
+             * @description Cases with a stored investigation
+             */
+            investigated: number;
+            /** Messages Sent */
+            messages_sent: number;
+            /** Reminders Sent */
+            reminders_sent: number;
+            /** Auto Resolved */
+            auto_resolved: number;
+            /** Auto Resolves Undone */
+            auto_resolves_undone: number;
+            /**
+             * Escalated By Silence
+             * @description Cases the no-reply ladder handed on
+             */
+            escalated_by_silence: number;
+            /** Human Approvals */
+            human_approvals: number;
+            /** Decided Without Worker */
+            decided_without_worker: number;
+            /** Human Rejections */
+            human_rejections: number;
+            /** Device Punches */
+            device_punches: number;
+        };
+        /** ActivityEmployeeOut */
+        ActivityEmployeeOut: {
+            /** Employee Id */
+            employee_id: string;
+            /** Name */
+            name: string;
+            /** Team */
+            team: string | null;
+        };
+        /** ActivityFeedOut */
+        ActivityFeedOut: {
+            viewer: components["schemas"]["ActivityViewerOut"];
+            /** Items */
+            items: components["schemas"]["ActivityItemOut"][];
+            /**
+             * Next Before Id
+             * @description Pass as before_id for the next (older) page; null on the last page
+             */
+            next_before_id: number | null;
+        };
+        /** ActivityItemOut */
+        ActivityItemOut: {
+            /** Id */
+            id: number;
+            /**
+             * At
+             * Format: date-time
+             * @description Workflow time (the demo clock), not server time
+             */
+            at: string;
+            /**
+             * Actor Type
+             * @enum {string}
+             */
+            actor_type: "system" | "agent" | "worker" | "supervisor" | "admin" | "device";
+            /** Actor Label */
+            actor_label: string;
+            /**
+             * Actor Name
+             * @description The person, or which part of the system acted
+             */
+            actor_name: string;
+            /**
+             * Autonomous
+             * @description Done by the system, the LLM agent or a device
+             */
+            autonomous: boolean;
+            /** Action */
+            action: string;
+            /**
+             * Capability
+             * @description The Autonomy Table row this belongs to
+             */
+            capability: string | null;
+            /**
+             * Sentence
+             * @description Plain sentence from a fixed template; never LLM text
+             */
+            sentence: string;
+            /**
+             * Reason
+             * @description A person's own typed reason; null otherwise
+             */
+            reason: string | null;
+            case: components["schemas"]["ActivityCaseOut"] | null;
+            employee: components["schemas"]["ActivityEmployeeOut"] | null;
+        };
+        /** ActivitySummaryOut */
+        ActivitySummaryOut: {
+            /** Date From */
+            date_from: string | null;
+            /** Date To */
+            date_to: string | null;
+            counts: components["schemas"]["ActivityCountsOut"];
+            /**
+             * Definitions
+             * @description The audit actions each count uses
+             */
+            definitions: {
+                [key: string]: string[];
+            };
+        };
+        /** ActivityViewerOut */
+        ActivityViewerOut: {
+            /** Employee Id */
+            employee_id: string;
+            /** Role */
+            role: string;
+        };
         /** AdminAuditEntryOut */
         AdminAuditEntryOut: {
             /** Id */
@@ -909,6 +1106,11 @@ export interface components {
             error_code: string | null;
             /** Duration Ms */
             duration_ms: number | null;
+            /**
+             * Result Summary
+             * @description One line built by code from the tool output (Phase 14); never the raw output
+             */
+            result_summary: string;
         };
         /** AdminWorkerMessageOut */
         AdminWorkerMessageOut: {
@@ -1225,6 +1427,54 @@ export interface components {
             allowed_policies: string[];
             /** By Policy */
             by_policy: components["schemas"]["MetricPolicyOut"][];
+        };
+        /** AutonomyRowOut */
+        AutonomyRowOut: {
+            /** Key */
+            key: string;
+            /** Title */
+            title: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "allowed" | "never";
+            /**
+             * Actor Type
+             * @enum {string}
+             */
+            actor_type: "code" | "llm_agent" | "system" | "device" | "human";
+            /** Actor Label */
+            actor_label: string;
+            /** Performed By */
+            performed_by: string;
+            /**
+             * Approval
+             * @enum {string}
+             */
+            approval: "none" | "supervisor" | "payroll_admin" | "supervisor_or_payroll_admin";
+            /** Approval Label */
+            approval_label: string;
+            /**
+             * Reversible
+             * @enum {string}
+             */
+            reversible: "yes_undo" | "no" | "not_applicable";
+            /** Reversible Label */
+            reversible_label: string;
+            /** Guardrail */
+            guardrail: string;
+            /** Autonomous */
+            autonomous: boolean;
+            /** Audit Actions */
+            audit_actions: string[];
+            /** Proof Tests */
+            proof_tests: string[];
+        };
+        /** AutonomyTableOut */
+        AutonomyTableOut: {
+            /** Items */
+            items: components["schemas"]["AutonomyRowOut"][];
         };
         /** CardConfirmedTimeOut */
         CardConfirmedTimeOut: {
@@ -2385,6 +2635,16 @@ export interface components {
             /** Min Note Length */
             min_note_length: number;
             no_reply?: components["schemas"]["NoReplyOut"] | null;
+            /**
+             * Can Decide
+             * @description True only for the assignee. The team's supervisor may open the card read-only (Phase 14); every decision endpoint still requires the assignee.
+             */
+            can_decide: boolean;
+            /**
+             * Trace
+             * @description The latest investigation's tool calls: name, ok and a result line built by code (no arguments, raw outputs or prompts)
+             */
+            trace: components["schemas"]["TraceStepOut"][];
         };
         /** SupervisorQueueItemOut */
         SupervisorQueueItemOut: {
@@ -2509,6 +2769,17 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+        };
+        /** TraceStepOut */
+        TraceStepOut: {
+            /** Step No */
+            step_no: number;
+            /** Tool Name */
+            tool_name: string;
+            /** Ok */
+            ok: boolean | null;
+            /** Result Summary */
+            result_summary: string;
         };
         /** UndoIn */
         UndoIn: {
@@ -3958,6 +4229,149 @@ export interface operations {
             };
             /** @description Not Found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    activity_feed_api_activity_get: {
+        parameters: {
+            query?: {
+                /** @description audit_log actor */
+                actor_type?: ("system" | "agent" | "worker" | "supervisor" | "admin" | "device") | null;
+                /** @description autonomous = system, agent, device; human = people */
+                mode?: "all" | "autonomous" | "human";
+                policy_id?: string | null;
+                employee_id?: string | null;
+                exception_id?: string | null;
+                /** @description Workflow date, inclusive */
+                date_from?: string | null;
+                /** @description Workflow date, inclusive */
+                date_to?: string | null;
+                before_id?: number | null;
+                limit?: number;
+            };
+            header: {
+                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
+                "X-Actor-Id": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActivityFeedOut"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    activity_summary_api_activity_summary_get: {
+        parameters: {
+            query?: {
+                policy_id?: string | null;
+                employee_id?: string | null;
+                exception_id?: string | null;
+                date_from?: string | null;
+                date_to?: string | null;
+            };
+            header: {
+                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
+                "X-Actor-Id": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActivitySummaryOut"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    autonomy_table_api_autonomy_get: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
+                "X-Actor-Id": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutonomyTableOut"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

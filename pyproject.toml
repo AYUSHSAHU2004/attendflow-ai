@@ -23,6 +23,7 @@ attendflow-detect = "attendflow.scripts.detect:main"
 attendflow-api = "attendflow.api.app:main"
 attendflow-tools = "attendflow.scripts.tools_cli:main"
 attendflow-agent-smoke = "attendflow.scripts.agent_smoke:main"
+attendflow-autonomy = "attendflow.scripts.autonomy_cli:main"
 
 [dependency-groups]
 dev = [

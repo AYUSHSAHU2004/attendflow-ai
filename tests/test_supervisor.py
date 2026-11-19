@@ -427,15 +427,21 @@ def test_permission_matrix_on_ravis_case(demo, headers, expected):
 def test_permission_matrix_on_a_case_escalated_to_priya(demo):
     confirm_amit_clock_out(demo)
     post(demo, AMIT_P1, "reject", {"reason": "Send this one to payroll"}, RAVI)
+    before = snapshot(demo)
     for headers, code in (
         (RAVI, "not_assigned"),
         (SUNITA, "not_assigned"),
         (AMIT, "supervisor_only"),
     ):
-        assert_error(demo.get(f"/api/supervisor/cases/{AMIT_P1}", headers=headers), 403, code)
+        if headers is not RAVI:
+            assert_error(demo.get(f"/api/supervisor/cases/{AMIT_P1}", headers=headers), 403, code)
         for endpoint in ("approve", "edit", "reject"):
             assert_error(_decide(demo, AMIT_P1, endpoint, headers), 403, code)
-    assert card(demo, AMIT_P1, PRIYA)["assigned_to"] == "E201"
+    # Phase 14: Ravi may still read his team's case (from the Activity Center), read-only.
+    view = card(demo, AMIT_P1, RAVI)
+    assert (view["assigned_to"], view["can_decide"]) == ("E201", False)
+    assert snapshot(demo) == before
+    assert card(demo, AMIT_P1, PRIYA)["can_decide"] is True
 
 
 # ---------------------------------------------------------------- Amit's story end to end

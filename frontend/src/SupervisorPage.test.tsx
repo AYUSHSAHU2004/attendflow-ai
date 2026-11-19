@@ -111,6 +111,8 @@ function makeCase(overrides: Partial<SupervisorCase> = {}): SupervisorCase {
     options: [clockOut],
     applied_fix: null,
     min_note_length: 3,
+    can_decide: true,
+    trace: [],
     ...overrides,
   }
 }
@@ -169,6 +171,26 @@ describe('case card', () => {
   beforeEach(() => {
     vi.resetAllMocks()
     vi.mocked(getTeamAutoFixes).mockResolvedValue([])
+  })
+
+  it('is read-only for a team case assigned to someone else, with the investigation trace', async () => {
+    await openCase(makeCase({
+      status: 'escalated',
+      assigned_to: 'E201',
+      can_decide: false,
+      trace: [
+        { step_no: 1, tool_name: 'get_schedule', ok: true, result_summary: 'Scheduled 09:00 to 18:00.' },
+        { step_no: 5, tool_name: 'run_checks', ok: true, result_summary: 'No new violations. Week 40 h.' },
+      ],
+    }))
+    expect(screen.getByRole('region', { name: 'Read only' })).toHaveTextContent(
+      'Read only: this case is with Priya Sharma. Only they can decide it.',
+    )
+    expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Reject' })).not.toBeInTheDocument()
+    const trace = screen.getByRole('region', { name: 'Investigation trace' })
+    expect(trace).toHaveTextContent('get_schedule Scheduled 09:00 to 18:00.')
+    expect(trace).toHaveTextContent('run_checks No new violations. Week 40 h.')
   })
 
   it('shows the approximate time, the worker\'s words, the re-check and the consequence', async () => {

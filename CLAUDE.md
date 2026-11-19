@@ -64,7 +64,8 @@ and CI, 10-minute demo video, 5 slides.
 Done: 0 Setup + data + policy + LLM test; 1 Rule engine P1-P7, P15; 2 Rules P8-P14, P16, P17;
 3 Backend + DB + API; 4 Read-only tools + fix options for P3/P4/P6/P7; 5 LLM client + agent loop; 6 structured investigations and jobs; 7 worker messages and inbox; 8 worker clock-out extraction and re-check; 9 supervisor approval screen; 10 Priya's list +
 end-to-end tests (**prototype complete**); 11 mock punch API + scheduler; 12 auto-resolve + undo +
-"resolved without a human" metric; 13 no-reply escalation ladder + demo clock.
+"resolved without a human" metric; 13 no-reply escalation ladder + demo clock; 14 Activity
+Center + Autonomy Table (generated, anti-drift tests).
 
 **Prototype (3-10)**
 3. Backend + DB + API
@@ -92,19 +93,19 @@ end-to-end tests (**prototype complete**); 11 mock punch API + scheduler; 12 aut
 23. Tests + evaluation
 24. Delivery
 
-**Next: Phase 14.**
+**Next: Phase 15.**
 
 **Carry-over notes**
 - Phase 5 Groq bug: `run_checks` advertised Pydantic's RFC 3339 `date-time` format for
   timezone-free local timestamps. Groq rejected minute-precision values with HTTP 400.
   The schema now advertises the app's local time patterns; the registry tests check
   every tool schema recursively for unsupported formats and schema references.
-- Phase 14 (Activity Center): show the Phase 13 ladder steps (`no_reply_reminder`,
-  `no_reply_to_supervisor`, `no_reply_to_admin`, `no_reply_ladder_stopped`,
-  `decided_without_worker`, `escalate_to_admin`, `demo_clock_moved`) in the feed; the
-  plain summaries already exist in `cases/admin.py audit_summary`.
 - Phase 15 (role switcher): replace `frontend/src/actors.ts` (the only place that names
-  the acting user, including the dev-only `?as=` override).
+  the acting user, including the dev-only `?as=` override). `/activity` acts as Priya
+  (`activityActor`); a supervisor's team-only view needs `?as=E101` in dev until then, and
+  the `/supervisor` "Team activity" link adds it in dev builds only.
+- Any phase that adds an audit action: add its row to `activity/autonomy.py` first (tests
+  fail otherwise), then `python -m uv run attendflow-autonomy --write-readme`.
 - **Phase 22 checklist (deployment):**
   - `POST /api/seed` wipes every table. Disable it (`ATTENDFLOW_ENABLE_SEED=false`) or
     protect it.
@@ -125,7 +126,7 @@ end-to-end tests (**prototype complete**); 11 mock punch API + scheduler; 12 aut
   - Phase 11: the scheduler runs in the API process with an in-process lock. Run one API
     process (or move the lock to a Postgres advisory lock) before scaling out.
   - Phase 11: `scheduler_cycle` rows and `/api/admin/scheduler` expose case IDs only, not
-    LLM text; keep it that way when the activity feed is added (Phase 14).
+    LLM text. Phase 14 kept it so (the feed hides `scheduler_cycle` rows).
   - Phase 12: review the `AUTO_RESOLVE_ENABLED` default (true) and which policies have
     `"auto_resolve": true` in `policy.json` (code allows only P2 and P7) before deploy.
   - Phase 12: review the metric definition (X = auto-resolved and not undone; Y = all
@@ -139,6 +140,11 @@ end-to-end tests (**prototype complete**); 11 mock punch API + scheduler; 12 aut
     hours) and the `NO_REPLY_ESCALATION_ENABLED` switch before deploy.
   - Phase 13: the worker inbox shows the supervisor's reason for a decision made without
     the worker's reply. Tell supervisors and payroll that this text is shown to the worker.
+  - Phase 14: `/api/activity`, `/api/activity/summary` and `/api/autonomy` trust
+    `X-Actor-Id` like every endpoint (real login first). The feed shows a person's typed
+    reasons and a worker's free-text "No" reply to payroll and the team's supervisor.
+  - Phase 14: the supervisor case card now opens read-only for any case of the
+    supervisor's own team (`can_decide` false); decisions still need the assignee.
 
 ## Decisions so far (do not re-ask)
 
@@ -612,6 +618,48 @@ end-to-end tests (**prototype complete**); 11 mock punch API + scheduler; 12 aut
 - Live check ran on a separate DB (`attendflow_phase12`, API :8012, Vite :5184; launch
   configs `api-phase12` / `web-phase12`) because another session used the dev DB.
 
+**Activity Center + Autonomy Table (Phase 14)**
+- One source of truth: the feed reads `audit_log` only (joined to the case and employees),
+  newest first, paged by `before_id` (default 50, max 200). No new table, no migration.
+  Times are workflow times (`created_at`, demo clock).
+- `activity/autonomy.py` is the registry: one `Capability` per action with actor type
+  (code / llm_agent / system / device / human), approval (none / supervisor /
+  payroll_admin / supervisor_or_payroll_admin), reversible (yes_undo / no /
+  not_applicable), guardrail, its `(audit_actions, audit_actors)` and `proof_tests`, plus
+  6 "never" rows. `ask_worker` is two rows told apart by actor (scheduler vs person).
+- Anti-drift (`tests/test_autonomy.py`, `tests/test_activity.py`): an AST scan finds every
+  audit write in the backend (f-strings only with a `Literal`-typed parameter, so
+  `detect_after_fix(after: Literal["fix", "undo"])`) and checks both directions; a
+  session-wide SQLAlchemy listener (`tests/audit_guard.py`, wired in conftest) fails any
+  test that writes an unmapped `(action, actor)` pair; rows that need a person name tests
+  that must contain a refusal or data-safety assertion; autonomous rows must happen with
+  their actor in the shared end-to-end story (`tests/activity_story.py`) or name the test
+  that covers them; the README block must equal the registry's output.
+- README "Autonomy and guardrails" is generated between markers by
+  `attendflow-autonomy --write-readme`; `--check` runs in CI.
+- Who sees what (API): Priya everything; a supervisor only rows of cases whose worker
+  reports to them (rows without a case are payroll-only); workers 403 `supervisor_only`.
+  `scheduler_cycle` rows are hidden from the feed.
+- Safety: feed items never carry before/after, tool input/output, prompts or message
+  bodies. `reason` only for a person's own typed reason (approve, edit, decide without,
+  reject, escalate, undo). `structured_model_failed` / `structured_draft_rejected` /
+  extraction rejections get fixed sentences (no diagnostic, no preview). Tested with
+  LLM_DIAGNOSTICS on.
+- Summary strip (same scope and filters, not actor/mode): investigated (distinct cases
+  with `investigation_case_stored`), messages sent, reminders, auto-resolved (+ undone),
+  escalated by silence (distinct cases), approvals (+ decided without the worker),
+  rejections, device punches.
+- Case links: Priya gets the `/admin` detail; a supervisor gets the existing case card,
+  now readable for any own-team case (`can_decide`), with a compact `trace` (tool name +
+  a code-built `result_summary`). `/admin` tool calls also show `result_summary`.
+- The reported Phase 13 "tool calls stamped 08:00" gap does not reproduce through the API
+  (test `test_agent_rows_use_the_moved_demo_clock`); only the standalone
+  `attendflow-agent-smoke` CLI (`agent/loop.py`) uses the fixed as-of clock.
+- Live check ran on `attendflow_phase14` (API :8001, Vite :5174, launch configs
+  `phase14-api` / `phase14-web` in `.claude/launch.json`). In PowerShell `$env:X=''`
+  deletes the variable, so an "empty" LLM key falls back to `.env`; point
+  `LLM_BASE_URL` at an unreachable address instead to keep a live check offline.
+
 ## Repo map
 
 ```
@@ -658,6 +706,9 @@ backend/attendflow/
   cases/auto_fix.py      auto-resolve info per case, supervisor team list, "without a human" metric
   cases/no_reply.py      no-reply ladder rules (due_step), wait state, reminder text, NoReply view
   cases/ladder.py        runs one ladder step per due case (scheduler step 4); no data writes
+  activity/autonomy.py   the Autonomy Table registry (single source) + README rendering
+  activity/feed.py       Activity Center feed, summary counts, team scope, safe sentences
+  activity/trace.py      one-line tool-call result summaries for the case traces
   tools/models.py        tool inputs/outputs (Pydantic), ok/error envelope, ProposedChange
   tools/read_tools.py    get_schedule, get_leave, get_leave_balance, get_punches, get_policy
   tools/run_checks.py    run_checks: simulate a change, re-run the engine, diff the week
@@ -667,16 +718,18 @@ backend/attendflow/
   tools/context.py       ToolContext + read_only_session()
   api/app.py             create_app(), error handlers, request logging, attendflow-api
   api/routes.py          /api endpoints;  api/schemas.py request/response models
-  scripts/               generate_data, validate_data, llm_smoke_test, detect, tools_cli (CLIs)
+  scripts/               generate_data, validate_data, llm_smoke_test, detect, tools_cli,
+                         autonomy_cli (CLIs)
 data/                    6 CSVs + policy.json (limits) + policy.md (plain-language, cited by agent)
 docs/                    PROGRESS.md, PLANTED_CASES.md, LLM_LICENCE.md, DEMO_WALKTHROUGH.md
 tests/                   pytest suite
 frontend/                Vite React: worker inbox (/, reminders + notices), supervisor (/supervisor,
                          no-reply badge, decide without worker, send to payroll, TeamAutoFixes),
                          admin (/admin, SchedulerPanel with demo clock, stuck counter + filter,
-                         metric line, AutoFixPanel), dev (/dev)
+                         metric line, AutoFixPanel), activity (/activity: feed, filters, summary
+                         strip, Autonomy tab), dev (/dev)
 docker-compose.yml       PostgreSQL 16 (host port 5433); docker/initdb creates the test DB
-.github/workflows/ci.yml lint + validate + tests (with a Postgres service) on Python 3.12
+.github/workflows/ci.yml lint + validate + README autonomy check + tests (Postgres service)
 ```
 
 ## Commands
@@ -690,6 +743,7 @@ python -m uv run attendflow-generate-data  # rebuild data/*.csv
 docker compose up -d db                    # PostgreSQL (port 5433)
 python -m uv run alembic upgrade head      # create/upgrade tables
 python -m uv run attendflow-api            # API on http://localhost:8000/docs
+python -m uv run attendflow-autonomy --write-readme  # regenerate README "Autonomy and guardrails" (--check in CI)
 python -m uv run attendflow-tools list     # agent tools (get_punches employee_id=E001 date=2026-04-14; --csv)
 # Set AGENT_MAX_STEPS=6 in your shell for this sequential Groq smoke.
 python -m uv run attendflow-agent-smoke P1-E001-2026-04-14

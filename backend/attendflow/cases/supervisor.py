@@ -21,9 +21,10 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from attendflow.activity.trace import result_summary
 from attendflow.cases import no_reply
 from attendflow.cases.time_review import TIME_ACTIONS
-from attendflow.db.models import EmployeeRow, ExceptionRow, WorkerMessageRow
+from attendflow.db.models import EmployeeRow, ExceptionRow, ToolCallRow, WorkerMessageRow
 from attendflow.engine.models import ACTION_INFO
 from attendflow.errors import ForbiddenError, NotFoundError
 from attendflow.fixes.params import DECISION_ACTIONS, MIN_NOTE_LENGTH, REQUIRED_NOTE
@@ -407,15 +408,19 @@ def case_card(
     row = session.get(ExceptionRow, exception_id)
     if row is None:
         raise NotFoundError(f"exception {exception_id} not found", code="exception_not_found")
-    if row.assigned_to != actor.employee_id:
+    employees = {e.employee_id: e for e in session.scalars(select(EmployeeRow))}
+    worker = employees[row.employee_id]
+    can_decide = row.assigned_to == actor.employee_id
+    # Phase 14: the team's supervisor may also open the card read-only (from the Activity
+    # Center). Deciding still needs the assignee: every decision endpoint checks it.
+    team_view = actor.role == "supervisor" and worker.supervisor_id == actor.employee_id
+    if not (can_decide or team_view):
         raise ForbiddenError(
             f"{actor.employee_id} cannot open {row.id}: it is assigned to "
             f"{row.assigned_to or 'nobody'}",
             code="not_assigned",
             details={"assigned_to": row.assigned_to, "actor_id": actor.employee_id},
         )
-    employees = {e.employee_id: e for e in session.scalars(select(EmployeeRow))}
-    worker = employees[row.employee_id]
     others = _others(employees, row.employee_id)
     reply = session.scalars(
         select(WorkerMessageRow)
@@ -485,5 +490,28 @@ def case_card(
         "applied_fix": row.applied_fix,
         "min_note_length": MIN_NOTE,
         "no_reply": no_reply.info(row, now, worker.name),
+        "can_decide": can_decide,
+        "trace": _trace(session, row.id),
     }
     return card
+
+
+def _trace(session: Session, exception_id: str) -> list[dict[str, Any]]:
+    """The latest investigation run's tool calls: name, ok and a one-line result built by
+    code. Arguments and raw outputs stay out (they can name other workers)."""
+    calls = session.scalars(
+        select(ToolCallRow).where(ToolCallRow.exception_id == exception_id).order_by(ToolCallRow.id)
+    ).all()
+    if not calls:
+        return []
+    latest = calls[-1].run_id
+    return [
+        {
+            "step_no": c.step_no,
+            "tool_name": c.tool_name,
+            "ok": c.ok,
+            "result_summary": result_summary(c.tool_name, c.ok, c.output),
+        }
+        for c in calls
+        if c.run_id == latest
+    ]

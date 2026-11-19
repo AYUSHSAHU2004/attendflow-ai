@@ -248,7 +248,7 @@ describe('AdminDetail', () => {
           after_summary: 'resolved, with Ravi Kumar',
         },
       ],
-      tool_calls: [{ run_id: 'r', step_no: 0, call_no: 0, tool_name: 'get_schedule', input: {}, ok: true, error_code: null, duration_ms: 3.2 }],
+      tool_calls: [{ run_id: 'r', step_no: 0, call_no: 0, tool_name: 'get_schedule', input: {}, ok: true, error_code: null, duration_ms: 3.2, result_summary: 'Scheduled 09:00 to 18:00.' }],
     }))
     render(<AdminPage />)
     await user.click(await screen.findByRole('button', { name: `Open ${AMIT_P1}` }))

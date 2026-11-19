@@ -253,3 +253,39 @@ select { font: inherit; padding: 0.55rem 0.6rem; border: 1px solid #aebfb3; bord
 .check { display: flex; gap: 0.6rem; align-items: center; justify-content: flex-start; font-weight: 600; margin: 0; }
 .check input { width: auto; flex: none; margin: 0; }
 .demo-clock { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; align-items: center; margin-top: 0.4rem; }
+
+/* ---------------------------------------------------------------- activity (Phase 14) */
+.tabs { display: flex; gap: 0.4rem; margin: 0 0 1rem; border-bottom: 1px solid #dcdfd6; }
+.tab { background: none; color: #33463d; border: 0; border-bottom: 3px solid transparent; border-radius: 0; padding: 0.5rem 0.8rem; min-height: auto; font-weight: 700; }
+.tab:hover:not(:disabled) { background: #eef3ec; }
+.tab.active { color: #1d4f37; border-bottom-color: #23583f; }
+.activity-summary .counter { cursor: default; }
+.feed { list-style: none; margin: 0 0 1rem; padding: 0; background: #fff; border: 1px solid #dcdfd6; border-radius: 0.7rem; }
+.feed-row { display: grid; grid-template-columns: 7.5rem 10rem minmax(0, 1fr) 11rem; gap: 0.4rem 0.8rem; padding: 0.6rem 0.8rem; border-bottom: 1px solid #eceee8; font-size: 0.9rem; border-left: 4px solid transparent; }
+.feed-row:last-child { border-bottom: 0; }
+.feed-row.actor-system { border-left-color: #8aa596; }
+.feed-row.actor-agent { border-left-color: #6a6fb5; }
+.feed-row.actor-device { border-left-color: #b08a3a; }
+.feed-row.actor-human { border-left-color: #23583f; }
+.feed-time { color: #4b5b53; font-variant-numeric: tabular-nums; }
+.feed-actor { display: grid; gap: 0.15rem; align-content: start; }
+.feed-name { font-weight: 700; overflow-wrap: anywhere; }
+.actor-badge { justify-self: start; }
+.actor-agent .actor-badge { background: #e6e7f6; color: #33367a; }
+.actor-device .actor-badge { background: #f4ead2; color: #634a12; }
+.actor-human .actor-badge { background: #dcefe2; color: #1d5136; }
+.feed-sentence { overflow-wrap: anywhere; }
+.feed-case { overflow-wrap: anywhere; }
+.badge.auto { background: #e3ebe5; color: #2e4a3b; }
+.autonomy-table td { font-size: 0.88rem; }
+.autonomy-table tbody tr { cursor: default; }
+.never-title { font-size: 1.1rem; margin: 1.4rem 0 0.4rem; }
+.never-list { margin: 0; padding-left: 1.1rem; display: grid; gap: 0.4rem; font-size: 0.92rem; }
+.trace { margin: 0; padding-left: 1.2rem; display: grid; gap: 0.25rem; font-size: 0.88rem; }
+/* With a case open beside it, each row puts its sentence and case under the time/actor. */
+.with-detail .feed-row { grid-template-columns: 7rem minmax(0, 1fr); }
+.with-detail .feed-sentence, .with-detail .feed-case { grid-column: 1 / -1; }
+@media (max-width: 760px) {
+  .feed-row { grid-template-columns: 1fr; }
+  .admin-split.with-detail { grid-template-columns: 1fr; }
+}

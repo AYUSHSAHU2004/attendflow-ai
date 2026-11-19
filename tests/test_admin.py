@@ -257,7 +257,17 @@ def test_detail_never_returns_keys_prompts_or_tool_output(demo, monkeypatch):
     ]
     assert all(
         set(c)
-        == {"run_id", "step_no", "call_no", "tool_name", "input", "ok", "error_code", "duration_ms"}
+        == {
+            "run_id",
+            "step_no",
+            "call_no",
+            "tool_name",
+            "input",
+            "ok",
+            "error_code",
+            "duration_ms",
+            "result_summary",  # Phase 14: one line built by code, never the raw output
+        }
         for c in case["tool_calls"]
     )
     raw = demo.get(f"/api/admin/exceptions/{AMIT_P1}", headers=PRIYA).text

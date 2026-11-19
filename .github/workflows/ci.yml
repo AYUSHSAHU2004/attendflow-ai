@@ -40,6 +40,8 @@ jobs:
           uv run ruff format --check .
       - name: Validate demo data and policy files
         run: uv run attendflow-validate
+      - name: README autonomy table matches the registry
+        run: uv run attendflow-autonomy --check
       - name: Tests (engine + API on PostgreSQL)
         run: uv run pytest
       - uses: actions/setup-node@v4

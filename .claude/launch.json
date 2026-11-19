@@ -1,0 +1,25 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "phase14-api",
+      "runtimeExecutable": "powershell",
+      "runtimeArgs": [
+        "-NoProfile",
+        "-Command",
+        "$env:DATABASE_URL='postgresql+psycopg://attendflow:attendflow@localhost:5433/attendflow_phase14'; $env:ATTENDFLOW_DEMO_MODE='true'; $env:ATTENDFLOW_ENABLE_SEED='true'; $env:ATTENDFLOW_CORS_ORIGINS='http://localhost:5174'; $env:SCHEDULER_ENABLED='false'; $env:LLM_API_KEY='none'; $env:LLM_BASE_URL='http://127.0.0.1:9/v1'; $env:LOG_FORMAT='text'; python -m uv run attendflow-api --port 8001"
+      ],
+      "port": 8001
+    },
+    {
+      "name": "phase14-web",
+      "runtimeExecutable": "powershell",
+      "runtimeArgs": [
+        "-NoProfile",
+        "-Command",
+        "$env:VITE_API_BASE_URL='http://localhost:8001'; Set-Location frontend; npm run dev -- --port 5174 --strictPort"
+      ],
+      "port": 5174
+    }
+  ]
+}

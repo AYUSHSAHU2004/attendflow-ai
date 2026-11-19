@@ -964,3 +964,104 @@ supervisor's reason to the worker.
 API and Vite; follow section 8 of [DEMO_WALKTHROUGH.md](DEMO_WALKTHROUGH.md).
 
 **Next: Phase 14** (Activity Center + autonomy table).
+
+## Phase 14: Activity Center and the Autonomy Table (2026-11-20)
+
+**What existed before** (built on, not duplicated): `audit_log` already recorded every
+step with its actor (`system`, `agent`, `device`, `worker`, `supervisor`, `admin`) and
+workflow time, including every Phase 12/13 step; `cases/admin.py audit_summary` already
+had a plain sentence for most actions; the `/admin` detail already showed the audit trail
+and the tool calls. `tool_calls`, `worker_messages`, the ladder columns, `scheduler_runs`
+and `investigation_jobs` were left as they are (the last two use real UTC, so the feed
+does not mix them in).
+
+**Built**
+- **Autonomy Table registry** (`activity/autonomy.py`): 22 action rows + 6 "never" rows.
+  Each row: actor type (code / LLM agent / system / device / human), who does it, approval
+  needed, reversible, a one-line guardrail, the audit `(action, actor)` pairs it writes,
+  and the tests that prove its approval or limit. Includes Phase 12 auto-resolve (code, no
+  approval, undoable) and undo (human, supervisor or payroll), each Phase 13 ladder step
+  (system, no approval, "changes no data"), decide without the worker and escalate.
+- **README "Autonomy and guardrails"** is generated between markers by the new CLI
+  `attendflow-autonomy` (`--write-readme`, `--check`; the check also runs in CI).
+- **Activity feed** (`activity/feed.py`, `GET /api/activity`): audit rows newest first,
+  paged by `before_id` (50 a page, max 200). Each item: workflow time, actor type and name
+  (a person, or Rule engine / Scheduler / No-reply ladder / LLM agent / the device ID), a
+  fixed-template sentence, the case (policy, date, title, status) and the employee.
+  Filters: actor type, autonomous/human, policy, employee, case, date range.
+- **Summary strip** (`GET /api/activity/summary`): investigated, messages, reminders,
+  auto-resolved (+ undone), escalated by silence, approvals (+ without the worker),
+  rejections, device punches; counted by the database with the feed's scope and filters.
+- **Who sees what, in the API:** Priya everything; a supervisor only cases whose worker
+  reports to them (no rows without a case); workers 403. `GET /api/autonomy` for
+  supervisors and Priya.
+- **Case links:** Priya opens the existing `/admin` detail (tool calls now also show a
+  code-built `result_summary`). A supervisor opens the existing case card, now readable
+  read-only for any own-team case (`can_decide: false`, decision buttons hidden) with a
+  compact **How it was checked** trace. Decisions still need the assignee.
+- **Frontend** `/activity` (`ActivityPage.tsx`): summary strip, filters, feed with "Load
+  older", case detail beside it, **Autonomy** tab with the "Never allowed" list; links from
+  `/admin` and `/supervisor`. Works at phone width (no horizontal scroll at 375 px).
+
+**Anti-drift tests** (the harness part)
+- Static: an AST scan of the backend finds every audit write (including names resolved
+  from local assignments and f-strings over a `Literal` parameter) and fails if an action
+  is missing from the registry, or if the registry lists an action no code writes.
+- Runtime: a session-wide SQLAlchemy listener (`tests/audit_guard.py`) fails any test that
+  writes an `(action, actor)` pair no row covers (self-tested).
+- Approval rows: each names existing tests, and each named test must contain a refusal or
+  data-safety assertion (`assert_error`, 403/404/409, `snapshot`, `write_log`,
+  `pytest.raises`). I also checked every named test by hand: all assert the refusal.
+- Autonomous rows: every action happens with its actor in the end-to-end story
+  (`tests/activity_story.py`), or names the existing test that produces it (detection
+  failures, held auto-resolve, the legacy loop).
+- README copy equals the registry's output.
+
+**Decisions** (all 16 defaults, with your two additions)
+- **Your addition (Q5):** the leak test runs the story with `LLM_DIAGNOSTICS` on, a
+  failing model, a bad draft and a rejected extraction, checks the planted diagnostic and
+  preview text is really in the audit log, then scans every feed page (Priya, Ravi,
+  Sunita), the summary, the autonomy table and the case cards: no diagnostic, preview,
+  before/after, device key or prompt text.
+- **Your addition (Q11):** see the approval-row check above.
+- Small code change for the scan: `detect_after_fix(after: Literal["fix", "undo"])`.
+- Two tests changed because their premise changed (agreed in Q14): Ravi may now read his
+  team's escalated case card (`can_decide` false); every decision is still 403.
+- `scheduler_cycle` heartbeat rows are hidden from the feed (Q4; the scheduler panel
+  shows them).
+- **The 08:00 tool-call gap (item 5):** not reproducible through the API. A new test
+  moves the demo clock, investigates, and finds tool-call and agent rows at the moved
+  time. Only the standalone `attendflow-agent-smoke` CLI (`agent/loop.py`) still uses the
+  fixed as-of clock; left as is.
+
+**Checks**
+- Backend with `REQUIRE_DB=1`: 700 passed, 2 skipped (opt-in real-LLM). 40 new:
+  `test_autonomy.py` (21), `test_activity.py` (15, on the shared story), `test_activity_api.py` (4: empty state,
+  failed detection after an undo, the feed never writes, moved clock).
+- Frontend: 84 tests (9 new: feed, summary, filters, paging, empty, refusal, case link,
+  autonomy tab; read-only card with trace). Type-check, build, OpenAPI drift check pass;
+  the bundle has no `URLSearchParams`.
+- Ruff, `attendflow-autonomy --check`.
+
+**Live check** (own database `attendflow_phase14`, API :8001, Vite :5174, demo mode)
+- Reset, Neha's 08:58 clock-in, run, +8 h run (reminder), +16 h run (Ravi), +24 h run
+  (Priya), Ravi undid Sana's auto-resolve. The feed told the story in order with the right
+  actors; summary 1/1/1/1 (1 undone)/1/0/0/1. Ravi saw 27 rows, Inbound only, no device or
+  clock rows; Neha's escalated card opened read-only with the trace. Amit's P1: open, only
+  `detected`.
+- **Note:** the run was meant to be offline, but in PowerShell `$env:LLM_API_KEY=''`
+  deletes the variable, so the key from `.env` was used: one investigation and one worker
+  message went to Groq (demo data only). The launch config now points `LLM_BASE_URL` at an
+  unreachable address.
+- Found and fixed during the check: "recorded a in" → "recorded a clock-in"; LLM rows
+  named "LLM agent"; feed rows stack when a case is open beside them.
+
+**Phase 22 checklist (added):** the new endpoints trust `X-Actor-Id`; the feed shows typed
+reasons and a worker's "No" text to payroll and the team's supervisor; supervisors can now
+read their team's case cards.
+
+**Verify:** `python -m uv run pytest tests/test_autonomy.py tests/test_activity.py
+tests/test_activity_api.py`; `python -m uv run attendflow-autonomy --check`; then section 9
+of [DEMO_WALKTHROUGH.md](DEMO_WALKTHROUGH.md).
+
+**Next: Phase 15** (role switcher + Priya dashboard).

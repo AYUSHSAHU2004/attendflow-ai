@@ -324,6 +324,7 @@ export function AdminDetail({
               <li key={index}>
                 <code>{call.tool_name}</code> {call.ok ? 'ok' : `failed${call.error_code ? ` (${call.error_code})` : ''}`}
                 {call.duration_ms !== null && call.duration_ms !== undefined && ` · ${Math.round(call.duration_ms)} ms`}
+                <span className="hint"> {call.result_summary}</span>
               </li>
             ))}
           </ul>
@@ -371,7 +372,9 @@ export function AdminPage() {
   return (
     <main className="page wide admin" id="main">
       <h1>All exceptions</h1>
-      <p className="lede">Signed in as {adminActor.name} ({adminActor.id})</p>
+      <p className="lede">
+        Signed in as {adminActor.name} ({adminActor.id}) · <a href="/activity">Activity and autonomy</a>
+      </p>
 
       <SchedulerPanel onChanged={() => setRefresh((value) => value + 1)} />
 

@@ -389,11 +389,13 @@ def run_reject_path(client, monkeypatch) -> None:
     assert rejected.status_code == 200, rejected.text
     assert (rejected.json()["status"], rejected.json()["assigned_to"]) == ("escalated", "E201")
 
-    # Ravi can no longer touch it; Sunita never could.
+    # Ravi can no longer touch it (he may still read his team's card); Sunita never could.
+    assert_error(
+        client.get(f"/api/supervisor/cases/{MEENA_P5}", headers=SUNITA), 403, "not_assigned"
+    )
+    view = client.get(f"/api/supervisor/cases/{MEENA_P5}", headers=RAVI)
+    assert view.status_code == 200 and view.json()["can_decide"] is False
     for who in (RAVI, SUNITA):
-        assert_error(
-            client.get(f"/api/supervisor/cases/{MEENA_P5}", headers=who), 403, "not_assigned"
-        )
         assert_error(post(client, MEENA_P5, "reject", {"reason": reason}, who), 403, "not_assigned")
     assert_error(
         post(client, MEENA_P5, "approve", {"option_id": "approve_overtime"}, RAVI),

@@ -487,6 +487,13 @@ class CardOptionOut(ApiModel):
     consequence: CardConsequenceOut
 
 
+class TraceStepOut(ApiModel):
+    step_no: int
+    tool_name: str
+    ok: bool | None
+    result_summary: str
+
+
 class SupervisorCaseOut(ApiModel):
     exception_id: str
     status: Status
@@ -510,6 +517,14 @@ class SupervisorCaseOut(ApiModel):
     applied_fix: dict[str, Any] | None
     min_note_length: int
     no_reply: NoReplyOut | None = None
+    can_decide: bool = Field(
+        description="True only for the assignee. The team's supervisor may open the card "
+        "read-only (Phase 14); every decision endpoint still requires the assignee."
+    )
+    trace: list[TraceStepOut] = Field(
+        description="The latest investigation's tool calls: name, ok and a result line built "
+        "by code (no arguments, raw outputs or prompts)"
+    )
 
 
 # ---------------------------------------------------------------- payroll admin
@@ -609,6 +624,9 @@ class AdminToolCallOut(ApiModel):
     ok: bool | None
     error_code: str | None
     duration_ms: float | None
+    result_summary: str = Field(
+        description="One line built by code from the tool output (Phase 14); never the raw output"
+    )
 
 
 class AdminWorkerMessageOut(ApiModel):
@@ -947,3 +965,91 @@ class AutoResolveMetricOut(ApiModel):
     auto_resolve_enabled: bool = Field(description="The AUTO_RESOLVE_ENABLED kill switch")
     allowed_policies: list[str] = Field(description="Policies policy.json lets auto-resolve")
     by_policy: list[MetricPolicyOut]
+
+
+# ---------------------------------------------------------------- Phase 14: activity
+
+FeedMode = Literal["all", "autonomous", "human"]
+
+
+class ActivityCaseOut(ApiModel):
+    exception_id: str
+    policy_id: str
+    date: date
+    title: str
+    status: Status
+
+
+class ActivityEmployeeOut(ApiModel):
+    employee_id: str
+    name: str
+    team: str | None
+
+
+class ActivityItemOut(ApiModel):
+    id: int
+    at: datetime = Field(description="Workflow time (the demo clock), not server time")
+    actor_type: ActorType
+    actor_label: str
+    actor_name: str = Field(description="The person, or which part of the system acted")
+    autonomous: bool = Field(description="Done by the system, the LLM agent or a device")
+    action: str
+    capability: str | None = Field(description="The Autonomy Table row this belongs to")
+    sentence: str = Field(description="Plain sentence from a fixed template; never LLM text")
+    reason: str | None = Field(description="A person's own typed reason; null otherwise")
+    case: ActivityCaseOut | None
+    employee: ActivityEmployeeOut | None
+
+
+class ActivityViewerOut(ApiModel):
+    employee_id: str
+    role: str
+
+
+class ActivityFeedOut(ApiModel):
+    viewer: ActivityViewerOut
+    items: list[ActivityItemOut]
+    next_before_id: int | None = Field(
+        description="Pass as before_id for the next (older) page; null on the last page"
+    )
+
+
+class ActivityCountsOut(ApiModel):
+    investigated: int = Field(description="Cases with a stored investigation")
+    messages_sent: int
+    reminders_sent: int
+    auto_resolved: int
+    auto_resolves_undone: int
+    escalated_by_silence: int = Field(description="Cases the no-reply ladder handed on")
+    human_approvals: int
+    decided_without_worker: int
+    human_rejections: int
+    device_punches: int
+
+
+class ActivitySummaryOut(ApiModel):
+    date_from: date | None
+    date_to: date | None
+    counts: ActivityCountsOut
+    definitions: dict[str, list[str]] = Field(description="The audit actions each count uses")
+
+
+class AutonomyRowOut(ApiModel):
+    key: str
+    title: str
+    kind: Literal["allowed", "never"]
+    actor_type: Literal["code", "llm_agent", "system", "device", "human"]
+    actor_label: str
+    performed_by: str
+    approval: Literal["none", "supervisor", "payroll_admin", "supervisor_or_payroll_admin"]
+    approval_label: str
+    reversible: Literal["yes_undo", "no", "not_applicable"]
+    reversible_label: str
+    guardrail: str
+    autonomous: bool
+    audit_actions: list[str]
+    proof_tests: list[str]
+
+
+class AutonomyTableOut(ApiModel):
+    items: list[AutonomyRowOut]

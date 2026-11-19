@@ -22,6 +22,35 @@ def data_copy(tmp_path: Path) -> Path:
     return dst
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _audit_registry_listener():
+    """Phase 14: watch every AuditLogRow insert of the session (tests/audit_guard.py)."""
+    from sqlalchemy import event
+
+    from attendflow.db.models import AuditLogRow
+    from tests import audit_guard
+
+    event.listen(AuditLogRow, "before_insert", audit_guard.record)
+    yield
+    event.remove(AuditLogRow, "before_insert", audit_guard.record)
+
+
+@pytest.fixture(autouse=True)
+def _no_unmapped_audit_rows():
+    """Fail the test that wrote an audit action missing from the Autonomy Table."""
+    from tests import audit_guard
+
+    start = len(audit_guard.UNMAPPED)
+    yield
+    new = sorted(set(audit_guard.UNMAPPED[start:]))
+    del audit_guard.UNMAPPED[start:]
+    if new:
+        pytest.fail(
+            f"audit (action, actor) pairs missing from the Autonomy Table "
+            f"(backend/attendflow/activity/autonomy.py): {new}"
+        )
+
+
 def replace_in_file(path: Path, old: str, new: str, count: int = 1) -> None:
     text = path.read_text(encoding="utf-8")
     assert old in text, f"{old!r} not found in {path.name}"
@@ -99,11 +128,16 @@ def db_engine():
 
 @pytest.fixture
 def api_settings(db_engine):
+    return make_api_settings(db_engine)
+
+
+def make_api_settings(db_engine, **changes):
+    """The API test settings (also used by module-scoped fixtures, Phase 14)."""
     from dataclasses import replace
 
     from attendflow.config import get_settings
 
-    return replace(
+    settings = replace(
         get_settings(env_file=None),
         data_dir=DATA_DIR,
         database_url=db_engine.url.render_as_string(hide_password=False),
@@ -123,6 +157,27 @@ def api_settings(db_engine):
         no_reply_supervisor_hours=24,
         no_reply_admin_hours=24,
     )
+    return replace(settings, **changes)
+
+
+@pytest.fixture(scope="module")
+def story_client(db_engine):
+    """Phase 14: demo mode and LLM diagnostics on, the shared end-to-end story run once
+    per test module (tests/activity_story.py). Read-only tests only."""
+    from fastapi.testclient import TestClient
+    from sqlalchemy.orm import Session
+
+    from attendflow.api.app import create_app
+    from attendflow.db.seed import truncate_all
+    from tests.activity_story import run_story
+
+    with Session(db_engine) as s, s.begin():
+        truncate_all(s)
+    settings = make_api_settings(db_engine, demo_mode=True, llm_diagnostics=True)
+    app = create_app(settings, engine=db_engine)
+    with pytest.MonkeyPatch.context() as mp, TestClient(app, raise_server_exceptions=False) as c:
+        c.story = run_story(c, mp)
+        yield c
 
 
 @pytest.fixture

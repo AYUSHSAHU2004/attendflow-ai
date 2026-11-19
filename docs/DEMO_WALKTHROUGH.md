@@ -1,4 +1,4 @@
-# Demo walkthrough (Phases 10-13)
+# Demo walkthrough (Phases 10-14)
 
 The exact clicks for the prototype demo: Priya's list, Amit's missed clock-out from
 detection to approval, and the reject path. About 6 minutes.
@@ -177,6 +177,42 @@ clock straight to +1 day (or more) after the question, press **Run scheduler now
 (or wait two cycles): the first run sends the reminder, the second brings in the
 supervisor. The steps above move the clock in smaller jumps, so one run per jump is
 enough there.
+
+## 9. What did the agent do, and who approved it? (Phase 14)
+
+Run right after section 8 steps 1 to 5 (Neha's silent path), then undo Sana's
+auto-resolve as Ravi (`/supervisor` → **Auto-resolved for my team** → Sana's P2 →
+**Undo**, reason "Sana says the second tap was a real re-entry"). Numbers are from the
+Phase 14 live check (database `attendflow_phase14`, API :8001, Vite :5174).
+
+1. Open `/activity` (or the **Activity and autonomy** link on `/admin`). Priya sees
+   everything. The summary strip: **1** case investigated by the agent, **1** message,
+   **1** reminder, **1** auto-resolved (1 undone), **1** escalated by silence, **0**
+   approvals, **0** rejections, **1** device punch.
+2. Read the feed from the bottom up: the rule engine finds the 17 cases and auto-resolves
+   Sana's P2; **GATE-01 recorded a clock-in for Neha Gupta at Wed 15 Apr 08:58**; the
+   rule engine opens her P1 and closes her P10; the scheduler starts an investigation; the
+   LLM agent investigates with read-only tools; the scheduler asks Neha; the no-reply
+   ladder sends a reminder (Thu 16:00), brings in Ravi (Fri 08:00) and payroll (Sat 08:00),
+   each "Nothing was changed"; Priya's demo clock moves sit between them; Ravi undoes
+   Sana's auto-resolve with his reason. Each row says who acted: System (Rule engine,
+   Scheduler, No-reply ladder), LLM agent, Device, or a named person.
+3. Filters: **Show → Human decisions only** leaves Ravi's undo and Priya's clock moves.
+   **Autonomous only** plus `E004` in **Case or employee** leaves Neha's automatic story
+   (the summary strip follows the filters). Dates filter on workflow time.
+4. Click **Neha Gupta · P1** on any row: the same `/admin` case detail opens beside the
+   feed, with the tool calls and a one-line result for each.
+5. Ravi's view: `/activity?as=E101` (dev builds), or **Team activity** on `/supervisor`.
+   Only Inbound cases; no device punches or demo-clock rows. Opening Neha's P1 shows his
+   normal case card, **read only** ("this case is with Priya Sharma"), with **How it was
+   checked** (each tool and its result) and no decision buttons. Sunita sees only
+   Outbound rows.
+6. **Autonomy** tab: every action, its actor (Code, System, LLM agent, Device, Human),
+   the approval it needs, whether it can be undone, and its guardrail, then the "Never
+   allowed" rows (the LLM never writes timecards or picks a fix, nobody calculates pay,
+   silence is never a Yes, nothing outside the table). The README section "Autonomy and
+   guardrails" is generated from the same registry, and tests fail if either drifts.
+7. Amit's P1 is still untouched: open with Ravi, only the `detected` row.
 
 ## Also worth showing
 
