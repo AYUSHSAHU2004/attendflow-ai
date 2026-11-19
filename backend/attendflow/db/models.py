@@ -243,6 +243,18 @@ class WorkerMessageRow(Base):
     reminder_text: Mapped[str | None] = mapped_column(Text)
 
 
+class PayrollSignoffRow(Base):
+    __tablename__ = "payroll_signoffs"
+
+    week_start: Mapped[date] = mapped_column(Date, primary_key=True)
+    signed_by: Mapped[str] = mapped_column(ForeignKey("employees.employee_id"))
+    signer_name: Mapped[str] = mapped_column(Text)
+    signed_at: Mapped[datetime] = mapped_column(DateTime(timezone=False))
+    note: Mapped[str | None] = mapped_column(Text)
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    reopened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
+
+
 class AuditLogRow(Base):
     __tablename__ = "audit_log"
     __table_args__ = (

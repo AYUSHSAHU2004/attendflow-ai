@@ -50,6 +50,8 @@ HUMAN_REASON_ACTIONS = (
     "reject_and_escalate",
     "escalate_to_admin",
     "auto_resolve_undone",
+    "payroll_signed_off",
+    "payroll_reopened",
 )
 HUMAN_ACTORS = ("worker", "supervisor", "admin")
 # Fixed sentences for rows whose detail sentence would echo a model diagnostic.
@@ -84,6 +86,10 @@ def feed_sentence(entry: AuditLogRow, employees: dict[str, EmployeeRow]) -> str:
     if entry.action in SAFE_TEXT:
         return SAFE_TEXT[entry.action]
     after = entry.after or {}
+    if entry.action == "payroll_signed_off":
+        return f"Signed off attendance readiness for the week of {after['week_start']}."
+    if entry.action == "payroll_reopened":
+        return f"Reopened attendance readiness for the week of {after['week_start']}."
     if entry.action == "punch_ingested":
         who = employees.get(after.get("employee_id") or "")
         name = who.name if who else (after.get("employee_id") or "a worker")

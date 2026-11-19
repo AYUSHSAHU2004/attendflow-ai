@@ -148,6 +148,7 @@ def make_api_settings(db_engine, **changes):
         # Phase 11: never pick these up from a developer's .env.
         device_api_key="test-device-key",
         demo_mode=False,
+        demo_extra_week=False,
         scheduler_enabled=False,
         scheduler_backlog=False,
         auto_resolve_enabled=True,  # Phase 12 kill switch: on unless a test turns it off

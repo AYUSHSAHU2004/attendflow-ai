@@ -1099,3 +1099,68 @@ class AutonomyRowOut(ApiModel):
 
 class AutonomyTableOut(ApiModel):
     items: list[AutonomyRowOut]
+
+
+# ---------------------------------------------------------------- payroll readiness
+
+ReadinessStatus = Literal["ready", "ready_with_notes", "blocked"]
+
+
+class ReadinessReasonOut(ApiModel):
+    employee_id: str
+    code: str
+    message: str
+    blocking: bool
+    exception_ids: list[str]
+    owner_id: str | None
+    owner_name: str | None
+    contact: Literal["worker", "supervisor", "hr"] | None
+
+
+class ReadinessGroupOut(ApiModel):
+    team: str
+    status: ReadinessStatus
+    reasons: list[ReadinessReasonOut]
+
+
+class ReadinessWorkerOut(ReadinessGroupOut):
+    employee_id: str
+    employee_name: str
+    worked_hours: float
+    scheduled_remaining_hours: float
+    projected_hours: float
+
+
+class PayrollSignoffOut(ApiModel):
+    signer_name: str
+    signed_at: datetime
+    note: str | None
+    reopened_at: datetime | None
+    stale: bool
+
+
+class PayrollReadinessOut(ApiModel):
+    week_start: date
+    week_end: date
+    evaluated_through: date
+    data_cutoff: datetime
+    closed: bool
+    has_data: bool
+    status: ReadinessStatus
+    scope: Literal["all", "team"]
+    can_sign: bool
+    can_reopen: bool
+    signoff: PayrollSignoffOut | None
+    exception_counts: AdminCountersOut
+    overtime_limit_hours: float
+    reasons: list[ReadinessReasonOut]
+    teams: list[ReadinessGroupOut]
+    workers: list[ReadinessWorkerOut]
+
+
+class PayrollSignoffIn(RequestModel):
+    note: str | None = Field(default=None, max_length=500)
+
+
+class PayrollReopenIn(RequestModel):
+    reason: str = Field(min_length=10, max_length=500)

@@ -46,6 +46,7 @@ class Settings:
     device_api_key: str | None = None  # X-Device-Key for POST /api/punches; unset = disabled
     device_max_backdate_days: int = 7
     demo_mode: bool = False  # demo-only endpoints and the /admin Simulate punch panel
+    demo_extra_week: bool = False
     scheduler_enabled: bool = False
     scheduler_interval_seconds: float = 60
     scheduler_investigations_per_cycle: int = 3
@@ -117,6 +118,7 @@ def get_settings(env_file: Path | None = REPO_ROOT / ".env") -> Settings:
         device_api_key=os.getenv("DEVICE_API_KEY") or None,
         device_max_backdate_days=int(os.getenv("DEVICE_MAX_BACKDATE_DAYS") or 7),
         demo_mode=_env_bool("ATTENDFLOW_DEMO_MODE", default=False),
+        demo_extra_week=_env_bool("ATTENDFLOW_DEMO_EXTRA_WEEK", default=False),
         scheduler_enabled=_env_bool("SCHEDULER_ENABLED", default=False),
         scheduler_interval_seconds=float(os.getenv("SCHEDULER_INTERVAL_SECONDS") or 60),
         scheduler_investigations_per_cycle=int(

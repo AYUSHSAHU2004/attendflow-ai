@@ -341,3 +341,23 @@ select { font: inherit; padding: 0.55rem 0.6rem; border: 1px solid #aebfb3; bord
   .dashboard-bar-track > span { background: #87cdaa; }
   .dashboard-table th, .dashboard-table td { border-color: #466253; }
 }
+
+.payroll > .panel { margin-block: 1rem; }
+.payroll-table { width: 100%; border-collapse: collapse; }
+.payroll-table th, .payroll-table td {
+  text-align: left;
+  vertical-align: top;
+  padding: .6rem;
+  border-bottom: 1px solid #dedfd6;
+}
+.payroll-table small { display: block; }
+.payroll-reasons { margin-block: 0; padding-inline-start: 1.2rem; overflow-wrap: anywhere; }
+.payroll-reasons li + li { margin-top: .35rem; }
+.payroll-confirm { max-width: 34rem; margin-top: 1rem; }
+.payroll-confirm textarea { display: block; width: 100%; margin-block: .4rem .8rem; }
+
+@media (max-width: 740px) {
+  .payroll-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .payroll-table tr { display: block; padding-block: .55rem; border-bottom: 1px solid #dedfd6; }
+  .payroll-table th, .payroll-table td { display: block; border: 0; padding: .2rem 0; }
+}

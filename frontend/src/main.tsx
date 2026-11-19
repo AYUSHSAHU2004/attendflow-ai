@@ -3,10 +3,12 @@ import { createRoot } from 'react-dom/client'
 import { ActivityPage } from './ActivityPage'
 import { AdminPage } from './AdminPage'
 import {
-  activityActor, adminActor, dashboardActor, supervisorActor, supervisorDashboardPath, workerActor,
+  activityActor, adminActor, dashboardActor, payrollActor, supervisorActor,
+  supervisorDashboardPath, supervisorPayrollPath, workerActor,
 } from './actors'
 import { DashboardPage } from './DashboardPage'
 import { DevPage } from './DevPage'
+import { PayrollPage } from './PayrollPage'
 import { SupervisorPage } from './SupervisorPage'
 import { WorkerInbox } from './WorkerInbox'
 import './styles.css'
@@ -17,17 +19,20 @@ const page = path === '/dev' ? 'dev'
     : path === '/admin' ? 'admin'
       : path === '/activity' ? 'activity'
         : path === '/dashboard' || path === supervisorDashboardPath ? 'dashboard'
-          : 'worker'
+          : path === '/payroll' || path === supervisorPayrollPath ? 'payroll'
+            : 'worker'
 const actor = page === 'worker' ? workerActor
   : page === 'admin' ? adminActor
     : page === 'activity' ? activityActor
       : page === 'dashboard' ? dashboardActor
-        : supervisorActor
+        : page === 'payroll' ? payrollActor
+          : supervisorActor
 document.title = {
   activity: 'AttendFlow | Activity',
   admin: 'AttendFlow | All exceptions',
   dashboard: 'AttendFlow | Operations dashboard',
   dev: 'AttendFlow | Dev tools',
+  payroll: 'AttendFlow | Payroll readiness',
   supervisor: 'AttendFlow | Decisions',
   worker: 'AttendFlow | Attendance inbox',
 }[page]
@@ -46,6 +51,7 @@ createRoot(document.getElementById('root')!).render(
         : page === 'admin' ? <AdminPage />
           : page === 'activity' ? <ActivityPage />
             : page === 'dashboard' ? <DashboardPage />
-              : <WorkerInbox />}
+              : page === 'payroll' ? <PayrollPage />
+                : <WorkerInbox />}
   </StrictMode>,
 )

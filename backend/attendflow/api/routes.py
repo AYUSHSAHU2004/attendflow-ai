@@ -46,6 +46,9 @@ from attendflow.api.schemas import (
     HealthOut,
     InvestigationJobOut,
     NoReplyFilter,
+    PayrollReadinessOut,
+    PayrollReopenIn,
+    PayrollSignoffIn,
     PunchAcceptedOut,
     PunchIn,
     RejectIn,
@@ -65,7 +68,7 @@ from attendflow.api.schemas import (
     WorkerReplyOut,
     WorkerTimeIn,
 )
-from attendflow.cases import admin, auto_fix, dashboard, service, supervisor
+from attendflow.cases import admin, auto_fix, dashboard, payroll, service, supervisor
 from attendflow.cases.selection import validate_date_range
 from attendflow.cases.transitions import Status
 from attendflow.clock import Clock
@@ -170,7 +173,7 @@ def seed(
         raise ForbiddenError("seeding is disabled on this server", code="seed_disabled")
     try:
         with session.begin():
-            counts = seed_from_csv(session, settings.data_dir)
+            counts = seed_from_csv(session, settings.data_dir, extra_week=settings.demo_extra_week)
     except DataValidationError as exc:
         raise AppError(
             "the demo CSVs are invalid; nothing was changed",
@@ -693,6 +696,72 @@ def operations_dashboard(
 
 
 @router.get(
+    "/payroll",
+    response_model=PayrollReadinessOut,
+    tags=["payroll"],
+    summary="Attendance readiness for one Monday-to-Sunday period",
+    responses=_errors(403, 422),
+)
+def payroll_readiness(
+    actor_id: ActorId,
+    session: SessionDep,
+    clock: ClockDep,
+    policy: PolicyDep,
+    week_start: date | None = None,
+):
+    with session.begin():
+        session.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"))
+        return payroll.overview(session, actor_id, clock, policy, week_start)
+
+
+def _lock_payroll_decision(session: Session) -> None:
+    session.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ"))
+    # Seed truncates employees before payroll_signoffs. Take locks in the same order.
+    session.execute(text("LOCK TABLE employees IN ACCESS SHARE MODE"))
+    session.execute(text("LOCK TABLE payroll_signoffs IN SHARE ROW EXCLUSIVE MODE"))
+
+
+@router.post(
+    "/payroll/{week_start}/sign-off",
+    response_model=PayrollReadinessOut,
+    tags=["payroll"],
+    summary="Record a human sign-off for a closed, blocker-free week",
+    responses=_errors(403, 409, 422),
+)
+def payroll_sign_off(
+    week_start: date,
+    body: PayrollSignoffIn,
+    actor_id: ActorId,
+    session: SessionDep,
+    clock: ClockDep,
+    policy: PolicyDep,
+):
+    with session.begin():
+        _lock_payroll_decision(session)
+        return payroll.sign(session, actor_id, clock, policy, week_start, body.note)
+
+
+@router.post(
+    "/payroll/{week_start}/reopen",
+    response_model=PayrollReadinessOut,
+    tags=["payroll"],
+    summary="Reopen a signed-off week with a human reason",
+    responses=_errors(403, 409, 422),
+)
+def payroll_reopen(
+    week_start: date,
+    body: PayrollReopenIn,
+    actor_id: ActorId,
+    session: SessionDep,
+    clock: ClockDep,
+    policy: PolicyDep,
+):
+    with session.begin():
+        _lock_payroll_decision(session)
+        return payroll.reopen(session, actor_id, clock, policy, week_start, body.reason)
+
+
+@router.get(
     "/admin/exceptions",
     response_model=AdminOverviewOut,
     tags=["admin"],
@@ -888,7 +957,8 @@ def audit_log(
     actor_id: Annotated[str | None, Query(pattern=EMPLOYEE_ID)] = None,
     limit: Annotated[int, Query(ge=1, le=1000)] = 200,
 ):
-    stmt = select(AuditLogRow)
+    # The legacy dev endpoint has no role check. Period decisions are in the admin feed.
+    stmt = select(AuditLogRow).where(~AuditLogRow.action.startswith("payroll_", autoescape=True))
     if exception_id:
         stmt = stmt.where(AuditLogRow.exception_id == exception_id)
     if actor:
@@ -1104,7 +1174,9 @@ def demo_reset(actor_id: ActorId, request: Request, session: SessionDep):
         raise ConflictError("a scheduler cycle is running; try again", code="scheduler_busy")
     try:
         with session.begin():
-            counts = seed_from_csv(session, state.settings.data_dir)
+            counts = seed_from_csv(
+                session, state.settings.data_dir, extra_week=state.settings.demo_extra_week
+            )
             demo_clock.reset(session, state.clock)  # back to the as-of time (Phase 13)
     except DataValidationError as exc:
         raise AppError(

@@ -1,5 +1,5 @@
 import { type FormEvent, useEffect, useState } from 'react'
-import { reviewers, supervisorActor, teamDashboardHref } from './actors'
+import { linkedCase, reviewers, supervisorActor, teamDashboardHref } from './actors'
 import {
   ApiError,
   approveCase,
@@ -629,7 +629,7 @@ export function SupervisorPage() {
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [refresh, setRefresh] = useState(0)
-  const [selected, setSelected] = useState<string | null>(null)
+  const [selected, setSelected] = useState<string | null>(linkedCase)
 
   useEffect(() => {
     const controller = new AbortController()

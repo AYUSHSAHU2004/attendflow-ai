@@ -53,11 +53,14 @@ Generated from `backend/attendflow/activity/autonomy.py` by `python -m uv run at
 | Escalate to payroll | Human | Supervisor | Supervisor | Not applicable | Only the assignee, with a reason of 10+ characters; decides nothing and changes no data. |
 | Undo an auto-resolve | Human | Supervisor or payroll admin | Supervisor (payroll admin once escalated) | No | The team's supervisor or payroll, with a reason; restores the exact before-values through fixes/apply.py; refused with no change if the data changed since; the case is never auto-handled again. |
 | Move the demo clock forward | Human | Payroll admin | Payroll admin | No | Demo mode only (404 otherwise); forward only, at most +14 days; never changes what detection sees. |
+| Sign off attendance readiness | Human | Payroll admin | Payroll admin | Yes, with undo | Only a closed period with attendance data and no blockers can be signed off. Changes to the reviewed data require a new human sign-off. |
+| Reopen attendance readiness | Human | Payroll admin | Payroll admin | Yes, with undo | Requires a reason. Reopening preserves the audit history and source data. |
 
 **Never allowed**
 
 | Never | Who | Guardrail |
 |---|---|---|
+| Sign off an attendance period automatically | System | Payroll sign-off requires an explicit action by the payroll admin. |
 | Write timecards, schedules or leave | LLM agent | Its tools are read-only (READ ONLY transaction, no writer imports); fixes/apply.py is the only writer and runs only after a person approves. |
 | Approve or pick a fix on its own | LLM agent | Its proposal is a draft that must match a stored option; only a person's approve applies anything. |
 | Calculate payroll or salaries | Anyone | There is no pay data in the database and no pay tool; the app only cleans attendance before payroll. |
@@ -278,3 +281,14 @@ appears (default 4). The dashboard only reports attendance hours. See section 10
 From `frontend/`, run `npm test`, `npm run typecheck`, and `npm run build`.
 Run `npm run api:generate` after backend API changes to refresh the generated
 OpenAPI types.
+
+## Payroll readiness (Phase 16)
+
+Open `/payroll` as Priya to check a Monday–Sunday attendance period. The report
+lists blockers, notes, and who acts next. Closed periods with attendance data and
+no blockers can be signed off and reopened with a reason. Supervisors see their own
+team at `/supervisor/payroll`. The attendance cutoff governs whether a week is closed.
+
+For a demo sign-off, set `ATTENDFLOW_DEMO_EXTRA_WEEK=true` before seeding or resetting
+and select the week of 6 April 2026. Follow the
+[demo walkthrough](docs/DEMO_WALKTHROUGH.md).

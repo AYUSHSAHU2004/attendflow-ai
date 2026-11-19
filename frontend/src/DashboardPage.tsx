@@ -215,6 +215,9 @@ export function DashboardPage() {
       <p className="lede">{dashboardActor.name} · {team
         ? <>Your team · <a href={supervisorHref}>Decision queue</a></>
         : <>All teams · <a href="/admin">All exceptions</a></>}
+        {' · '}<a href={team
+          ? import.meta.env.DEV ? `/supervisor/payroll?as=${dashboardActor.id}` : '/supervisor/payroll'
+          : '/payroll'}>Payroll readiness</a>
       </p>
       <form className="filters" aria-label="Exception dates" onSubmit={(event) => {
         event.preventDefault()

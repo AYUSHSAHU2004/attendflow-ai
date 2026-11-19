@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { adminActor } from './actors'
+import { adminActor, linkedCase } from './actors'
 import {
   getAdminCase,
   getAdminOverview,
@@ -370,7 +370,7 @@ export function AdminPage() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const [refresh, setRefresh] = useState(0)
-  const [selected, setSelected] = useState<string | null>(null)
+  const [selected, setSelected] = useState<string | null>(linkedCase)
 
   // The name search waits for a short pause in typing.
   useEffect(() => {
@@ -401,7 +401,8 @@ export function AdminPage() {
       <h1>All exceptions</h1>
       <p className="lede">
         Signed in as {adminActor.name} ({adminActor.id}) ·{' '}
-        <a href="/dashboard">Operations dashboard</a> · <a href="/activity">Activity and autonomy</a>
+        <a href="/dashboard">Operations dashboard</a> · <a href="/payroll">Payroll readiness</a>
+        {' · '}<a href="/activity">Activity and autonomy</a>
       </p>
 
       <SchedulerPanel onChanged={() => setRefresh((value) => value + 1)} />

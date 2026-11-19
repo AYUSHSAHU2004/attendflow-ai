@@ -28,6 +28,8 @@ export type EditInput = Omit<Schemas['EditIn'], WithoutWorker> & Partial<Pick<Sc
 export type AdminFilters = NonNullable<paths['/api/admin/exceptions']['get']['parameters']['query']>
 export type Dashboard = Schemas['DashboardOut']
 export type DashboardFilters = NonNullable<paths['/api/dashboard']['get']['parameters']['query']>
+export type PayrollReadiness = Schemas['PayrollReadinessOut']
+export type ReadinessReason = Schemas['ReadinessReasonOut']
 
 const base = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '')
 
@@ -177,6 +179,23 @@ export function adminListHref(filters: AdminFilters): string {
 
 export async function getDashboard(filters: DashboardFilters, actor: string, signal?: AbortSignal) {
   return (await request<Dashboard>('/api/dashboard' + queryString(filters), actor, { signal })).body
+}
+
+export async function getPayroll(week: string, actor: string, signal?: AbortSignal) {
+  const query = week ? '?week_start=' + encodeURIComponent(week) : ''
+  return (await request<PayrollReadiness>('/api/payroll' + query, actor, { signal })).body
+}
+
+export async function signPayroll(week: string, actor: string, note: string) {
+  return (await request<PayrollReadiness>(`/api/payroll/${week}/sign-off`, actor, {
+    method: 'POST', body: JSON.stringify({ note: note.trim() || null }),
+  })).body
+}
+
+export async function reopenPayroll(week: string, actor: string, reason: string) {
+  return (await request<PayrollReadiness>(`/api/payroll/${week}/reopen`, actor, {
+    method: 'POST', body: JSON.stringify({ reason }),
+  })).body
 }
 
 export async function getAdminCase(id: string, signal?: AbortSignal) {

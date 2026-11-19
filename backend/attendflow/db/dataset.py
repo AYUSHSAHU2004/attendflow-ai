@@ -43,6 +43,15 @@ def load_schedule_day(session: Session, employee_id: str, day: date) -> Schedule
     return ScheduleRow.model_validate(_fields(row, ScheduleRow)) if row else None
 
 
+def unpaid_leave_days(session: Session, start: date, end: date) -> set[tuple[str, date]]:
+    """The unpaid attendance flag is stored in the DB, outside the CSV model."""
+    stmt = select(LeaveRecordRow).where(
+        LeaveRecordRow.date.between(start, end),
+        LeaveRecordRow.unpaid.is_(True),
+    )
+    return {(row.employee_id, row.date) for row in session.scalars(stmt)}
+
+
 def load_dataset_from_db(session: Session) -> Dataset:
     def rows(stmt):
         return session.scalars(stmt).all()

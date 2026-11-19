@@ -250,3 +250,38 @@ origin and add the Vite origin to `ATTENDFLOW_CORS_ORIGINS`.
 - Refusals: `/admin?as=E101` (dev builds only) shows "Only the payroll admin can open
   this page." The API returns 403 `admin_only` for anyone but E201.
 - `POST /api/seed` resets everything for another run.
+
+## 11. Payroll readiness and human sign-off (Phase 16)
+
+1. Use a separate demo database and ports if the shared app is in use. Migrate it to
+   head. Start the API with `ATTENDFLOW_DEMO_MODE=true`,
+   `ATTENDFLOW_DEMO_EXTRA_WEEK=true`, `LLM_BASE_URL=http://127.0.0.1:1`,
+   `LLM_API_KEY=` and `SCHEDULER_ENABLED=false`. Keep the default attendance cutoff.
+2. Seed once on an empty demo DB with `POST /api/seed`, then reset with
+   `POST /api/admin/demo/reset` as E201. Check that the reset still reports 17
+   findings. Open **Payroll readiness** from **All exceptions** or the dashboard.
+3. The week of 13 April is **Blocked** and **In progress**. Open a reason's case
+   link and check the next owner. Amit's planted P1 is still open. There is no sign-off
+   button. To show the explicit refusal, run this against the demo API port:
+
+   ```sh
+   curl -i -X POST http://localhost:8000/api/payroll/2026-04-13/sign-off \
+     -H "X-Actor-Id: E201" -H "Content-Type: application/json" -d '{}'
+   ```
+
+   The API returns 409 `payroll_not_signable`. Moving the demo clock only advances
+   workflow time. The attendance week still cannot be signed.
+4. Select Monday **6 April 2026**, then **View week**. The complete earlier week
+   shows **Ready**. Choose **Sign off week**, add an optional note, and confirm.
+   Check that Priya and the workflow time appear on the sign-off.
+5. Choose **Reopen week**, enter `Demonstrate a follow-up review`, and confirm.
+   The page shows **Reopened** and allows a new sign-off. Open **Activity and autonomy**
+   as Priya to see both decisions and the reopen reason. The reset and sign-off leave
+   Amit's planted P1 untouched.
+6. Open `/supervisor/payroll` for Ravi's read-only view. Check that it shows only
+   Inbound, then narrow the viewport to phone width and verify the rows stack.
+7. The backend test `test_closed_week_becomes_ready_with_notes_after_a_human_decision`
+   uses an isolated fixture to remove a clock-out in the prior week. It covers
+   **Blocked**, reminder, supervisor ownership, and **Ready with notes** after an
+   explicit decision without the worker. The default demo has pending leave and
+   other blockers. The optional seed week stays clean for recording sign-off.

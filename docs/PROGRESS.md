@@ -1095,16 +1095,43 @@ of [DEMO_WALKTHROUGH.md](DEMO_WALKTHROUGH.md).
   permissions, date bounds, punch and ladder transitions, undo, read-only SQL, and
   changes to the policy limit and warning margin. Added component coverage for panels,
   loading, empty and error states, and date-aware drill-down links.
-- **Pending in a configured development environment:** `REQUIRE_DB=1` pytest with the
-  API stopped, the Vitest suite, Vite build, full project type-check, and OpenAPI drift
-  check. The locked dependencies and PostgreSQL were unavailable in this session.
-  API client types were updated to match the declared schema and still need the
-  generator drift check. The live workflow and desktop and phone screenshots are
-  pending. The session could not bind a loopback server.
+- **Verified, CI green.** The project owner ran the full suite with `REQUIRE_DB=1`
+  (709 passed, 2 skipped), the frontend checks, and the live desktop and phone checks.
+  The owner corrected an E501 violation and Ruff formatting in five files. Always run
+  both `ruff check .` and `ruff format --check .` before finishing a phase.
 
 **Verify:** With the API stopped, run `REQUIRE_DB=1 uv run pytest` and
 `uv run attendflow-autonomy --check`. From `frontend/`, run `npm run api:generate`,
 `npm run api:check`, `npm test`, `npm run typecheck`, and `npm run build`. Then follow
 section 10 of [DEMO_WALKTHROUGH.md](DEMO_WALKTHROUGH.md) on an isolated demo database.
 
-**Next:** Finish Phase 15 verification, then move to Phase 16 (payroll readiness).
+**Next:** Phase 16 (payroll readiness).
+
+## Phase 16: Payroll readiness and human sign-off (2026-11-20)
+
+- Added deterministic Monday–Sunday readiness for Priya and team-scoped, read-only
+  supervisors. The report uses the shared case counts and engine hours, links blockers
+  and notes to stored case IDs, and identifies the next owner. It catches source
+  defects even when detection has not yet stored a case. Standalone pending leave
+  needs the existing leave workflow or an isolated test fixture.
+- Only a payroll admin can sign a closed, blocker-free week with data. A reason is
+  required to reopen. Migration `0009_payroll_signoffs` stores the reviewed snapshot
+  fingerprint; a relevant later change flags the sign-off as out of date. The admin
+  Activity Center retains both actions. No LLM, pay calculation, override, or export.
+- Optional `ATTENDFLOW_DEMO_EXTRA_WEEK=true` adds complete attendance for 6–12 April
+  through seed/reset. With it off, seed data and counts are unchanged. The engine
+  check with it on returned the exact same 17 findings. The current demo week stays
+  in progress when the workflow clock moves.
+- Added `scripts/check-all.sh`. It runs the requested backend checks and stops at the
+  first failure. Unlike CI, it runs API generation and refuses unexpected drift
+  before checking the generated file, and runs frontend tests before type-check.
+- **Verified in this session:** both Ruff checks, demo data validation, the README
+  autonomy check, static audit and source-writer guardrails, 18 database-independent
+  payroll tests, OpenAPI generation and drift check, 93 frontend tests, type-check,
+  and production build. Alembic emitted PostgreSQL SQL for upgrade and downgrade.
+- **Pending:** PostgreSQL integration tests (including the SQL write hook), live
+  migration up/down, and the live desktop and phone walkthrough/screenshots.
+  The sandbox denied the test database connection and a bind on an isolated API
+  port. An existing development API was left running and was not used for the live check.
+- See section 11 of [DEMO_WALKTHROUGH.md](DEMO_WALKTHROUGH.md) for the in-progress refusal
+  and earlier-week sign-off and reopening. Verify the phase before moving to Phase 17.

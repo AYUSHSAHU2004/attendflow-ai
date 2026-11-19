@@ -29,6 +29,12 @@ export function reviewerFor(search: string, dev: boolean, fallback: Actor = defa
 
 const search = typeof window === 'undefined' ? '' : window.location.search
 
+export function linkedCase(): string | null {
+  if (typeof window === 'undefined') return null
+  const id = new URL(window.location.href).searchParams.get('case')
+  return id && /^P\d{1,2}-E\d{3}-[\w-]{1,70}$/.test(id) ? id : null
+}
+
 export const supervisorActor: Actor = import.meta.env.DEV
   ? reviewerFor(search, true)
   : defaultReviewer
@@ -64,3 +70,9 @@ export const dashboardActor: Actor =
 export const teamDashboardHref = import.meta.env.DEV
   ? `${supervisorDashboardPath}?as=${supervisorActor.id}`
   : supervisorDashboardPath
+
+export const supervisorPayrollPath = '/supervisor/payroll'
+export const payrollActor: Actor =
+  typeof window !== 'undefined' && window.location.pathname === supervisorPayrollPath
+    ? supervisorActor
+    : adminActor

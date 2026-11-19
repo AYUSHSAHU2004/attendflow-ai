@@ -404,6 +404,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/payroll": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Attendance readiness for one Monday-to-Sunday period */
+        get: operations["payroll_readiness_api_payroll_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/payroll/{week_start}/sign-off": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Record a human sign-off for a closed, blocker-free week */
+        post: operations["payroll_sign_off_api_payroll__week_start__sign_off_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/payroll/{week_start}/reopen": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reopen a signed-off week with a human reason */
+        post: operations["payroll_reopen_api_payroll__week_start__reopen_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/exceptions": {
         parameters: {
             query?: never;
@@ -2428,6 +2479,83 @@ export interface components {
             /** Admin Hours */
             admin_hours: number;
         };
+        /** PayrollReadinessOut */
+        PayrollReadinessOut: {
+            /**
+             * Week Start
+             * Format: date
+             */
+            week_start: string;
+            /**
+             * Week End
+             * Format: date
+             */
+            week_end: string;
+            /**
+             * Evaluated Through
+             * Format: date
+             */
+            evaluated_through: string;
+            /**
+             * Data Cutoff
+             * Format: date-time
+             */
+            data_cutoff: string;
+            /** Closed */
+            closed: boolean;
+            /** Has Data */
+            has_data: boolean;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ready" | "ready_with_notes" | "blocked";
+            /**
+             * Scope
+             * @enum {string}
+             */
+            scope: "all" | "team";
+            /** Can Sign */
+            can_sign: boolean;
+            /** Can Reopen */
+            can_reopen: boolean;
+            signoff: components["schemas"]["PayrollSignoffOut"] | null;
+            exception_counts: components["schemas"]["AdminCountersOut"];
+            /** Overtime Limit Hours */
+            overtime_limit_hours: number;
+            /** Reasons */
+            reasons: components["schemas"]["ReadinessReasonOut"][];
+            /** Teams */
+            teams: components["schemas"]["ReadinessGroupOut"][];
+            /** Workers */
+            workers: components["schemas"]["ReadinessWorkerOut"][];
+        };
+        /** PayrollReopenIn */
+        PayrollReopenIn: {
+            /** Reason */
+            reason: string;
+        };
+        /** PayrollSignoffIn */
+        PayrollSignoffIn: {
+            /** Note */
+            note?: string | null;
+        };
+        /** PayrollSignoffOut */
+        PayrollSignoffOut: {
+            /** Signer Name */
+            signer_name: string;
+            /**
+             * Signed At
+             * Format: date-time
+             */
+            signed_at: string;
+            /** Note */
+            note: string | null;
+            /** Reopened At */
+            reopened_at: string | null;
+            /** Stale */
+            stale: boolean;
+        };
         /** PostFixDetectionOut */
         PostFixDetectionOut: {
             /**
@@ -2536,6 +2664,59 @@ export interface components {
             device_id: string;
             /** Location */
             location: string;
+        };
+        /** ReadinessGroupOut */
+        ReadinessGroupOut: {
+            /** Team */
+            team: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ready" | "ready_with_notes" | "blocked";
+            /** Reasons */
+            reasons: components["schemas"]["ReadinessReasonOut"][];
+        };
+        /** ReadinessReasonOut */
+        ReadinessReasonOut: {
+            /** Employee Id */
+            employee_id: string;
+            /** Code */
+            code: string;
+            /** Message */
+            message: string;
+            /** Blocking */
+            blocking: boolean;
+            /** Exception Ids */
+            exception_ids: string[];
+            /** Owner Id */
+            owner_id: string | null;
+            /** Owner Name */
+            owner_name: string | null;
+            /** Contact */
+            contact: ("worker" | "supervisor" | "hr") | null;
+        };
+        /** ReadinessWorkerOut */
+        ReadinessWorkerOut: {
+            /** Team */
+            team: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ready" | "ready_with_notes" | "blocked";
+            /** Reasons */
+            reasons: components["schemas"]["ReadinessReasonOut"][];
+            /** Employee Id */
+            employee_id: string;
+            /** Employee Name */
+            employee_name: string;
+            /** Worked Hours */
+            worked_hours: number;
+            /** Scheduled Remaining Hours */
+            scheduled_remaining_hours: number;
+            /** Projected Hours */
+            projected_hours: number;
         };
         /** RejectIn */
         RejectIn: {
@@ -4285,6 +4466,161 @@ export interface operations {
             };
             /** @description Forbidden */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    payroll_readiness_api_payroll_get: {
+        parameters: {
+            query?: {
+                week_start?: string | null;
+            };
+            header: {
+                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
+                "X-Actor-Id": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PayrollReadinessOut"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    payroll_sign_off_api_payroll__week_start__sign_off_post: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
+                "X-Actor-Id": string;
+            };
+            path: {
+                week_start: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PayrollSignoffIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PayrollReadinessOut"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    payroll_reopen_api_payroll__week_start__reopen_post: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
+                "X-Actor-Id": string;
+            };
+            path: {
+                week_start: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PayrollReopenIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PayrollReadinessOut"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -58,6 +58,8 @@ and CI, 10-minute demo video, 5 slides.
    (what was built, decisions made, what is next).
 6. Keep explanations short and plain. Explain any non-obvious decision in one or two lines.
 7. The user commits and pushes themselves. Tell them what to commit; don't commit unasked.
+8. Always run both `uv run ruff check .` and `uv run ruff format --check .` before
+   finishing a phase. Phase 15 CI exposed lint and format issues that needed separate fixes.
 
 ## Phase plan
 
@@ -65,7 +67,7 @@ Done: 0 Setup + data + policy + LLM test; 1 Rule engine P1-P7, P15; 2 Rules P8-P
 3 Backend + DB + API; 4 Read-only tools + fix options for P3/P4/P6/P7; 5 LLM client + agent loop; 6 structured investigations and jobs; 7 worker messages and inbox; 8 worker clock-out extraction and re-check; 9 supervisor approval screen; 10 Priya's list +
 end-to-end tests (**prototype complete**); 11 mock punch API + scheduler; 12 auto-resolve + undo +
 "resolved without a human" metric; 13 no-reply escalation ladder + demo clock; 14 Activity
-Center + Autonomy Table (generated, anti-drift tests).
+Center + Autonomy Table (generated, anti-drift tests); 15 operations dashboard.
 
 **Prototype (3-10)**
 3. Backend + DB + API
@@ -93,8 +95,8 @@ Center + Autonomy Table (generated, anti-drift tests).
 23. Tests + evaluation
 24. Delivery
 
-Phase 15 operations dashboard is implemented. Its full verification is tracked in
-[docs/PROGRESS.md](docs/PROGRESS.md). Phase 16 (payroll readiness) is next after verification.
+Phase 15 operations dashboard is verified, CI green. Phase 16 adds payroll readiness
+and human sign-off. Its verification status is tracked in [docs/PROGRESS.md](docs/PROGRESS.md).
 
 **Carry-over notes**
 - Phase 5 Groq bug: `run_checks` advertised Pydantic's RFC 3339 `date-time` format for
@@ -148,6 +150,10 @@ Phase 15 operations dashboard is implemented. Its full verification is tracked i
   - Phase 15: tie `GET /api/dashboard` and both dashboard routes to authenticated reviewer
     identities. Review `OVERTIME_WARNING_MARGIN_HOURS` (default 4, positive) and the P5
     weekly hours limit in `policy.json` before deploying.
+  - Phase 16: bind readiness and sign-off to authenticated reviewer identities and require
+    payroll-admin authorization for signing and reopening. Decide the real attendance cutoff.
+    Leave `ATTENDFLOW_DEMO_EXTRA_WEEK=false` in deployment
+    unless explicitly approved.
 
 ## Decisions so far (do not re-ask)
 
@@ -692,9 +698,9 @@ backend/attendflow/
   scheduler/runner.py    Scheduler thread, non-overlap lock, start/stop/status
   errors.py              AppError family -> HTTP status + error code
   db/models.py           SQLAlchemy tables (6 source tables + exceptions, audit_log, tool_calls,
-                         settings, scheduler_runs); PUNCH_ID_LOCK
+                         settings, scheduler_runs, payroll_signoffs); PUNCH_ID_LOCK
   db/migrations/         Alembic (alembic.ini at repo root)
-  db/seed.py             demo reset: truncate all, load CSVs
+  db/seed.py             demo reset: truncate all, load CSVs, optionally add a closed week
   db/dataset.py          read-only: DB -> engine Dataset (voided punches left out)
   fixes/params.py        Pydantic params per fix action; decision-only action list
   fixes/apply.py         the ONLY writer of timecards/schedule/leave after approval (and auto-resolve
@@ -706,6 +712,7 @@ backend/attendflow/
   cases/facts.py         CONTENT_FIELDS + facts_hash() (re-investigate only on changed facts)
   cases/supervisor.py    supervisor queue, case card, consequence note, reviewer permission
   cases/admin.py         payroll admin overview, counters, read-only case detail, audit summaries
+  cases/payroll.py      attendance readiness, period review fingerprints, sign-off and reopening
   cases/auto_fix.py      auto-resolve info per case, supervisor team list, "without a human" metric
   cases/no_reply.py      no-reply ladder rules (due_step), wait state, reminder text, NoReply view
   cases/ladder.py        runs one ladder step per due case (scheduler step 4); no data writes
@@ -730,7 +737,9 @@ frontend/                Vite React: worker inbox (/, reminders + notices), supe
                          no-reply badge, decide without worker, send to payroll, TeamAutoFixes),
                          admin (/admin, SchedulerPanel with demo clock, stuck counter + filter,
                          metric line, AutoFixPanel), activity (/activity: feed, filters, summary
-                         strip, Autonomy tab), dev (/dev)
+                         strip, Autonomy tab), payroll readiness (/payroll, /supervisor/payroll),
+                         dev (/dev)
+scripts/check-all.sh     local lint, validation, backend tests and frontend checks
 docker-compose.yml       PostgreSQL 16 (host port 5433); docker/initdb creates the test DB
 .github/workflows/ci.yml lint + validate + README autonomy check + tests (Postgres service)
 ```
@@ -772,3 +781,29 @@ python -m uv run ruff check . && python -m uv run ruff format --check .
   positive `OVERTIME_WARNING_MARGIN_HOURS` defaults to 4. Forecast hours and limits use P5.
 - The dashboard has no audit actions. Activity still counts historical events by workflow
   date. The dashboard reports current case state by exception date.
+
+**Payroll readiness (Phase 16)**
+
+- `cases/payroll.py` serves Monday–Sunday readiness from the engine's attendance cutoff.
+  The current week remains in progress regardless of the workflow clock. A prior-week
+  shift still in progress blocks. The page shows no data for an empty period and prevents
+  sign-off.
+- Reuses the engine's policy checks and weekly hours, case filters and admin counters.
+  P1–P5, P8–P14, P17, active no-reply waits, and pending leave block. P6, P7 and P16
+  are notes when they are outside the ladder. Auto-resolution, overtime at the limit or
+  already decided, and decisions without the worker are notes.
+- `GET /api/payroll` serves Priya and team-scoped supervisors. Only payroll admins can
+  sign or reopen. The workflow clock stamps the decision. Migration `0009_payroll_signoffs`
+  stores the current sign-off with a fingerprint of the reviewed inputs. Later changes
+  can stale the sign-off. The admin Activity Center holds the decision history. Supervisor
+  readiness is read-only and worker requests return 403. Export is deferred.
+- `frontend/src/PayrollPage.tsx` serves `/payroll` and `/supervisor/payroll`.
+  `db/seed.py` can add the clean 6–12 April week through seed and demo reset only
+  when `ATTENDFLOW_DEMO_EXTRA_WEEK=true`. The 17 findings stay the same.
+- `scripts/check-all.sh` runs the backend and frontend checks from the repo root.
+  Before running it, start the PostgreSQL test DB, stop the API, and install dependencies
+  with `uv sync --locked` and `npm --prefix frontend ci`. The script stops at the first
+  failure. Unlike CI, it runs the generator and fails if the result differs from the
+  original client. It restores the original file on drift. It also runs frontend tests
+  before type-check. CI provisions PostgreSQL, installs dependencies, skips generation,
+  and type-checks before frontend tests.
