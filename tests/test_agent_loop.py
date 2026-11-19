@@ -190,9 +190,13 @@ def test_agent_never_imports_fix_writer():
     for source in package.rglob("*.py"):
         for node in ast.walk(ast.parse(source.read_text(encoding="utf-8"))):
             if isinstance(node, ast.Import):
-                assert all(not alias.name.startswith("attendflow.fixes") for alias in node.names)
+                assert all(
+                    not alias.name.startswith("attendflow.fixes.apply") for alias in node.names
+                )
             if isinstance(node, ast.ImportFrom):
-                assert "fixes" not in (node.module or "").split(".")
+                assert not (node.module or "").startswith("attendflow.fixes.apply")
+                if node.module == "attendflow.fixes":
+                    assert all(alias.name != "apply" for alias in node.names)
 
 
 def test_early_simulation_and_incomplete_evidence_are_reported(demo, api_settings):

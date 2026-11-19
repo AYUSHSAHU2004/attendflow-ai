@@ -100,3 +100,22 @@ def test_chat_requests_the_named_required_tool(monkeypatch):
     calls, _ = mock_responses(monkeypatch, response)
     client.chat(make_settings(), [], [], "get_policy")
     assert calls[0]["tool_choice"] == {"type": "function", "function": {"name": "get_policy"}}
+
+
+def test_chat_can_request_json_without_advertising_tools(monkeypatch):
+    response = SimpleNamespace(
+        finish_reason="stop", message=SimpleNamespace(content='{"policy_id":"P1"}', tool_calls=[])
+    )
+    calls, _ = mock_responses(monkeypatch, response)
+    reply = client.chat(make_settings(), [], [], json_output=True)
+    assert reply.text == '{"policy_id":"P1"}'
+    assert calls[0]["response_format"] == {"type": "json_object"}
+    assert "tools" not in calls[0]
+
+
+def test_chat_can_stop_on_first_transient_error(monkeypatch):
+    calls, sleeps = mock_responses(monkeypatch, fail(429), fail(429))
+    with pytest.raises(client.LLMError, match="HTTP 429"):
+        client.chat(make_settings(), [], [], retry_transient=False)
+    assert len(calls) == 1
+    assert sleeps == []

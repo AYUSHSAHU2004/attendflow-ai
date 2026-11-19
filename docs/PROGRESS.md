@@ -413,3 +413,56 @@ P7 show their options. P6 options are tested on synthetic fixtures (no demo case
   at `final` with no missing tools. All six source tables were unchanged. The
   model's final text incorrectly said no human intervention was needed even
   though P1 calls for worker confirmation and supervisor approval.
+
+## Phase 6: Structured investigations, fallback, and polling (2026-11-19)
+
+- PostgreSQL migration `0003_investigations` adds the current JSONB case and a job
+  table. The assigned supervisor or payroll admin can start a job and poll its
+  location from the 202 response. The current exception status stays unchanged.
+- The code runs the four evidence reads up front. The model reasons over their
+  outputs, can simulate a stored option, and returns JSON. The harness verifies
+  citations, the option and its parameters, evidence numbers and times, and
+  required human review. It copies matching recorded simulation output and
+  derives routing in code. Amit's P1 explicitly requires worker confirmation
+  followed by supervisor approval.
+- Invalid output gets one correction round. Invalid retries, provider failures,
+  and exhausted model steps return a deterministic low-confidence template.
+  `LLM_INVESTIGATION_BUDGET_SECONDS` defaults to 45; actual durations go in the
+  case, job, audit, and operational logs. Expired jobs and jobs interrupted by
+  startup recovery are marked failed and store the template. The watchdog runs
+  in the single-process API.
+- Offline verification covered structured validation and retry, offline templates
+  for P1–P17, Meena's stored P5 options, deadline/restart recovery, and an injected
+  instruction. 432 PostgreSQL tests passed, the optional real-key test was skipped,
+  and Ruff lint and format checks passed.
+
+**Live verification**
+- Wrong-key Amit P1 returned a stored fallback in 1.88 s with `who_to_ask=worker`.
+- The first real-key Amit job took 4.01 s. All reads and the 18:00 simulation
+  succeeded, but the final model call failed. Its persisted audit and job
+  record say `llm_error` only. The original error message was unavailable
+  because detailed diagnostic reporting was added after that run. The failure
+  preceded JSON mode, so there is no evidence that JSON mode caused it.
+- After simulation, the final request starts a fresh system/user conversation
+  containing the evidence and recorded simulation as data. That request uses
+  JSON mode with no tool definitions or native tool-call transcript. The
+  server parses the text and verifies the matching persisted simulation.
+- The authorized real-key rerun (run `d6ff62d41c004220866454a77a9c5c0e`)
+  stored a validated case in 3.23 s with `fallback=false`, next contact
+  `worker`, and a successful 18:00 simulation. The read trace confirmed no
+  leave and a 09:00–18:00 scheduled shift. The case requires worker confirmation
+  and supervisor approval. All six source tables and the exception status
+  were unchanged. The rerun used two model calls, with retries disabled for
+  verification. Meena was checked offline only.
+- 433 tests passed against PostgreSQL, one opt-in live test was skipped, and
+  Ruff passed.
+
+**Verify:** migrate to head, start the API, POST `/api/exceptions/{id}/investigate`
+with `X-Actor-Id: E101` for an assigned demo case, poll the `Location` using the
+same header, then GET the exception detail. To print Amit's template offline:
+
+```bash
+python -m uv run attendflow-agent-smoke P1-E001-2026-04-14 --fallback-only
+```
+
+**Next: Phase 7** adds the worker message and Amit's view.

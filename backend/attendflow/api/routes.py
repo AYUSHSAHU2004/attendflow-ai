@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, Query, Request, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
@@ -26,6 +26,7 @@ from attendflow.api.schemas import (
     ExceptionListOut,
     ExceptionOut,
     HealthOut,
+    InvestigationJobOut,
     RejectIn,
     SeedOut,
     ToolCallListOut,
@@ -192,7 +193,9 @@ def _audit_for(session: Session, exception_id: str) -> list[AuditEntryOut]:
 
 def _detail(session: Session, row: ExceptionRow) -> ExceptionDetailOut:
     base = ExceptionOut.model_validate(row).model_dump()
-    return ExceptionDetailOut(**base, audit_trail=_audit_for(session, row.id))
+    return ExceptionDetailOut(
+        **base, investigation_case=row.investigation_case, audit_trail=_audit_for(session, row.id)
+    )
 
 
 @router.get(
@@ -207,6 +210,38 @@ def get_exception(exception_id: str, session: SessionDep):
     if row is None:
         raise NotFoundError(f"exception {exception_id} not found", code="exception_not_found")
     return _detail(session, row)
+
+
+@router.post(
+    "/exceptions/{exception_id}/investigate",
+    response_model=InvestigationJobOut,
+    status_code=202,
+    tags=["exceptions"],
+    responses=_errors(403, 404, 422),
+)
+def start_investigation(
+    exception_id: str,
+    actor: ActorId,
+    request: Request,
+    response: Response,
+    background: BackgroundTasks,
+):
+    jobs = request.app.state.investigation_jobs
+    job, created = jobs.start(exception_id, actor)
+    if created:
+        background.add_task(jobs.run, job.id)
+    response.headers["Location"] = f"/api/exceptions/{exception_id}/investigate/{job.id}"
+    return job
+
+
+@router.get(
+    "/exceptions/{exception_id}/investigate/{job_id}",
+    response_model=InvestigationJobOut,
+    tags=["exceptions"],
+    responses=_errors(403, 404, 422),
+)
+def poll_investigation(exception_id: str, job_id: str, actor: ActorId, request: Request):
+    return request.app.state.investigation_jobs.get(exception_id, job_id, actor)
 
 
 _DECISION_ERRORS = _errors(403, 404, 409, 422)

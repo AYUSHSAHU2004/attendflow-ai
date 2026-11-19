@@ -62,7 +62,7 @@ and CI, 10-minute demo video, 5 slides.
 ## Phase plan
 
 Done: 0 Setup + data + policy + LLM test; 1 Rule engine P1-P7, P15; 2 Rules P8-P14, P16, P17;
-3 Backend + DB + API; 4 Read-only tools + fix options for P3/P4/P6/P7; 5 LLM client + agent loop.
+3 Backend + DB + API; 4 Read-only tools + fix options for P3/P4/P6/P7; 5 LLM client + agent loop; 6 structured investigations and jobs.
 
 **Prototype (3-10)**
 3. Backend + DB + API
@@ -90,7 +90,7 @@ Done: 0 Setup + data + policy + LLM test; 1 Rule engine P1-P7, P15; 2 Rules P8-P
 23. Tests + evaluation
 24. Delivery
 
-**Next: Phase 6.**
+**Next: Phase 7.**
 
 **Carry-over notes**
 - Phase 5 Groq bug: `run_checks` advertised Pydantic's RFC 3339 `date-time` format for
@@ -274,6 +274,34 @@ Done: 0 Setup + data + policy + LLM test; 1 Rule engine P1-P7, P15; 2 Rules P8-P
   separate session and records start and end audit events as actor `agent`.
   Migration `0002_agent_tool_calls` adds run ID, per-step call index, outcome and timing.
   The investigation leaves source data and case state untouched.
+
+**Structured investigations (Phase 6)**
+- `POST /api/exceptions/{id}/investigate` takes `X-Actor-Id` for the assigned
+  supervisor or a payroll admin. It returns a 202 and a polling URL in `Location`.
+  Repeated requests share the active job. `GET /api/exceptions/{id}` shows the latest
+  case. Investigations keep the exception status and source data unchanged.
+- The code reads and journals schedule, punches, leave and the cited policy before
+  contacting the model. The draft provides a short narrative, a verbatim policy quote,
+  source-linked evidence, a stored option or null, and confidence. Code owns the next
+  contact, next action, fallback flag, tool count, duration, and persisted simulation.
+- Validation checks the exact stored option and normalized parameters, the policy quote,
+  numbers and times against each evidence source, and human-approval contradictions.
+  Simulatable options require a matching successful `run_checks` row from the same
+  run, whose output is copied into the case. Decision-only options have no simulation.
+- The first live Amit P1 investigation completed simulation, then failed on the final
+  model call. Its job and audit retained only `llm_error`, so the exact cause is unknown.
+  The failure predates JSON mode. The final request now uses a fresh system/user
+  conversation in JSON mode, with the recorded simulation as evidence and no tool
+  definitions or tool-call transcript. The next live Amit P1 stored a validated
+  non-fallback case in 3.23 s. New failures retain a sanitized diagnostic in the audit.
+- Invalid drafts receive one correction request. Provider errors, step limits or a
+  second invalid draft produce a low-confidence engine template. The wall-clock budget
+  defaults to 45 s and is configurable with `LLM_INVESTIGATION_BUDGET_SECONDS`.
+  Deadlines and API restart recovery mark the job failed and store a template. The
+  in-process worker and startup recovery target the single-process API used in the demo.
+- `attendflow-agent-smoke <exception_id> --fallback-only` prints the template and
+  duration without contacting a provider. The optional real-model pytest requires
+  `ATTENDFLOW_REAL_LLM_TEST=1` and `LLM_API_KEY`.
 
 ## Repo map
 

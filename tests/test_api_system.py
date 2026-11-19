@@ -28,6 +28,8 @@ EXPECTED_PATHS = {
     ("post", "/api/detection/run"),
     ("get", "/api/exceptions"),
     ("get", "/api/exceptions/{exception_id}"),
+    ("post", "/api/exceptions/{exception_id}/investigate"),
+    ("get", "/api/exceptions/{exception_id}/investigate/{job_id}"),
     ("post", "/api/exceptions/{exception_id}/approve"),
     ("post", "/api/exceptions/{exception_id}/edit"),
     ("post", "/api/exceptions/{exception_id}/reject"),

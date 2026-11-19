@@ -5,9 +5,11 @@ Run:  python -m uv run attendflow-api      (http://localhost:8000/docs)
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 import uuid
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -17,6 +19,7 @@ from sqlalchemy.exc import OperationalError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from attendflow import __version__
+from attendflow.agent.jobs import InvestigationJobs
 from attendflow.api.logging_setup import configure_logging, request_id_var
 from attendflow.api.routes import router
 from attendflow.clock import Clock, FixedClock
@@ -85,7 +88,34 @@ def create_app(
     configure_logging(settings.log_format, settings.log_level)
     engine = engine or make_engine(settings.database_url)
 
+    sessions = make_session_factory(engine)
+    clock = clock or FixedClock(settings.as_of)
+    jobs = InvestigationJobs(sessions, settings, clock)
+
+    async def recover_jobs(*, startup: bool = False) -> None:
+        try:
+            await asyncio.to_thread(jobs.recover, startup=startup)
+        except OperationalError:
+            log.warning("investigation recovery waiting for the database")
+
+    async def watch_jobs() -> None:
+        while True:
+            await asyncio.sleep(1)
+            await recover_jobs()
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        await recover_jobs(startup=True)
+        watcher = asyncio.create_task(watch_jobs())
+        try:
+            yield
+        finally:
+            watcher.cancel()
+            with suppress(asyncio.CancelledError):
+                await watcher
+
     app = FastAPI(
+        lifespan=lifespan,
         title="AttendFlow AI",
         version=__version__,
         description=(
@@ -105,9 +135,10 @@ def create_app(
     )
     app.state.settings = settings
     app.state.engine = engine
-    app.state.session_factory = make_session_factory(engine)
+    app.state.session_factory = sessions
+    app.state.investigation_jobs = jobs
     app.state.policy = load_policy(settings.data_dir / "policy.json")
-    app.state.clock = clock or FixedClock(settings.as_of)
+    app.state.clock = clock
     app.state.logger = log
 
     @app.middleware("http")

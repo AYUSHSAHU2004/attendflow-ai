@@ -7,6 +7,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from attendflow.agent.case import InvestigationCase
 from attendflow.cases.transitions import Status
 from attendflow.engine.models import ACTION_INFO
 
@@ -143,6 +144,18 @@ class AuditEntryOut(ApiModel):
 
 class ExceptionDetailOut(ExceptionOut):
     audit_trail: list[AuditEntryOut]
+    investigation_case: InvestigationCase | None = None
+
+
+class InvestigationJobOut(ApiModel):
+    id: str
+    exception_id: str
+    status: Literal["running", "completed", "failed"]
+    started_at: datetime
+    deadline_at: datetime
+    finished_at: datetime | None
+    duration_ms: float | None
+    reason: str | None
 
 
 class AuditListOut(ApiModel):

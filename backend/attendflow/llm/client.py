@@ -99,22 +99,37 @@ def _http_error(
     return LLMError(f"{error}: {diagnostic}" if diagnostic else error)
 
 
-def _chat_completion(settings: Settings, messages: list[dict[str, Any]], **options: Any):
+def _chat_completion(
+    settings: Settings,
+    messages: list[dict[str, Any]],
+    *,
+    deadline: float | None = None,
+    retry_transient: bool = True,
+    **options: Any,
+):
     client = _client(settings)
-    for attempt in range(3):
+    attempts = 3 if retry_transient else 1
+    for attempt in range(attempts):
+        if deadline is not None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise LLMError("investigation deadline exceeded")
+            options["timeout"] = min(settings.llm_timeout_seconds, remaining)
         try:
             return client.chat.completions.create(
                 model=settings.llm_model, messages=messages, **options
             )
         except APIStatusError as exc:
             status = exc.status_code
-            if attempt == 2 or not (status == 429 or 500 <= status < 600):
+            if attempt == attempts - 1 or not (status == 429 or 500 <= status < 600):
                 raise _http_error("chat request failed", exc, settings, messages) from None
             delay = max(2**attempt, _retry_after(exc))
             if delay > 60:
                 raise _http_error(
                     "chat retry exceeds the 60-second limit", exc, settings, messages
                 ) from None
+            if deadline is not None and time.monotonic() + delay >= deadline:
+                raise LLMError("provider retry exceeds the investigation deadline") from None
             time.sleep(delay)
         except OpenAIError as exc:
             raise LLMError(f"chat request failed ({type(exc).__name__})") from None
@@ -125,8 +140,17 @@ def chat(
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]],
     required_tool: str | None = None,
+    *,
+    deadline: float | None = None,
+    json_output: bool = False,
+    retry_transient: bool = True,
 ) -> ChatMessage:
-    options: dict[str, Any] = {"tools": tools, "max_completion_tokens": 1024}
+    options: dict[str, Any] = {"max_completion_tokens": 1024}
+    if json_output:
+        options["response_format"] = {"type": "json_object"}
+        options["max_completion_tokens"] = 1600
+    if tools:
+        options["tools"] = tools
     if required_tool is not None:
         options["tool_choice"] = {"type": "function", "function": {"name": required_tool}}
     if settings.llm_reasoning_effort != "off":
@@ -135,12 +159,17 @@ def chat(
         "openai/gpt-oss-"
     ):
         options["extra_body"] = {"reasoning_format": "hidden"}
-    response = _chat_completion(settings, messages, **options)
+    response = _chat_completion(
+        settings, messages, deadline=deadline, retry_transient=retry_transient, **options
+    )
     if not response.choices:
         raise LLMError("model returned no choices")
     choice = response.choices[0]
     if choice.finish_reason not in {"stop", "tool_calls"}:
-        raise LLMError("model response did not complete")
+        reason = choice.finish_reason
+        if reason in {"length", "content_filter", "function_call"}:
+            raise LLMError(f"model response did not complete (finish_reason={reason})")
+        raise LLMError("model response did not complete (unrecognized finish reason)")
     message = choice.message
     try:
         calls = []

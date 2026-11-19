@@ -29,6 +29,7 @@ from sqlalchemy import (
     Text,
     Time,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -180,7 +181,8 @@ class ExceptionRow(Base):
     details: Mapped[dict[str, Any]]
     evidence: Mapped[list[Any]]
     fix_options: Mapped[list[Any]]
-    proposed_fix: Mapped[dict[str, Any] | None]  # filled by the agent (Phase 6)
+    proposed_fix: Mapped[dict[str, Any] | None]
+    investigation_case: Mapped[dict[str, Any] | None]
     applied_fix: Mapped[dict[str, Any] | None]  # the option a human approved (or auto-resolve)
     assigned_to: Mapped[str | None] = mapped_column(ForeignKey("employees.employee_id"))
     waiting_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
@@ -227,6 +229,28 @@ class ToolCallRow(Base):
     input: Mapped[dict[str, Any]]
     output: Mapped[dict[str, Any] | None]
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False))
+
+
+class InvestigationJobRow(Base):
+    __tablename__ = "investigation_jobs"
+    __table_args__ = (
+        CheckConstraint(_in("status", ("running", "completed", "failed")), "status"),
+        Index(
+            "ix_investigation_jobs_active_exception",
+            "exception_id",
+            unique=True,
+            postgresql_where=text("status = 'running'"),
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    exception_id: Mapped[str] = mapped_column(ForeignKey("exceptions.id"))
+    status: Mapped[str] = mapped_column(String(12))
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    deadline_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    duration_ms: Mapped[float | None] = mapped_column(Float)
+    reason: Mapped[str | None] = mapped_column(String(40))
 
 
 class SettingRow(Base):
