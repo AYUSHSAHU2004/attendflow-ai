@@ -266,6 +266,8 @@ def check_p1_missing_punch(ctx: RuleContext) -> list[TimecardException]:
 def check_p2_duplicate_punch(ctx: RuleContext) -> list[TimecardException]:
     shift_date = {p.punch_id: s.date for s in ctx.shifts for p in s.punches}
     window = ctx.policy.number("P2", "duplicate_window_minutes")
+    # Every P2 is an auto-resolve candidate; engine/auto_resolve.py may still hold it for a
+    # person (taps spanning more than the window, other devices or sites, a P17 review).
     status: Literal["open", "auto_resolved"] = (
         "auto_resolved" if ctx.policy.policies["P2"].auto_resolve else "open"
     )
@@ -275,6 +277,13 @@ def check_p2_duplicate_punch(ctx: RuleContext) -> list[TimecardException]:
         gap = (voided[-1].timestamp - kept.timestamp).total_seconds() / 60
         on = shift_date.get(kept.punch_id, kept.timestamp.date())
         voided_txt = ", ".join(f"{p.punch_id} {hhmm(p.timestamp)}" for p in voided)
+        void_option = FixOption(
+            option_id="void_duplicate",
+            action="void_punches",
+            label=f"Void the duplicate tap(s) {voided_txt}; keep {kept.punch_id} "
+            f"{hhmm(kept.timestamp)}",
+            params={"punch_ids": [p.punch_id for p in voided]},
+        )
         found.append(
             _make(
                 ctx,
@@ -289,10 +298,15 @@ def check_p2_duplicate_punch(ctx: RuleContext) -> list[TimecardException]:
                     "voided_punch_ids": [p.punch_id for p in voided],
                     "gap_minutes": h(gap),
                     "duplicate_window_minutes": window,
+                    "auto_resolve": {
+                        "basis": f"{len(voided) + 1} '{kept.type}' taps {fmt(gap)} min apart, "
+                        f"within the {fmt(window)} min duplicate window"
+                    },
                 },
                 [kept, *voided],
                 suffix=kept.punch_id,
                 status=status,
+                fix_options=[void_option],
             )
         )
     return found
@@ -758,6 +772,8 @@ def check_p7_late_early(ctx: RuleContext) -> list[TimecardException]:
                     )
                 )
             elif late > 0 and auto:
+                # Auto-resolve candidate; engine/auto_resolve.py may hold it for a person.
+                clock_ins = sum(1 for p in s.punches if p.type == "in")
                 found.append(
                     _make(
                         ctx,
@@ -766,10 +782,27 @@ def check_p7_late_early(ctx: RuleContext) -> list[TimecardException]:
                         s.date,
                         f"Clock-in {fmt(late)} min after the start, within the "
                         f"{fmt(grace)} min grace: not late",
-                        details,
+                        {
+                            **details,
+                            "clock_ins_on_shift": clock_ins,
+                            "auto_resolve": {
+                                "basis": f"Clock-in {fmt(late)} min after the "
+                                f"{hhmm(s.scheduled_start)} start, within the {fmt(grace)} "
+                                "min grace"
+                            },
+                        },
                         [s.clock_in],
                         suffix="late",
                         status="auto_resolved",
+                        fix_options=[
+                            FixOption(
+                                option_id="confirm_within_grace",
+                                action="confirm_within_grace",
+                                label=f"Confirm the clock-in was within the {fmt(grace)} min "
+                                "grace (not late)",
+                                params={"date": s.date.isoformat()},
+                            )
+                        ],
                     )
                 )
         if s.clock_out is not None:

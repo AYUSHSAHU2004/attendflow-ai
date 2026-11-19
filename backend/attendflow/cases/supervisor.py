@@ -6,6 +6,7 @@ Who sees what (X-Actor-Id):
   case to the supervisor. Plus any `escalated` case assigned to them.
 - The payroll admin sees only `escalated` cases assigned to them (full list: Phase 10).
 - A case still waiting for the worker's actual time (`needs_actual_time`) never appears.
+- An open case whose auto-resolve a person undid (Phase 12) appears for the team supervisor.
 - Workers get 403.
 """
 
@@ -76,9 +77,14 @@ def in_queue(row: ExceptionRow, actor: EmployeeRow, team: dict[str, str | None])
         return False
     if row.status == "awaiting_supervisor":
         return True
+    if row.status != "open":
+        return False
+    # An open case whose auto-resolve a person undid (Phase 12) is the supervisor's to decide.
+    if row.auto_resolve_undone_at is not None:
+        return True
     # Open: only once an investigation routed it to the supervisor. A case routed to the
     # worker stays off the queue until the worker has replied.
-    return row.status == "open" and (row.investigation_case or {}).get("who_to_ask") == "supervisor"
+    return (row.investigation_case or {}).get("who_to_ask") == "supervisor"
 
 
 def queue(session: Session, actor_id: str) -> list[dict[str, Any]]:
@@ -111,6 +117,7 @@ def queue(session: Session, actor_id: str) -> list[dict[str, Any]]:
                 "kind": row.kind,
                 "status": row.status,
                 "waiting_since": row.waiting_since,
+                "auto_resolve_undone": row.auto_resolve_undone_at is not None,
             }
         )
     return items

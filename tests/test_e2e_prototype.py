@@ -55,7 +55,7 @@ WRITE = re.compile(
 APPLY_FILE = str(Path("attendflow", "fixes", "apply.py"))
 SEED_FILE = str(Path("attendflow", "db", "seed.py"))
 INGEST_FILE = str(Path("attendflow", "ingest", "punches.py"))
-FIX_ACTIONS = ("approve", "edit_and_approve", "auto_resolve")
+FIX_ACTIONS = ("approve", "edit_and_approve", "auto_resolve", "auto_resolve_undone")
 
 # An investigation job journals its start and end, then stores the case.
 INVESTIGATION = [

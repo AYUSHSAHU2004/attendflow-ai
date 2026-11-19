@@ -65,6 +65,10 @@ class DetectionRunOut(ApiModel):
         description="Cases already in progress that got fix options their policy lacked before"
     )
     auto_resolved: int
+    auto_resolve_held: int = Field(
+        default=0,
+        description="New P2/P7 cases left open for a person (unclear, or the kill switch is off)",
+    )
     closed_no_longer_detected: list[str]
     by_policy: dict[str, int]
     exception_ids: list[str]
@@ -121,6 +125,10 @@ class ExceptionOut(ApiModel):
     kind: Literal["breach", "risk"]
     status: Status
     auto_resolved: bool
+    auto_resolve_undone_at: datetime | None = Field(
+        default=None, description="Set when a person undid the auto-resolve (Phase 12)"
+    )
+    auto_resolve_undone_by: str | None = None
     details: dict[str, Any]
     evidence: list[dict[str, Any]]
     fix_options: list[FixOptionOut]
@@ -304,6 +312,9 @@ class SupervisorQueueItemOut(ApiModel):
     kind: Literal["breach", "risk"]
     status: Status
     waiting_since: datetime | None
+    auto_resolve_undone: bool = Field(
+        default=False, description="A person undid its auto-resolve; decide it by hand"
+    )
 
 
 class SupervisorQueueOut(ApiModel):
@@ -444,6 +455,9 @@ class AdminListItemOut(ApiModel):
     kind: Literal["breach", "risk"]
     status: Status
     auto_resolved: bool
+    auto_resolve_undone: bool = Field(
+        default=False, description="A person undid this case's auto-resolve (Phase 12)"
+    )
     assigned_to: str | None
     assigned_to_name: str | None
     investigated: bool = Field(description="A stored investigation case exists")
@@ -521,6 +535,34 @@ class AdminJobOut(ApiModel):
     reason: str | None
 
 
+class AutoFixRefusalOut(ApiModel):
+    at: datetime
+    by: str | None
+    message: str | None
+
+
+class AutoFixOut(ApiModel):
+    """An auto-resolve as people see it. Every text is stored data or built by code."""
+
+    state: Literal["auto_resolved", "undone", "held"] = Field(
+        description="held = a candidate left open for a person (unclear, or switched off)"
+    )
+    basis: str | None = Field(description="Why code was allowed to close it (engine numbers)")
+    held_because: list[str]
+    policy_quote: str = Field(description='policy.md "Allowed fixes" for this policy, verbatim')
+    changes: list[str] = Field(description="What the auto-resolve changed, one line per row")
+    data_changed: bool
+    resolved_by: Literal["system"] | None
+    resolved_at: datetime | None
+    undone_by: str | None
+    undone_by_name: str | None
+    undone_at: datetime | None
+    undo_reason: str | None
+    can_undo: bool = Field(description="The caller may undo it now")
+    undo_unavailable_reason: str | None
+    last_refusal: AutoFixRefusalOut | None
+
+
 class AdminCaseOut(ApiModel):
     exception_id: str
     status: Status
@@ -529,6 +571,9 @@ class AdminCaseOut(ApiModel):
     needs_your_decision: bool
     can_investigate: bool = Field(description="True while the case is open")
     auto_resolved: bool
+    auto_fix: AutoFixOut | None = Field(
+        default=None, description="P2/P7 only: the auto-resolve, why, and whether you may undo"
+    )
     employee: CardEmployeeOut
     date: date
     policy_id: str
@@ -667,6 +712,10 @@ class SchedulerCycleOut(ApiModel):
     skipped_backlog: int = Field(
         description="Cases detected before the scheduler started that it left alone"
     )
+    skipped_undone: int = Field(
+        default=0,
+        description="Cases whose auto-resolve a person undid: never handled automatically",
+    )
     errors: list[CycleErrorOut]
 
 
@@ -705,3 +754,63 @@ class DemoResetOut(ApiModel):
     seed: SeedOut
     detection: DetectionRunOut
     watermark_audit_id: int
+
+
+# ---------------------------------------------------------------- auto-resolve (Phase 12)
+
+
+class UndoIn(RequestModel):
+    reason: str = Field(
+        min_length=10,
+        max_length=1000,
+        description="Why the auto-resolve is undone (at least 10 characters, saved in the audit)",
+        examples=["The worker says the second tap was a real re-entry"],
+    )
+
+
+class UndoOut(ExceptionDetailOut):
+    restored: list[dict[str, Any]] = Field(description="Rows put back to their 'before' values")
+    detection: PostFixDetectionOut
+
+
+class TeamAutoFixItemOut(ApiModel):
+    exception_id: str
+    employee_id: str
+    employee_name: str
+    date: date
+    policy_id: str
+    title: str
+    summary: str
+    status: Status
+    auto_fix: AutoFixOut | None
+
+
+class TeamAutoFixesOut(ApiModel):
+    count: int
+    items: list[TeamAutoFixItemOut]
+
+
+class MetricPolicyOut(ApiModel):
+    policy_id: str
+    needed_handling: int
+    auto_resolved: int
+    undone: int
+    closed_by_data_change: int
+
+
+class AutoResolveMetricOut(ApiModel):
+    resolved_without_human: int = Field(description="X: closed by auto-resolve and not undone")
+    needed_handling: int = Field(
+        description="Y: exceptions that needed handling (all, minus closed_by_data_change)"
+    )
+    percent: float = Field(description="100 * X / Y, one decimal (0 when Y is 0)")
+    undone: int = Field(description="Auto-resolves a person undid (counted as human work)")
+    closed_by_data_change: int = Field(
+        description="Closed as no_longer_detected: the data changed and nobody had to act. "
+        "Not part of Y."
+    )
+    date_from: date | None
+    date_to: date | None
+    auto_resolve_enabled: bool = Field(description="The AUTO_RESOLVE_ENABLED kill switch")
+    allowed_policies: list[str] = Field(description="Policies policy.json lets auto-resolve")
+    by_policy: list[MetricPolicyOut]

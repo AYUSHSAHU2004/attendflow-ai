@@ -45,7 +45,8 @@ from attendflow.errors import (
     InvalidTransitionError,
     NotFoundError,
 )
-from attendflow.fixes.apply import apply_auto_resolve, apply_fix
+from attendflow.fixes.apply import apply_auto_resolve, apply_fix, punches_fixed_by_others
+from attendflow.fixes.apply import undo_auto_resolve as apply_undo
 from attendflow.fixes.params import REQUIRED_NOTE, FixParamsError, params_json, parse_params
 from attendflow.policy.models import PolicyConfig
 
@@ -149,6 +150,7 @@ class DetectionSummary:
     unchanged: int = 0
     options_added: int = 0
     auto_resolved: int = 0
+    auto_resolve_held: int = 0
     closed_no_longer_detected: list[str] = field(default_factory=list)
     by_policy: dict[str, int] = field(default_factory=dict)
     exception_ids: list[str] = field(default_factory=list)
@@ -204,16 +206,25 @@ def _new_row(exc: TimecardException, supervisor_id: str | None, clock: Clock) ->
 
 
 def run_detection(
-    session: Session, policy: PolicyConfig, clock: Clock, scope: DetectionScope | None = None
+    session: Session,
+    policy: PolicyConfig,
+    clock: Clock,
+    scope: DetectionScope | None = None,
+    *,
+    auto_resolve: bool = True,
 ) -> DetectionSummary:
     """Run the rule engine on the database and upsert exceptions by their stable ID.
 
     With a `scope`, only that worker's exceptions dated inside it are created, refreshed or
-    closed; everything else is left for the next full run.
+    closed; everything else is left for the next full run. `auto_resolve` is the
+    AUTO_RESOLVE_ENABLED kill switch.
 
     - New exception -> inserted as open, assigned to the worker's supervisor. If the engine
-      auto-resolved it (policy.json auto_resolve), it is stored as resolved with
-      auto_resolved=true and its data change applied, all audit-logged.
+      allows auto-resolve (P2/P7 only, engine/auto_resolve.py) and the kill switch is on,
+      it is stored as resolved with auto_resolved=true and its data change applied
+      through fixes/apply.py, all audit-logged. A candidate the engine or the kill switch
+      holds stays open with an `auto_resolve_held` audit row saying why. Only NEW rows are
+      ever auto-resolved, so an undone case (same stable ID) never is again.
     - Still open -> numbers refreshed (audit row only if something changed).
     - In progress, resolved or rejected -> left alone (a human is on it or has decided).
     - Open but no longer found -> resolved by the system ("no longer detected").
@@ -269,9 +280,23 @@ def run_detection(
                         "summary": row.summary,
                     },
                 )
-                if exc.status == "auto_resolved":
+                if exc.status == "auto_resolved" and auto_resolve:
                     _auto_resolve(session, row, policy, clock)
                     summary.auto_resolved += 1
+                elif "auto_resolve" in exc.details:
+                    held = list(exc.details["auto_resolve"].get("held_because") or [])
+                    if exc.status == "auto_resolved":
+                        held = ["auto-resolve is switched off (AUTO_RESOLVE_ENABLED=false)"]
+                    _audit(
+                        session,
+                        clock,
+                        exception_id=row.id,
+                        actor="system",
+                        action="auto_resolve_held",
+                        after={"policy_id": row.policy_id, "held_because": held},
+                        reason="Not auto-resolved: " + "; ".join(held) + ".",
+                    )
+                    summary.auto_resolve_held += 1
                 continue
 
             row.last_detected_at = clock.now()
@@ -376,12 +401,15 @@ def _require_worker_confirmation(session: Session, row: ExceptionRow, option: di
 
 
 def _auto_resolve(session: Session, row: ExceptionRow, policy: PolicyConfig, clock: Clock) -> None:
+    if row.auto_resolve_undone_at is not None:  # belt and braces: never re-close an undone case
+        raise ConflictError(f"{row.id} was undone by a person", code="auto_resolve_undone")
     before = _state(row)
-    changes = apply_auto_resolve(session, row, policy, clock.now())
+    basis = (row.details.get("auto_resolve") or {}).get("basis")
+    fix = apply_auto_resolve(session, row, policy, clock.now())
     check_transition(row.status, "resolved", action="auto_resolve")
     _set_status(row, "resolved", clock, row.assigned_to)
     row.auto_resolved = True
-    row.applied_fix = {"action": "auto_resolve", "policy_id": row.policy_id, "changes": changes}
+    row.applied_fix = {**fix, "basis": basis}
     _audit(
         session,
         clock,
@@ -389,9 +417,151 @@ def _auto_resolve(session: Session, row: ExceptionRow, policy: PolicyConfig, clo
         actor="system",
         action="auto_resolve",
         before=before,
-        after={**_state(row), "changes": changes},
-        reason=f"{row.policy_id} is set to auto_resolve in policy.json (low risk).",
+        after={
+            **_state(row),
+            "policy_id": row.policy_id,
+            "basis": basis,
+            "changes": fix["changes"],
+            "guarded_rows": fix["guarded_rows"],
+        },
+        reason=f"{row.policy_id} may auto-resolve (policy.json) and the engine's numbers are "
+        f"within policy: {basis}.",
     )
+
+
+# ------------------------------------------------------------------ undo (Phase 12)
+
+# Audit actions whose `after` lists data changes (approve/edit in applied_fix.changes).
+DATA_CHANGE_ACTIONS = ("approve", "edit_and_approve", "auto_resolve", "auto_resolve_undone")
+
+
+def require_undo_permission(session: Session, row: ExceptionRow, actor: EmployeeRow) -> None:
+    """The payroll admin may undo any case; a supervisor only their own team's."""
+    if actor.role == "payroll_admin":
+        return
+    worker = session.get(EmployeeRow, row.employee_id)
+    if worker is None or worker.supervisor_id != actor.employee_id:
+        raise ForbiddenError(
+            f"{actor.employee_id} cannot undo {row.id}: {row.employee_id} is not on their team",
+            code="not_assigned",
+            details={"supervisor_id": worker.supervisor_id if worker else None},
+        )
+
+
+def _later_fix_conflicts(session: Session, row: ExceptionRow) -> list[dict[str, Any]]:
+    """Another case's audited fix touched this worker's punches on the same shift date
+    (the day and the next morning, as for corrections) after this auto-resolve."""
+    since = session.scalar(
+        select(func.max(AuditLogRow.id)).where(
+            AuditLogRow.exception_id == row.id, AuditLogRow.action == "auto_resolve"
+        )
+    )
+    owners = punches_fixed_by_others(session, row)
+    if not owners or since is None:
+        return []
+    later = session.scalars(
+        select(AuditLogRow.exception_id)
+        .where(
+            AuditLogRow.id > since,
+            AuditLogRow.exception_id.in_(owners),
+            AuditLogRow.action.in_(DATA_CHANGE_ACTIONS),
+        )
+        .distinct()
+    ).all()
+    return [{"exception_id": eid, "punch_ids": sorted(owners[eid])} for eid in sorted(later)]
+
+
+def undo_auto_resolve(
+    session: Session,
+    policy: PolicyConfig,
+    clock: Clock,
+    *,
+    exception_id: str,
+    actor_id: str,
+    reason: str,
+) -> tuple[ExceptionRow, list[dict[str, Any]]]:
+    """A person undoes an auto-resolved case: the rows go back to their "before" snapshot
+    (through fixes/apply.py), the case is open again with the worker's supervisor, and it is
+    marked so it is never auto-resolved or auto-handled by the scheduler again.
+
+    Refused with 409 `undo_conflict` (or `undo_unavailable`) when the data changed since;
+    then nothing changes except one `undo_refused` audit row in its own transaction."""
+    try:
+        with session.begin():
+            actor = require_reviewer(session, actor_id)
+            row = _get_for_update(session, exception_id)
+            require_undo_permission(session, row, actor)
+            if row.auto_resolve_undone_at is not None:
+                raise ConflictError(
+                    f"{row.id} was already undone; it is decided by people now",
+                    code="already_undone",
+                )
+            if not row.auto_resolved:
+                raise ConflictError(f"{row.id} was not auto-resolved", code="not_auto_resolved")
+            check_transition(row.status, "open", action="undo")
+            undone_fix = row.applied_fix
+            if (undone_fix or {}).get("changes"):
+                later = _later_fix_conflicts(session, row)
+                if later:
+                    raise ConflictError(
+                        "another case's fix changed this worker's punches on that day after "
+                        "the auto-resolve; decide this case by hand instead",
+                        code="undo_conflict",
+                        details={"later_fixes": later},
+                    )
+            changes = apply_undo(session, row, policy, clock.now())
+            before = _state(row)
+            worker = session.get(EmployeeRow, row.employee_id)
+            _set_status(row, "open", clock, worker.supervisor_id if worker else row.assigned_to)
+            row.auto_resolved = False
+            row.applied_fix = None
+            row.auto_resolve_undone_at = clock.now()
+            row.auto_resolve_undone_by = actor.employee_id
+            _audit(
+                session,
+                clock,
+                exception_id=row.id,
+                actor=ROLE_TO_ACTOR[actor.role],
+                actor_id=actor.employee_id,
+                action="auto_resolve_undone",
+                before={**before, "applied_fix": undone_fix},
+                after={**_state(row), "policy_id": row.policy_id, "changes": changes},
+                reason=reason,
+            )
+    except ConflictError as exc:
+        if exc.code in ("undo_conflict", "undo_unavailable"):
+            _audit_refused_undo(session, clock, exception_id, actor_id, reason, exc)
+        raise
+    log.info(
+        "auto-resolve undone",
+        extra={
+            "event": "auto_resolve_undone",
+            "exception_id": exception_id,
+            "actor_id": actor_id,
+            "data_changes": len(changes),
+        },
+    )
+    return row, changes
+
+
+def _audit_refused_undo(
+    session: Session, clock: Clock, exception_id: str, actor_id: str, reason: str, exc: AppError
+) -> None:
+    try:
+        with session.begin():
+            actor = session.get(EmployeeRow, actor_id)
+            _audit(
+                session,
+                clock,
+                exception_id=exception_id,
+                actor=ROLE_TO_ACTOR.get(actor.role, "system") if actor else "system",
+                actor_id=actor_id,
+                action="undo_refused",
+                after={"code": exc.code, "message": exc.message, "details": exc.details},
+                reason=reason,
+            )
+    except Exception:  # noqa: BLE001 - the refusal itself must still reach the caller
+        log.exception("could not audit the refused undo")
 
 
 # ------------------------------------------------------------------ decisions
@@ -506,26 +676,38 @@ def approve(
 
 
 def detect_after_fix(
-    session: Session, policy: PolicyConfig, clock: Clock, exception_id: str
+    session: Session,
+    policy: PolicyConfig,
+    clock: Clock,
+    exception_id: str,
+    *,
+    auto_resolve: bool = True,
+    changed: bool | None = None,
+    after: str = "fix",
 ) -> dict[str, Any]:
-    """After an approved fix that changed data: run detection so that exceptions the fix
-    created appear as new open cases. Runs in its own transaction, after the approval was
-    saved. Detection upserts by stable ID, so it never duplicates a case. If it fails, the
-    approval stands and the next detection run picks the change up."""
+    """After an approved fix (or an undo, `after="undo"`) that changed data: run detection
+    so that exceptions the change created appear as new open cases. Runs in its own
+    transaction, after the decision was saved. Detection upserts by stable ID, so it never
+    duplicates a case. If it fails, the decision stands and the next detection run picks
+    the change up. `changed` overrides the "did it change data" test (undo clears
+    applied_fix, so the caller says)."""
     with session.begin():
         row = session.get(ExceptionRow, exception_id)
-        changed = bool(row and (row.applied_fix or {}).get("changes"))
+        if changed is None:
+            changed = bool(row and (row.applied_fix or {}).get("changes"))
         employee_id = row.employee_id if row else None
     if not changed:
         return {"ran": False, "new_exception_ids": [], "closed_exception_ids": [], "error": None}
     try:
-        summary = run_detection(session, policy, clock)
+        summary = run_detection(session, policy, clock, auto_resolve=auto_resolve)
     except Exception as exc:  # noqa: BLE001 - detection must never undo an approval
         log.exception(
-            "detection after fix failed",
-            extra={"event": "post_fix_detection_failed", "exception_id": exception_id},
+            f"detection after {after} failed",
+            extra={"event": f"post_{after}_detection_failed", "exception_id": exception_id},
         )
-        message = "Detection did not run after the fix; the next detection run will pick it up."
+        message = (
+            f"Detection did not run after the {after}; the next detection run will pick it up."
+        )
         try:
             with session.begin():
                 _audit(
@@ -533,7 +715,7 @@ def detect_after_fix(
                     clock,
                     exception_id=exception_id,
                     actor="system",
-                    action="post_fix_detection_failed",
+                    action=f"post_{after}_detection_failed",
                     reason=f"{message} ({type(exc).__name__})",
                 )
         except Exception:  # noqa: BLE001
@@ -558,9 +740,13 @@ def detect_after_fix(
             clock,
             exception_id=exception_id,
             actor="system",
-            action="post_fix_detection",
+            action=f"post_{after}_detection",
             after={"new_exception_ids": new_ids, "closed_exception_ids": closed},
-            reason="Detection re-ran after the approved fix changed data.",
+            reason=(
+                "Detection re-ran after the approved fix changed data."
+                if after == "fix"
+                else f"Detection re-ran after the {after} changed data."
+            ),
         )
     return {
         "ran": True,
@@ -571,7 +757,12 @@ def detect_after_fix(
 
 
 def detect_after_punch(
-    session: Session, policy: PolicyConfig, clock: Clock, punch: dict[str, Any]
+    session: Session,
+    policy: PolicyConfig,
+    clock: Clock,
+    punch: dict[str, Any],
+    *,
+    auto_resolve: bool = True,
 ) -> dict[str, Any]:
     """After a device punch was stored: detection for that worker's week, in its own
     transaction. The punch is already committed; if detection fails it stays, the failure
@@ -584,7 +775,7 @@ def detect_after_punch(
         "end": scope.end.isoformat(),
     }
     try:
-        summary = run_detection(session, policy, clock, scope)
+        summary = run_detection(session, policy, clock, scope, auto_resolve=auto_resolve)
     except Exception as exc:  # noqa: BLE001 - detection must never lose the punch
         log.exception(
             "detection after punch failed",

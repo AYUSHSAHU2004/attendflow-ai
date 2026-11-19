@@ -14,6 +14,9 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 POLICY_IDS = [f"P{i}" for i in range(1, 18)]  # P17 = possible punch conflict (Phase 2)
 SEVERITIES = ("low", "medium", "high")
+# The only policies code may close without a person (Phase 12). policy.json can turn them
+# off, never add another: loading fails if any other policy says "auto_resolve": true.
+AUTO_RESOLVABLE = ("P2", "P7")
 
 # Params each policy must define. Loading fails if one is missing, so the engine can
 # rely on them without defensive checks.
@@ -87,6 +90,15 @@ class PolicyConfig(BaseModel):
             absent = required - self.policies[pid].params.keys()
             if absent:
                 raise ValueError(f"{pid} is missing param(s) {sorted(absent)}")
+        not_allowed = sorted(
+            (pid for pid, rule in self.policies.items() if rule.auto_resolve),
+            key=lambda p: int(p[1:]),
+        )
+        not_allowed = [p for p in not_allowed if p not in AUTO_RESOLVABLE]
+        if not_allowed:
+            raise ValueError(
+                f"auto_resolve is only allowed for {list(AUTO_RESOLVABLE)}, not for {not_allowed}"
+            )
         duty = self.policies["P14"].params["scheduled_duty_severity"]
         if duty not in SEVERITIES:
             raise ValueError(f"P14 scheduled_duty_severity must be one of {SEVERITIES}")

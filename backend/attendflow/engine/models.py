@@ -102,6 +102,8 @@ FixAction = Literal[
     "record_short_rest",
     "accept_reason",
     "record_lateness",
+    # Phase 12: a person decides a P7 within-grace case (undone, or auto-resolve held)
+    "confirm_within_grace",
 ]
 
 # What each action does, in plain words. Used as the option description unless a check
@@ -160,6 +162,10 @@ ACTION_INFO: dict[str, tuple[bool, str]] = {
     "record_short_rest": (True, "Records why the rest between shifts was short."),
     "accept_reason": (True, "Accepts the worker's reason for the late arrival or early leave."),
     "record_lateness": (True, "Records the late arrival or early leave as it happened."),
+    "confirm_within_grace": (
+        True,
+        "Confirms the clock-in was within the grace period, so it is not late. Nothing changes.",
+    ),
 }
 
 

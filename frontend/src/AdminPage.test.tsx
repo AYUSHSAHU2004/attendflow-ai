@@ -7,6 +7,7 @@ import {
   getAdminCase,
   getAdminOverview,
   getCase,
+  getAutoResolveMetric,
   getSchedulerStatus,
   pollInvestigation,
   startInvestigation,
@@ -23,8 +24,10 @@ vi.mock('./api', async (importOriginal) => ({
   pollInvestigation: vi.fn(),
   getCase: vi.fn(),
   getSchedulerStatus: vi.fn(),
+  getAutoResolveMetric: vi.fn(),
+  undoAutoResolve: vi.fn(),
 }))
-import { schedulerStatus } from './testFixtures'
+import { metric, schedulerStatus } from './testFixtures'
 
 const AMIT_P1 = 'P1-E001-2026-04-14'
 const MEENA_P5 = 'P5-E002-2026-04-13'
@@ -43,6 +46,7 @@ function item(overrides: Partial<AdminItem> = {}): AdminItem {
     kind: 'breach',
     status: 'open',
     auto_resolved: false,
+    auto_resolve_undone: false,
     assigned_to: 'E101',
     assigned_to_name: 'Ravi Kumar',
     investigated: false,
@@ -128,6 +132,7 @@ beforeEach(() => {
   vi.mocked(pollInvestigation).mockReset()
   vi.mocked(getCase).mockReset()
   vi.mocked(getSchedulerStatus).mockReset().mockResolvedValue(schedulerStatus())
+  vi.mocked(getAutoResolveMetric).mockReset().mockResolvedValue(metric())
 })
 
 describe('AdminPage', () => {

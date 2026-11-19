@@ -215,7 +215,12 @@ def test_p7_early_leave_gets_the_same_decision_only_options():
     assert exc.fix_options[0].params["minutes"] == 60
 
 
-def test_p7_within_grace_has_no_options():
+def test_p7_within_grace_has_only_the_confirm_option():
+    # Phase 12: auto-resolved, but if a person undoes it they need one decision: confirm
+    # it was within grace. No "record as late": policy.md says it is not counted as late.
     punches = [(f"{MON}T09:05:00", "in"), *day_shift(MON)[1:]]
     (exc,) = only(run(punches, [(MON, "09:00", "18:00")]), "P7")
-    assert exc.status == "auto_resolved" and exc.fix_options == []
+    assert exc.status == "auto_resolved"
+    assert [(o.option_id, o.action, o.decision_only) for o in exc.fix_options] == [
+        ("confirm_within_grace", "confirm_within_grace", True)
+    ]

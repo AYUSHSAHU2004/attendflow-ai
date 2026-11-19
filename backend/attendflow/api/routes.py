@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hmac
 from collections.abc import Iterator
+from datetime import date
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, Query, Request, Response
@@ -24,6 +25,7 @@ from attendflow.api.schemas import (
     AskWorkerIn,
     AuditEntryOut,
     AuditListOut,
+    AutoResolveMetricOut,
     DemoPunchIn,
     DemoResetOut,
     DetectionRunOut,
@@ -43,14 +45,17 @@ from attendflow.api.schemas import (
     Severity,
     SupervisorCaseOut,
     SupervisorQueueOut,
+    TeamAutoFixesOut,
     ToolCallListOut,
     ToolCallOut,
+    UndoIn,
+    UndoOut,
     WorkerInboxOut,
     WorkerReplyIn,
     WorkerReplyOut,
     WorkerTimeIn,
 )
-from attendflow.cases import admin, service, supervisor
+from attendflow.cases import admin, auto_fix, service, supervisor
 from attendflow.cases.transitions import Status
 from attendflow.clock import Clock
 from attendflow.config import Settings
@@ -173,8 +178,15 @@ def seed(
     description="Idempotent: exceptions are upserted by their stable ID.",
     responses=_errors(409),
 )
-def run_detection(session: SessionDep, policy: PolicyDep, clock: ClockDep):
-    summary = service.run_detection(session, policy, clock)
+def run_detection(
+    session: SessionDep,
+    policy: PolicyDep,
+    clock: ClockDep,
+    settings: Annotated[Settings, Depends(get_settings_dep)],
+):
+    summary = service.run_detection(
+        session, policy, clock, auto_resolve=settings.auto_resolve_enabled
+    )
     return DetectionRunOut(**summary.__dict__)
 
 
@@ -277,9 +289,13 @@ def poll_investigation(exception_id: str, job_id: str, actor: ActorId, request: 
 _DECISION_ERRORS = _errors(403, 404, 409, 422)
 
 
-def _approved(session: Session, policy: PolicyConfig, clock: Clock, row: ExceptionRow):
+def _approved(
+    session: Session, policy: PolicyConfig, clock: Clock, row: ExceptionRow, settings: Settings
+):
     exception_id = row.id
-    detection = service.detect_after_fix(session, policy, clock, exception_id)
+    detection = service.detect_after_fix(
+        session, policy, clock, exception_id, auto_resolve=settings.auto_resolve_enabled
+    )
     with session.begin():
         fresh = session.get(ExceptionRow, exception_id, populate_existing=True)
         detail = _detail(session, fresh)
@@ -302,6 +318,7 @@ def approve(
     session: SessionDep,
     policy: PolicyDep,
     clock: ClockDep,
+    settings: Annotated[Settings, Depends(get_settings_dep)],
 ):
     row = service.approve(
         session,
@@ -312,7 +329,7 @@ def approve(
         option_id=body.option_id,
         reason=body.reason,
     )
-    return _approved(session, policy, clock, row)
+    return _approved(session, policy, clock, row, settings)
 
 
 @router.post(
@@ -329,6 +346,7 @@ def edit(
     session: SessionDep,
     policy: PolicyDep,
     clock: ClockDep,
+    settings: Annotated[Settings, Depends(get_settings_dep)],
 ):
     row = service.approve(
         session,
@@ -340,7 +358,7 @@ def edit(
         reason=body.reason,
         params=body.params,
     )
-    return _approved(session, policy, clock, row)
+    return _approved(session, policy, clock, row, settings)
 
 
 @router.post(
@@ -358,6 +376,48 @@ def reject(
         session, clock, exception_id=exception_id, actor_id=actor_id, reason=body.reason
     )
     return _detail(session, row)
+
+
+@router.post(
+    "/exceptions/{exception_id}/undo",
+    response_model=UndoOut,
+    tags=["decisions"],
+    summary="Undo an auto-resolve: restore the rows, reopen the case for people",
+    description="The payroll admin may undo any auto-resolved case; a supervisor only their "
+    "own team's (else 403 not_assigned); workers get 403 supervisor_only. The rows the "
+    "auto-resolve changed go back to their stored 'before' values through fixes/apply.py. "
+    "409 undo_conflict when a stored row (or this worker's punches that day, by another "
+    "fix) changed since: nothing changes except an undo_refused audit row. 409 "
+    "not_auto_resolved / already_undone / undo_unavailable (no snapshot). The case "
+    "becomes open with the worker's supervisor and is never auto-resolved or handled by "
+    "the scheduler again.",
+    responses=_errors(403, 404, 409, 422),
+)
+def undo(
+    exception_id: str,
+    body: UndoIn,
+    actor_id: ActorId,
+    session: SessionDep,
+    policy: PolicyDep,
+    clock: ClockDep,
+    settings: Annotated[Settings, Depends(get_settings_dep)],
+):
+    _row, restored = service.undo_auto_resolve(
+        session, policy, clock, exception_id=exception_id, actor_id=actor_id, reason=body.reason
+    )
+    detection = service.detect_after_fix(
+        session,
+        policy,
+        clock,
+        exception_id,
+        auto_resolve=settings.auto_resolve_enabled,
+        changed=bool(restored),
+        after="undo",
+    )
+    with session.begin():
+        fresh = session.get(ExceptionRow, exception_id, populate_existing=True)
+        detail = _detail(session, fresh)
+    return UndoOut(**detail.model_dump(), restored=restored, detection=detection)
 
 
 @router.post(
@@ -509,7 +569,58 @@ def supervisor_case(
         )
 
 
+@router.get(
+    "/supervisor/auto-resolved",
+    response_model=TeamAutoFixesOut,
+    tags=["supervisor"],
+    summary="Auto-resolved (and undone) P2/P7 cases for the caller's team",
+    description="A supervisor sees their own team's; the payroll admin sees all. Each item "
+    "says what was fixed, why code was allowed to close it, the policy text, and whether "
+    "the caller may undo it. Workers get 403. Read-only; never calls the LLM.",
+    responses=_errors(403, 422),
+)
+def supervisor_auto_resolved(
+    actor_id: ActorId,
+    session: SessionDep,
+    settings: Annotated[Settings, Depends(get_settings_dep)],
+):
+    sections = load_policy_text(settings.data_dir / "policy.md")
+    with session.begin():
+        items = auto_fix.team_auto_fixes(session, sections, actor_id)
+    return TeamAutoFixesOut(count=len(items), items=items)
+
+
 # ---------------------------------------------------------------- payroll admin
+
+
+@router.get(
+    "/admin/metrics/auto-resolve",
+    response_model=AutoResolveMetricOut,
+    tags=["admin"],
+    summary="X of Y exceptions resolved without a human (payroll admin only)",
+    description="Counted by code from the database. X = auto-resolved and not undone. Y = "
+    "exceptions that needed handling: all in the date range except those closed because "
+    "the data changed (no_longer_detected), which are returned as closed_by_data_change. "
+    "Optional date_from/date_to filter on the exception date.",
+    responses=_errors(403, 422),
+)
+def auto_resolve_metric(
+    actor_id: ActorId,
+    session: SessionDep,
+    policy: PolicyDep,
+    settings: Annotated[Settings, Depends(get_settings_dep)],
+    date_from: date | None = None,
+    date_to: date | None = None,
+):
+    with session.begin():
+        admin.require_admin(session, actor_id)
+        return auto_fix.metric(
+            session,
+            policy,
+            auto_resolve_enabled=settings.auto_resolve_enabled,
+            date_from=date_from,
+            date_to=date_to,
+        )
 
 
 @router.get(
@@ -646,7 +757,13 @@ def _receive_punch(
         via=via,
         requested_by=requested_by,
     )
-    detection = service.detect_after_punch(session, state.policy, state.clock, punch)
+    detection = service.detect_after_punch(
+        session,
+        state.policy,
+        state.clock,
+        punch,
+        auto_resolve=state.settings.auto_resolve_enabled,
+    )
     return PunchAcceptedOut(punch=punch, detection=detection)
 
 
@@ -795,7 +912,9 @@ def demo_reset(actor_id: ActorId, request: Request, session: SessionDep):
             code="invalid_data",
             details=exc.errors,
         ) from exc
-    detection = service.run_detection(session, state.policy, state.clock)
+    detection = service.run_detection(
+        session, state.policy, state.clock, auto_resolve=state.settings.auto_resolve_enabled
+    )
     watermark = set_watermark(state.session_factory, state.clock, "demo_reset")
     state.logger.info("demo reset", extra={"event": "demo_reset", **counts})
     return DemoResetOut(

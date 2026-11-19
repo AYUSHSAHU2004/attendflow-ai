@@ -15,6 +15,10 @@ watermark is the audit-log ID at the moment the scheduler started (or a demo res
 the first cycle if neither happened). Older cases are counted as `skipped_backlog` and
 left for the manual walkthrough. SCHEDULER_BACKLOG=true processes them too.
 
+Auto-resolved cases are resolved, so the scheduler never sees them. A case a person
+undid (Phase 12) is never investigated or messaged automatically, even with
+SCHEDULER_BACKLOG=true: it is counted as `skipped_undone` and left to people.
+
 An error on one case is recorded and the cycle moves on to the next.
 """
 
@@ -96,9 +100,10 @@ class Candidate:
     exception_id: str
     detected_audit_id: int
     severity: str
-    eligible: bool  # detected after the watermark (or backlog processing is on)
+    eligible: bool  # detected after the watermark (or backlog processing is on), not undone
     needs_investigation: bool
     needs_message: bool
+    undone: bool = False  # a person undid its auto-resolve: people own it, never automatic
 
 
 def candidates(session: Session, watermark: int, backlog: bool) -> list[Candidate]:
@@ -128,12 +133,14 @@ def candidates(session: Session, watermark: int, backlog: bool) -> list[Candidat
             and row.investigated_facts_hash is not None
             and row.investigated_facts_hash != facts_hash(row)
         )
+        undone = row.auto_resolve_undone_at is not None
         out.append(
             Candidate(
                 exception_id=row.id,
                 detected_audit_id=detected_id,
                 severity=row.severity,
-                eligible=backlog or detected_id > watermark,
+                eligible=not undone and (backlog or detected_id > watermark),
+                undone=undone,
                 needs_investigation=(case is None or stale) and row.id not in running,
                 needs_message=(
                     case is not None
@@ -226,6 +233,7 @@ def _new_summary(cycle_id: int, trigger: Trigger, deps: CycleDeps, started, wate
         "skipped_budget": [],
         "skipped_message_budget": [],
         "skipped_backlog": 0,
+        "skipped_undone": 0,
         "errors": [],
     }
 
@@ -239,6 +247,7 @@ def counts(summary: dict[str, Any]) -> dict[str, int]:
         "skipped_budget": len(summary["skipped_budget"]),
         "skipped_message_budget": len(summary["skipped_message_budget"]),
         "skipped_backlog": summary["skipped_backlog"],
+        "skipped_undone": summary["skipped_undone"],
         "errors": len(summary["errors"]),
     }
 
@@ -264,7 +273,9 @@ def run_cycle(deps: CycleDeps, trigger: Trigger) -> dict[str, Any]:
     # 1. Detection for everyone.
     try:
         with deps.sessions() as session:
-            det = service.run_detection(session, deps.policy, deps.clock)
+            det = service.run_detection(
+                session, deps.policy, deps.clock, auto_resolve=settings.auto_resolve_enabled
+            )
         summary.update(
             detection="ok",
             detected=det.found,
@@ -281,7 +292,12 @@ def run_cycle(deps: CycleDeps, trigger: Trigger) -> dict[str, Any]:
     with deps.sessions() as session:
         found = candidates(session, watermark, settings.scheduler_backlog)
     summary["skipped_backlog"] = sum(
-        1 for c in found if not c.eligible and (c.needs_investigation or c.needs_message)
+        1
+        for c in found
+        if not c.eligible and not c.undone and (c.needs_investigation or c.needs_message)
+    )
+    summary["skipped_undone"] = sum(
+        1 for c in found if c.undone and (c.needs_investigation or c.needs_message)
     )
     for c in (c for c in found if c.eligible and c.needs_investigation):
         if len(summary["investigated"]) >= settings.scheduler_investigations_per_cycle:

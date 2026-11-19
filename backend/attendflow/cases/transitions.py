@@ -4,7 +4,11 @@
     awaiting_worker -----> awaiting_supervisor | escalated
     awaiting_supervisor -> resolved | awaiting_worker | escalated
     escalated -----------> awaiting_supervisor | resolved | rejected
-    resolved, rejected      final (undo comes in Phase 12)
+    resolved, rejected      final
+
+One exception to "final" (Phase 12): an auto-resolved case may go resolved -> open once,
+through action "undo" by a person (cases/service.py undo_auto_resolve). It is checked by
+check_transition(..., action="undo") and is not part of ALLOWED.
 
 A supervisor's reject does not end the case: it moves it to `escalated` and assigns it to
 the payroll admin. Only a reject by the assignee of an escalated case ends in `rejected`.
@@ -37,8 +41,13 @@ def can_transition(current: str, target: str) -> bool:
     return target in ALLOWED.get(current, frozenset())
 
 
+UNDO = ("resolved", "open")  # only for action "undo" of an auto-resolved case
+
+
 def check_transition(current: str, target: str, *, action: str | None = None) -> None:
     if can_transition(current, target):
+        return
+    if action == "undo" and (current, target) == UNDO:
         return
     allowed = sorted(ALLOWED.get(current, frozenset()))
     what = f"{action}: " if action else ""

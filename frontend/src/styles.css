@@ -220,3 +220,22 @@ select { font: inherit; padding: 0.55rem 0.6rem; border: 1px solid #aebfb3; bord
 .scheduler-buttons { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .punch-form { margin: 0.9rem 0 0; border-top: 1px solid #dcdfd6; padding-top: 0.8rem; }
 .punch-form .hint.block { flex-basis: 100%; margin: 0; }
+
+/* ---------------------------------------------------------------- auto-resolve (Phase 12) */
+.metric-panel { margin-bottom: 1.2rem; padding-top: 0.8rem; padding-bottom: 0.8rem; }
+.metric-headline { margin: 0; font-size: 1.15rem; }
+.metric-headline strong { font-size: 1.6rem; letter-spacing: -0.03em; }
+.metric-percent { color: #4b5b53; }
+.metric-detail, .metric-footnote { margin: 0.2rem 0 0; }
+.metric-footnote { font-size: 0.82rem; }
+.badge.auto { background: #e1ecf6; color: #1d4f7a; }
+.auto-fix { margin-top: 1rem; padding: 0.8rem 1rem; border-radius: 0.7rem; background: #f1f6fb; border: 1px solid #c3d6e8; display: grid; gap: 0.45rem; }
+.auto-fix p, .auto-fix blockquote { margin: 0; }
+.auto-fix .key { color: #4b5b53; font-weight: 700; }
+.auto-fix-undone, .auto-fix-held { background: #fdf6ec; border-color: #ecd3ae; }
+.auto-fix button.small { justify-self: start; }
+.team-auto { margin-top: 1.5rem; }
+.team-auto h2 { font-size: 1.3rem; margin: 0 0 0.6rem; }
+.team-auto-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.8rem; }
+.team-auto-list > li { background: #fff; border: 1px solid #dcdfd6; border-radius: 0.8rem; padding: 0.8rem 1rem; }
+.team-auto-list .auto-fix { margin-top: 0.5rem; }

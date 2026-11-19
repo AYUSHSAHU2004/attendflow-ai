@@ -10,6 +10,7 @@ import {
   type AdminFilters,
   type AdminOverview,
 } from './api'
+import { AutoFixPanel, AutoResolveMetricLine } from './AutoFix'
 import { SchedulerPanel } from './SchedulerPanel'
 import { CaseCard, plainError } from './SupervisorPage'
 import { displayDate } from './WorkerInbox'
@@ -134,6 +135,19 @@ export function AdminDetail({
         </div>
         <button className="secondary small" onClick={onClose}>Close</button>
       </div>
+
+      {data.auto_fix && (
+        <AutoFixPanel
+          info={data.auto_fix}
+          exceptionId={data.exception_id}
+          actor={adminActor.id}
+          onUndone={(message) => {
+            setNotice(message)
+            setReload((value) => value + 1)
+            onChanged()
+          }}
+        />
+      )}
 
       {data.needs_your_decision && (
         <div className="decision-callout" role="note">
@@ -335,6 +349,8 @@ export function AdminPage() {
 
       <SchedulerPanel onChanged={() => setRefresh((value) => value + 1)} />
 
+      <AutoResolveMetricLine refresh={refresh} />
+
       {data && (
         <section aria-label="Counters" className="counters">
           {COUNTERS.map((c) => (
@@ -452,7 +468,8 @@ export function AdminPage() {
                       <td><span className={`badge ${item.severity}`}>{item.severity}</span></td>
                       <td>
                         <span className={`status status-${item.status}`}>{statusLabel(item.status)}</span>
-                        {item.auto_resolved && <span className="badge">auto</span>}
+                        {item.auto_resolved && <span className="badge auto">auto</span>}
+                        {item.auto_resolve_undone && <span className="badge warn">undone</span>}
                         {item.needs_your_decision && <span className="badge decide">Needs your decision</span>}
                       </td>
                       <td>

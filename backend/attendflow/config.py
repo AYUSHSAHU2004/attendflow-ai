@@ -51,6 +51,8 @@ class Settings:
     scheduler_messages_per_cycle: int = 3
     scheduler_backlog: bool = False  # also work through cases detected before the start
     cors_origins: tuple[str, ...] = ("http://localhost:5173", "http://127.0.0.1:5173")
+    # Phase 12: kill switch. Off = detection stores P2/P7 cases open for a person.
+    auto_resolve_enabled: bool = True
 
     def __post_init__(self) -> None:
         interval = self.scheduler_interval_seconds
@@ -103,6 +105,7 @@ def get_settings(env_file: Path | None = REPO_ROOT / ".env") -> Settings:
         scheduler_backlog=_env_bool("SCHEDULER_BACKLOG", default=False),
         cors_origins=_env_list("ATTENDFLOW_CORS_ORIGINS")
         or ("http://localhost:5173", "http://127.0.0.1:5173"),
+        auto_resolve_enabled=_env_bool("AUTO_RESOLVE_ENABLED", default=True),
     )
 
 

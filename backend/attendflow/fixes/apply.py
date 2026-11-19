@@ -11,6 +11,9 @@ Rules:
 - Decision-only actions (approve overtime, holiday pay, ...) change no data; the decision
   is stored on the exception (applied_fix) and in the audit log.
 - Every change is returned as a small dict, so the audit row shows exactly what changed.
+- Auto-resolve (P2/P7, no person) and its undo also run here (Phase 12). The auto-resolve
+  stores each changed row in full before and after; undo restores the "before" values
+  only if every stored row still matches, else it refuses and writes nothing.
 """
 
 from __future__ import annotations
@@ -81,6 +84,13 @@ class FixContext:
             raise ConflictError(
                 f"punch {punch_id} is already voided; run detection again", code="stale_fix"
             )
+        return row
+
+    def punch_any(self, punch_id: str) -> PunchRow | None:
+        """This worker's punch, voided or not, locked for the transaction (undo checks)."""
+        row = self.session.get(PunchRow, punch_id, with_for_update=True)
+        if row is None or row.employee_id != self.employee_id:
+            return None
         return row
 
     def evidence_punches(self) -> list[dict[str, Any]]:
@@ -526,17 +536,143 @@ def apply_fix(
     return changes
 
 
+# ------------------------------------------------------------------ auto-resolve and undo
+
+AUTO_FIX_VERSION = 1  # applied_fix["snapshot_version"]: rows auto-resolved before Phase 12 lack it
+PUNCH_FIELDS = (
+    "punch_id",
+    "employee_id",
+    "timestamp",
+    "type",
+    "source",
+    "device_id",
+    "location",
+    "voided",
+    "voided_by_exception",
+    "created_by_exception",
+)
+
+
+def punch_snapshot(row: PunchRow) -> dict[str, Any]:
+    """Every column of one timecards row, JSON-ready (the undo compares and restores it)."""
+    out = {name: getattr(row, name) for name in PUNCH_FIELDS}
+    out["timestamp"] = row.timestamp.isoformat(timespec="seconds")
+    return out
+
+
 def apply_auto_resolve(
     session: Session, exc: ExceptionRow, policy: PolicyConfig, as_of: datetime
-) -> list[Change]:
-    """Data changes for an exception the engine auto-resolved (policy.json auto_resolve).
+) -> dict[str, Any]:
+    """Data changes for an exception the engine auto-resolved (P2 or P7 within grace).
 
     P2: void the duplicate taps the engine already ignored, so the stored timecard matches
     what the engine counted. P7 (late within grace) changes no data.
+
+    Returns the auto-fix record stored in `applied_fix`: each change with the full row
+    before and after, plus `guarded_rows`, the other evidence punches as they were. An undo
+    is refused if any of these rows no longer looks exactly like this.
     """
     ctx = FixContext(session, exc, policy, as_of)
+    changes: list[Change] = []
     if exc.policy_id == "P2":
-        changes = [ctx.void(pid) for pid in exc.details.get("voided_punch_ids", [])]
+        for pid in exc.details.get("voided_punch_ids", []):
+            before = punch_snapshot(ctx.punch(pid))
+            change = ctx.void(pid)
+            change.update(before=before, after=punch_snapshot(ctx.punch_any(pid)))
+            changes.append(change)
         session.flush()
-        return changes
-    return []
+    changed = {c["punch_id"] for c in changes}
+    guarded = []
+    for item in ctx.evidence_punches():
+        if item["punch_id"] in changed:
+            continue
+        row = session.get(PunchRow, item["punch_id"])
+        if row is not None:
+            guarded.append({"table": "timecards", "row": punch_snapshot(row)})
+    return {
+        "action": "auto_resolve",
+        "policy_id": exc.policy_id,
+        "snapshot_version": AUTO_FIX_VERSION,
+        "changes": changes,
+        "guarded_rows": guarded,
+    }
+
+
+def punches_fixed_by_others(session: Session, exc: ExceptionRow) -> dict[str, set[str]]:
+    """Read-only: this worker's punches on the case's shift date (the day and the next
+    morning, as for corrections) that another case's fix created or voided, by that case."""
+    start = datetime.combine(exc.date, datetime.min.time())
+    punches = session.scalars(
+        select(PunchRow).where(
+            PunchRow.employee_id == exc.employee_id,
+            PunchRow.timestamp >= start,
+            PunchRow.timestamp < start + timedelta(days=2),
+        )
+    ).all()
+    owners: dict[str, set[str]] = {}
+    for p in punches:
+        for owner in (p.created_by_exception, p.voided_by_exception):
+            if owner and owner != exc.id:
+                owners.setdefault(owner, set()).add(p.punch_id)
+    return owners
+
+
+def undo_auto_resolve(
+    session: Session, exc: ExceptionRow, policy: PolicyConfig, as_of: datetime
+) -> list[Change]:
+    """Restore the rows an auto-resolve changed, exactly as they were before it.
+
+    Refused (ConflictError, nothing written) when the case has no snapshot, or when any
+    changed or guarded row no longer matches what the auto-resolve stored: someone or
+    something changed it since, so restoring would overwrite newer data.
+    """
+    fix = exc.applied_fix or {}
+    if fix.get("action") != "auto_resolve" or fix.get("snapshot_version") != AUTO_FIX_VERSION:
+        raise ConflictError(
+            "this case was auto-resolved before undo existed and has no snapshot to "
+            "restore; run a demo reset or decide it by hand",
+            code="undo_unavailable",
+        )
+    ctx = FixContext(session, exc, policy, as_of)
+    conflicts: list[dict[str, Any]] = []
+    rows: dict[str, PunchRow] = {}
+    expected = [(c["punch_id"], c["after"]) for c in fix.get("changes", [])]
+    expected += [(g["row"]["punch_id"], g["row"]) for g in fix.get("guarded_rows", [])]
+    for punch_id, want in expected:
+        row = ctx.punch_any(punch_id)
+        now = punch_snapshot(row) if row is not None else None
+        if now != want:
+            changed = sorted(k for k in want if now is None or now.get(k) != want[k])
+            conflicts.append({"punch_id": punch_id, "changed_fields": changed})
+        if row is not None:
+            rows[punch_id] = row
+    if conflicts:
+        ids = ", ".join(c["punch_id"] for c in conflicts)
+        raise ConflictError(
+            f"punch {ids} changed after the auto-resolve, so it cannot be restored "
+            "exactly; decide this case by hand instead",
+            code="undo_conflict",
+            details={"conflicts": conflicts},
+        )
+    restored: list[Change] = []
+    for change in reversed(fix.get("changes", [])):
+        row = rows[change["punch_id"]]
+        before, after = change["before"], change["after"]
+        for name in PUNCH_FIELDS:
+            if before[name] != after[name]:
+                if name == "timestamp":
+                    raise ConflictError("a snapshot changed a timestamp", code="undo_unavailable")
+                setattr(row, name, before[name])
+        restored.append(
+            {
+                "table": "timecards",
+                "op": "restore",
+                "punch_id": row.punch_id,
+                "type": row.type,
+                "timestamp": row.timestamp.isoformat(timespec="seconds"),
+                "before": after,
+                "after": punch_snapshot(row),
+            }
+        )
+    session.flush()
+    return restored

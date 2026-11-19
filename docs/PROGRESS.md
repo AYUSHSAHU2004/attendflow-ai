@@ -772,3 +772,96 @@ database is empty, run `POST /api/seed` once, then reset with
 `/?as=E004` shows the question. Without a key the same flow uses templates.
 
 **Next: Phase 12** (auto-resolve + undo).
+
+## Phase 12: Auto-resolve with undo, and the "resolved without a human" metric (2026-11-19)
+
+**What existed before** (built on, not duplicated): `policy.json` already had
+`auto_resolve: true` on P2 and P7 only. The engine marked P2 duplicate runs and P7
+clock-ins within grace as `auto_resolved`, and detection closed *new* rows through
+`fixes/apply.py` (P2 voids the extra tap, P7 changes nothing) with a `system` audit row.
+The gaps: no P17 or chained-tap guard, no "before" values (so no exact undo), no kill
+switch, and nothing stopped `auto_resolve: true` on another policy.
+
+**Built**
+- `engine/auto_resolve.py`, the last engine step: each P2/P7 candidate gets a code-built
+  `basis` (e.g. "2 'in' taps 2 min apart, within the 5 min duplicate window"),
+  `eligible` and `held_because`. Held for a person: taps spanning more than the window
+  (chained), taps from two devices or locations, a second clock-in, or any punch that P17
+  reviews. Policy load fails if `auto_resolve` is on for anything but P2/P7.
+- P2 and P7-within-grace carry one human option each, for when a person decides:
+  `void_duplicate` (`void_punches`) and the new decision-only `confirm_within_grace`.
+- Kill switch `AUTO_RESOLVE_ENABLED` (default true). Off: candidates are stored open
+  with an `auto_resolve_held` audit row. Held cases get the same row with the reasons.
+- Snapshot: `apply_auto_resolve` stores every changed row in full, before and after,
+  plus the other evidence punches as `guarded_rows` (`applied_fix.snapshot_version` 1).
+- Undo: `POST /api/exceptions/{id}/undo` (reason of 10+ characters).
+  `fixes/apply.py undo_auto_resolve` restores the "before" values only if every stored
+  row still matches. The service also refuses if another case's audited fix touched
+  this worker's punches on that shift date afterwards. A refusal (409 `undo_conflict` /
+  `undo_unavailable`) changes nothing and writes one `undo_refused` audit row. Success:
+  the case goes `resolved -> open` (an undo-only transition) with the worker's supervisor,
+  `auto_resolved=false`, `auto_resolve_undone_at/by` set (migration `0007`), an
+  `auto_resolve_undone` audit row (actor, before/after, reason), then detection re-runs
+  if data changed (`post_undo_detection`).
+- No loop: only new rows are ever auto-resolved, the stable ID keeps the undone row, and
+  `_auto_resolve` refuses a row with `auto_resolve_undone_at`. The scheduler never
+  investigates or messages an undone case, even with `SCHEDULER_BACKLOG=true`
+  (`skipped_undone` in the cycle summary). The supervisor queue shows undone open cases.
+- Metric: `GET /api/admin/metrics/auto-resolve` (payroll admin). X = auto-resolved and
+  not undone; Y = exceptions that needed handling = all minus those closed as
+  `no_longer_detected`, which are returned as `closed_by_data_change`; percent,
+  `undone`, a per-policy breakdown, optional `date_from`/`date_to`. The existing
+  Auto-resolved tile reads the same column, so it always equals X.
+- Visibility: `cases/auto_fix.py` builds the case's auto-resolve block (state, basis,
+  held reasons, the policy.md "Allowed fixes" quote, what changed in plain words, who/when,
+  undo reason, `can_undo`). `/admin` shows the metric line with its footnote, "auto" and
+  "undone" badges, and the panel with **Undo** in the case detail. `/supervisor` gets
+  **Auto-resolved for my team** (`GET /api/supervisor/auto-resolved`). Plain audit
+  summaries: auto-resolved, held, undone, undo refused, detection after the undo.
+
+**Decisions** (all recommended defaults, plus your metric change)
+- Y excludes cases closed because the data changed (your change). They are shown as a
+  footnote ("Not counted: 1 case closed because the data changed").
+- P7 after an undo offers only "confirm within grace": policy.md says a clock-in within
+  grace "is not counted as late", so there is no "record as late". Reject still escalates.
+- A P7 undo restores nothing; it is refused only if the clock-in itself changed. The
+  "another fix touched that day" check applies only to undos that restore data (P2).
+- Undo permissions: payroll admin any case; a supervisor only workers whose
+  `supervisor_id` is them (403 `not_assigned`); workers 403 `supervisor_only`.
+
+**Checks**
+- Backend with `REQUIRE_DB=1`: 621 passed, 2 skipped (opt-in real-LLM). 44 new:
+  `test_auto_resolve_engine.py` (19: boundaries 5:00/5:01 and 10:00/10:01, limits from
+  policy.json, chained taps, two devices/locations, P17 on P2 and P7, two clock-ins,
+  policy switched off, policy load guard, only P2/P7 ever) and `test_api_auto_resolve.py`
+  (25: exact snapshot, exact restore, no re-auto-resolve, normal flow after undo,
+  refusals with nothing written, permissions, metric before/after undo and with the
+  Neha 09:02 punch, scheduler skip with backlog on, kill switch, SQL write-hook data
+  safety for auto-resolve, undo and re-approve). Updated: one Phase 4 test (P7 within
+  grace now has its human option), the endpoint list, and the write hook's fix actions.
+  The static writer test is unchanged: only `apply.py` reads/writes punches for this.
+- Frontend: 62 tests (11 new in `AutoFix.test.tsx`: metric tile and footnote, kill
+  switch, labels, Undo with reason, error state, supervisor list). Type-check, build and
+  the OpenAPI drift check pass. The bundle has no `URLSearchParams` and no `Neha`.
+- Ruff, `attendflow-validate`, migration 0007 down and up pass.
+
+**Live check** (own database `attendflow_phase12`, API :8012, Vite :5184, demo mode, no
+LLM key; the dev DB on :8000 belonged to another session and was not touched)
+- Demo reset: 17 found, Sana's P2 auto-resolved with a snapshot. Metric **1 of 17 (5.9%)**.
+- Priya undid Sana's P2 in `/admin`: P0005 restored (not voided), case open with Ravi,
+  metric **0 of 17**, tile 0.
+- Simulate punch Neha 09:02: P0073 stored; new P1 (open) and P7 (auto-resolved, no data
+  change); P10 closed. Metric **1 of 18 (5.6%)**, footnote "1 case closed because the data
+  changed".
+- Ravi undid Neha's P7 from `/supervisor` → "Nothing to restore"; both undone cases in
+  his queue. Metric **0 of 18**, 2 undone.
+- Amit's P1: open with Ravi, only `detected`, no investigation, empty inbox.
+
+**Phase 22 checklist (added)**: review the `AUTO_RESOLVE_ENABLED` default and which
+policies have `auto_resolve: true` in `policy.json`; review the metric's definition
+(X, Y, `closed_by_data_change`) before showing it to real users.
+
+**Verify:** `alembic upgrade head`, then follow section 7 of
+[DEMO_WALKTHROUGH.md](DEMO_WALKTHROUGH.md).
+
+**Next: Phase 13** (no-reply escalation).

@@ -63,7 +63,8 @@ and CI, 10-minute demo video, 5 slides.
 
 Done: 0 Setup + data + policy + LLM test; 1 Rule engine P1-P7, P15; 2 Rules P8-P14, P16, P17;
 3 Backend + DB + API; 4 Read-only tools + fix options for P3/P4/P6/P7; 5 LLM client + agent loop; 6 structured investigations and jobs; 7 worker messages and inbox; 8 worker clock-out extraction and re-check; 9 supervisor approval screen; 10 Priya's list +
-end-to-end tests (**prototype complete**); 11 mock punch API + scheduler.
+end-to-end tests (**prototype complete**); 11 mock punch API + scheduler; 12 auto-resolve + undo +
+"resolved without a human" metric.
 
 **Prototype (3-10)**
 3. Backend + DB + API
@@ -91,7 +92,7 @@ end-to-end tests (**prototype complete**); 11 mock punch API + scheduler.
 23. Tests + evaluation
 24. Delivery
 
-**Next: Phase 12.**
+**Next: Phase 13.**
 
 **Carry-over notes**
 - Phase 5 Groq bug: `run_checks` advertised Pydantic's RFC 3339 `date-time` format for
@@ -126,6 +127,10 @@ end-to-end tests (**prototype complete**); 11 mock punch API + scheduler.
     process (or move the lock to a Postgres advisory lock) before scaling out.
   - Phase 11: `scheduler_cycle` rows and `/api/admin/scheduler` expose case IDs only, not
     LLM text; keep it that way when the activity feed is added (Phase 14).
+  - Phase 12: review the `AUTO_RESOLVE_ENABLED` default (true) and which policies have
+    `"auto_resolve": true` in `policy.json` (code allows only P2 and P7) before deploy.
+  - Phase 12: review the metric definition (X = auto-resolved and not undone; Y = all
+    minus `closed_by_data_change`) before showing it to real users.
 
 ## Decisions so far (do not re-ask)
 
@@ -506,7 +511,49 @@ end-to-end tests (**prototype complete**); 11 mock punch API + scheduler.
   `P1-E004-2026-04-15` and closes her planted `P10-E004-2026-04-15`. The P1 routes to the
   worker, so one cycle investigates it and messages Neha.
 - Detection already auto-resolves P2 and P7 within grace (Phase 3 behaviour), including
-  after a device punch. Phase 12 adds the scheduled job and undo.
+  after a device punch. Phase 12 added the guard, snapshot, undo and metric.
+
+**Auto-resolve + undo (Phase 12)**
+- Only P2 and P7 (within grace) may close without a person: `AUTO_RESOLVABLE` in
+  `policy/models.py`; `policy.json` with `auto_resolve: true` on any other policy fails to
+  load. `engine/auto_resolve.py` (last engine step) adds `details.auto_resolve` =
+  `{basis, eligible, held_because}` and holds for a person: taps spanning more than the
+  P2 window (chained), taps from two devices or locations, a second clock-in (P7), or a
+  punch in any P17 case. Boundaries: P2 5:00 apart is a duplicate, 5:01 is not; P7 10:00
+  late is within grace, 10:01 is a late arrival.
+- Kill switch `AUTO_RESOLVE_ENABLED` (default true), passed as `auto_resolve=` to every
+  `run_detection` / `detect_after_*` call. Off (or engine-held): stored open with an
+  `auto_resolve_held` audit row. Only NEW rows are ever auto-resolved.
+- Human options on these cases: P2 `void_duplicate` (`void_punches`); P7 the new
+  decision-only `confirm_within_grace` (no "record as late": policy.md says within grace
+  is not late).
+- Snapshot: `apply_auto_resolve` returns the `applied_fix` with `snapshot_version` 1, each
+  change's full `before`/`after` row and `guarded_rows` (other evidence punches).
+- Undo: `POST /api/exceptions/{id}/undo` (`UndoIn.reason` >= 10 chars). Payroll admin any
+  case; supervisor only their team (403 `not_assigned`); workers 403 `supervisor_only`.
+  `fixes/apply.py undo_auto_resolve` restores only if every stored row still matches;
+  the service also refuses if another case's audited fix (approve/edit/auto_resolve/undo)
+  touched the worker's punches on that shift date (day + next morning) after the
+  auto-resolve (read via `apply.punches_fixed_by_others`). Refusal = 409 `undo_conflict`
+  or `undo_unavailable` (no snapshot), nothing changed, one `undo_refused` audit row.
+  Also 409 `not_auto_resolved`, `already_undone`.
+- After undo: `resolved -> open` (undo-only transition, `transitions.UNDO`), assigned to
+  the worker's supervisor, `auto_resolved=false`, `applied_fix=None`,
+  `auto_resolve_undone_at/by` set (migration `0007`), audit `auto_resolve_undone`
+  (before has the undone `applied_fix`), then `post_undo_detection` if data was restored.
+  The supervisor queue shows undone open cases; the scheduler never investigates or
+  messages them, even with backlog on (`skipped_undone`).
+- Metric `GET /api/admin/metrics/auto-resolve` (payroll admin): X =
+  `resolved_without_human` (auto_resolved, so not undone), Y = `needed_handling` (all
+  minus `closed_by_data_change` = resolved rows with a `no_longer_detected` audit row),
+  `percent`, `undone`, `by_policy`, optional `date_from`/`date_to`. The Auto-resolved
+  counter tile equals X.
+- `cases/auto_fix.py`: `auto_fix_info` (admin detail `auto_fix`), `team_auto_fixes`
+  (`GET /api/supervisor/auto-resolved`), `metric`. Frontend `AutoFix.tsx`:
+  `AutoResolveMetricLine`, `AutoFixPanel` (Undo with reason, plain refusal text),
+  `TeamAutoFixes` on `/supervisor`.
+- Live check ran on a separate DB (`attendflow_phase12`, API :8012, Vite :5184; launch
+  configs `api-phase12` / `web-phase12`) because another session used the dev DB.
 
 ## Repo map
 
@@ -523,6 +570,7 @@ backend/attendflow/
   engine/rules_leave.py  P9, P11, P12, P13
   engine/rules_review.py P17 possible punch conflict
   engine/checks.py       ordered CHECKS registry + the check-order note
+  engine/auto_resolve.py last engine step: which P2/P7 candidates may auto-resolve (or held)
   engine/engine.py       build_context() + run_engine(dataset, policy, as_of) -> EngineResult
   llm/client.py          OpenAI-compatible chat()/chat_once()/list_models(); bounded retry
   agent/loop.py          Native tool calls over one stored exception, returns AgentRun
@@ -538,7 +586,8 @@ backend/attendflow/
   db/seed.py             demo reset: truncate all, load CSVs
   db/dataset.py          read-only: DB -> engine Dataset (voided punches left out)
   fixes/params.py        Pydantic params per fix action; decision-only action list
-  fixes/apply.py         the ONLY writer of timecards/schedule/leave after approval
+  fixes/apply.py         the ONLY writer of timecards/schedule/leave after approval (and auto-resolve
+                         + its undo, with before/after snapshots)
   cases/transitions.py   status flow table + check_transition()
   cases/service.py       run_detection (upsert, optional DetectionScope), approve/edit, reject,
                          ask_worker (also as system), worker_reply, detect_after_fix,
@@ -546,6 +595,7 @@ backend/attendflow/
   cases/facts.py         CONTENT_FIELDS + facts_hash() (re-investigate only on changed facts)
   cases/supervisor.py    supervisor queue, case card, consequence note, reviewer permission
   cases/admin.py         payroll admin overview, counters, read-only case detail, audit summaries
+  cases/auto_fix.py      auto-resolve info per case, supervisor team list, "without a human" metric
   tools/models.py        tool inputs/outputs (Pydantic), ok/error envelope, ProposedChange
   tools/read_tools.py    get_schedule, get_leave, get_leave_balance, get_punches, get_policy
   tools/run_checks.py    run_checks: simulate a change, re-run the engine, diff the week
@@ -559,8 +609,8 @@ backend/attendflow/
 data/                    6 CSVs + policy.json (limits) + policy.md (plain-language, cited by agent)
 docs/                    PROGRESS.md, PLANTED_CASES.md, LLM_LICENCE.md, DEMO_WALKTHROUGH.md
 tests/                   pytest suite
-frontend/                Vite React: worker inbox (/), supervisor (/supervisor), admin (/admin, with
-                         SchedulerPanel), dev (/dev)
+frontend/                Vite React: worker inbox (/), supervisor (/supervisor, with TeamAutoFixes),
+                         admin (/admin, with SchedulerPanel + metric line + AutoFixPanel), dev (/dev)
 docker-compose.yml       PostgreSQL 16 (host port 5433); docker/initdb creates the test DB
 .github/workflows/ci.yml lint + validate + tests (with a Postgres service) on Python 3.12
 ```

@@ -103,7 +103,8 @@ or a local Ollama model is a `.env` change. Licence notes: [docs/LLM_LICENCE.md]
 
 ## Status
 
-**Prototype complete (Phase 10); Phase 11 adds a mock attendance device and a scheduler.**
+**Prototype complete (Phase 10); Phase 11 adds a mock attendance device and a scheduler;
+Phase 12 adds auto-resolve with undo and the "resolved without a human" metric.**
 See [docs/PROGRESS.md](docs/PROGRESS.md), and
 [docs/DEMO_WALKTHROUGH.md](docs/DEMO_WALKTHROUGH.md) for the click-by-click demo.
 
@@ -151,6 +152,27 @@ decision card for cases escalated to her. The admin API (`GET /api/admin/excepti
   on `/admin` and `POST /api/admin/demo/reset`. Try Neha (E004), clock in, Wed 15 Apr 08:58:
   a new P1 appears, the scheduler investigates it and Neha's inbox
   (`http://localhost:5173/?as=E004`, dev builds only) gets the question.
+
+## Auto-resolve with undo (Phase 12)
+
+- Only **P2** (duplicate taps within the 5 min window) and **P7** (clock-in within the
+  10 min grace) may close without a person, and only when the engine's own numbers prove
+  it (limits from `data/policy.json`). Anything unclear stays open for a person: taps that
+  chain past the window, taps from two devices or sites, a second clock-in, or a punch
+  that P17 flags for review. `policy.json` cannot turn auto-resolve on for any other policy.
+- `AUTO_RESOLVE_ENABLED=false` is the kill switch: nothing auto-resolves, and those cases
+  are stored open with an audit row saying why.
+- Every auto-resolve goes through `fixes/apply.py`, stores each changed row in full
+  (before and after) and is audit-logged as `system`. **Undo** (Priya: any case; a
+  supervisor: their own team) restores the "before" values through `apply.py`, reopens
+  the case for the team supervisor, and marks it so it is never auto-resolved or handled
+  by the scheduler again. If a stored row changed since, the undo is refused (409
+  `undo_conflict`) and only an `undo_refused` audit row is written.
+- `/admin` shows **"X of Y exceptions resolved without a human"**
+  (`GET /api/admin/metrics/auto-resolve`): X = auto-resolved and not undone, Y = cases
+  that needed handling (cases closed because the data changed are listed apart in a
+  footnote). The case detail explains each auto-resolve and has the **Undo** button;
+  `/supervisor` lists **Auto-resolved for my team** with the same panel.
 
 From `frontend/`, run `npm test`, `npm run typecheck`, and `npm run build`.
 Run `npm run api:generate` after backend API changes to refresh the generated

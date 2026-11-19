@@ -179,6 +179,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/exceptions/{exception_id}/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Undo an auto-resolve: restore the rows, reopen the case for people
+         * @description The payroll admin may undo any auto-resolved case; a supervisor only their own team's (else 403 not_assigned); workers get 403 supervisor_only. The rows the auto-resolve changed go back to their stored 'before' values through fixes/apply.py. 409 undo_conflict when a stored row (or this worker's punches that day, by another fix) changed since: nothing changes except an undo_refused audit row. 409 not_auto_resolved / already_undone / undo_unavailable (no snapshot). The case becomes open with the worker's supervisor and is never auto-resolved or handled by the scheduler again.
+         */
+        post: operations["undo_api_exceptions__exception_id__undo_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/exceptions/{exception_id}/ask-worker": {
         parameters: {
             query?: never;
@@ -296,6 +316,46 @@ export interface paths {
          * @description Only the assignee (a supervisor or the payroll admin) may open it. Evidence rows of other workers are left out and their names are redacted. Every text is stored data or built by code; this endpoint never calls the LLM.
          */
         get: operations["supervisor_case_api_supervisor_cases__exception_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/supervisor/auto-resolved": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Auto-resolved (and undone) P2/P7 cases for the caller's team
+         * @description A supervisor sees their own team's; the payroll admin sees all. Each item says what was fixed, why code was allowed to close it, the policy text, and whether the caller may undo it. Workers get 403. Read-only; never calls the LLM.
+         */
+        get: operations["supervisor_auto_resolved_api_supervisor_auto_resolved_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/metrics/auto-resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * X of Y exceptions resolved without a human (payroll admin only)
+         * @description Counted by code from the database. X = auto-resolved and not undone. Y = exceptions that needed handling: all in the date range except those closed because the data changed (no_longer_detected), which are returned as closed_by_data_change. Optional date_from/date_to filter on the exception date.
+         */
+        get: operations["auto_resolve_metric_api_admin_metrics_auto_resolve_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -576,6 +636,8 @@ export interface components {
             can_investigate: boolean;
             /** Auto Resolved */
             auto_resolved: boolean;
+            /** @description P2/P7 only: the auto-resolve, why, and whether you may undo */
+            auto_fix?: components["schemas"]["AutoFixOut"] | null;
             employee: components["schemas"]["CardEmployeeOut"];
             /**
              * Date
@@ -720,6 +782,12 @@ export interface components {
             status: "open" | "awaiting_worker" | "awaiting_supervisor" | "resolved" | "rejected" | "escalated";
             /** Auto Resolved */
             auto_resolved: boolean;
+            /**
+             * Auto Resolve Undone
+             * @description A person undid this case's auto-resolve (Phase 12)
+             * @default false
+             */
+            auto_resolve_undone: boolean;
             /** Assigned To */
             assigned_to: string | null;
             /** Assigned To Name */
@@ -869,6 +937,13 @@ export interface components {
             status: "open" | "awaiting_worker" | "awaiting_supervisor" | "resolved" | "rejected" | "escalated";
             /** Auto Resolved */
             auto_resolved: boolean;
+            /**
+             * Auto Resolve Undone At
+             * @description Set when a person undid the auto-resolve (Phase 12)
+             */
+            auto_resolve_undone_at?: string | null;
+            /** Auto Resolve Undone By */
+            auto_resolve_undone_by?: string | null;
             /** Details */
             details: {
                 [key: string]: unknown;
@@ -957,6 +1032,113 @@ export interface components {
             count: number;
             /** Items */
             items: components["schemas"]["AuditEntryOut"][];
+        };
+        /**
+         * AutoFixOut
+         * @description An auto-resolve as people see it. Every text is stored data or built by code.
+         */
+        AutoFixOut: {
+            /**
+             * State
+             * @description held = a candidate left open for a person (unclear, or switched off)
+             * @enum {string}
+             */
+            state: "auto_resolved" | "undone" | "held";
+            /**
+             * Basis
+             * @description Why code was allowed to close it (engine numbers)
+             */
+            basis: string | null;
+            /** Held Because */
+            held_because: string[];
+            /**
+             * Policy Quote
+             * @description policy.md "Allowed fixes" for this policy, verbatim
+             */
+            policy_quote: string;
+            /**
+             * Changes
+             * @description What the auto-resolve changed, one line per row
+             */
+            changes: string[];
+            /** Data Changed */
+            data_changed: boolean;
+            /** Resolved By */
+            resolved_by: "system" | null;
+            /** Resolved At */
+            resolved_at: string | null;
+            /** Undone By */
+            undone_by: string | null;
+            /** Undone By Name */
+            undone_by_name: string | null;
+            /** Undone At */
+            undone_at: string | null;
+            /** Undo Reason */
+            undo_reason: string | null;
+            /**
+             * Can Undo
+             * @description The caller may undo it now
+             */
+            can_undo: boolean;
+            /** Undo Unavailable Reason */
+            undo_unavailable_reason: string | null;
+            last_refusal: components["schemas"]["AutoFixRefusalOut"] | null;
+        };
+        /** AutoFixRefusalOut */
+        AutoFixRefusalOut: {
+            /**
+             * At
+             * Format: date-time
+             */
+            at: string;
+            /** By */
+            by: string | null;
+            /** Message */
+            message: string | null;
+        };
+        /** AutoResolveMetricOut */
+        AutoResolveMetricOut: {
+            /**
+             * Resolved Without Human
+             * @description X: closed by auto-resolve and not undone
+             */
+            resolved_without_human: number;
+            /**
+             * Needed Handling
+             * @description Y: exceptions that needed handling (all, minus closed_by_data_change)
+             */
+            needed_handling: number;
+            /**
+             * Percent
+             * @description 100 * X / Y, one decimal (0 when Y is 0)
+             */
+            percent: number;
+            /**
+             * Undone
+             * @description Auto-resolves a person undid (counted as human work)
+             */
+            undone: number;
+            /**
+             * Closed By Data Change
+             * @description Closed as no_longer_detected: the data changed and nobody had to act. Not part of Y.
+             */
+            closed_by_data_change: number;
+            /** Date From */
+            date_from: string | null;
+            /** Date To */
+            date_to: string | null;
+            /**
+             * Auto Resolve Enabled
+             * @description The AUTO_RESOLVE_ENABLED kill switch
+             */
+            auto_resolve_enabled: boolean;
+            /**
+             * Allowed Policies
+             * @description Policies policy.json lets auto-resolve
+             */
+            allowed_policies: string[];
+            /** By Policy */
+            by_policy: components["schemas"]["MetricPolicyOut"][];
         };
         /** CardConfirmedTimeOut */
         CardConfirmedTimeOut: {
@@ -1225,6 +1407,12 @@ export interface components {
             options_added: number;
             /** Auto Resolved */
             auto_resolved: number;
+            /**
+             * Auto Resolve Held
+             * @description New P2/P7 cases left open for a person (unclear, or the kill switch is off)
+             * @default 0
+             */
+            auto_resolve_held: number;
             /** Closed No Longer Detected */
             closed_no_longer_detected: string[];
             /** By Policy */
@@ -1340,6 +1528,13 @@ export interface components {
             status: "open" | "awaiting_worker" | "awaiting_supervisor" | "resolved" | "rejected" | "escalated";
             /** Auto Resolved */
             auto_resolved: boolean;
+            /**
+             * Auto Resolve Undone At
+             * @description Set when a person undid the auto-resolve (Phase 12)
+             */
+            auto_resolve_undone_at?: string | null;
+            /** Auto Resolve Undone By */
+            auto_resolve_undone_by?: string | null;
             /** Details */
             details: {
                 [key: string]: unknown;
@@ -1429,6 +1624,13 @@ export interface components {
             status: "open" | "awaiting_worker" | "awaiting_supervisor" | "resolved" | "rejected" | "escalated";
             /** Auto Resolved */
             auto_resolved: boolean;
+            /**
+             * Auto Resolve Undone At
+             * @description Set when a person undid the auto-resolve (Phase 12)
+             */
+            auto_resolve_undone_at?: string | null;
+            /** Auto Resolve Undone By */
+            auto_resolve_undone_by?: string | null;
             /** Details */
             details: {
                 [key: string]: unknown;
@@ -1612,6 +1814,19 @@ export interface components {
             duration_ms: number | null;
             /** Reason */
             reason: string | null;
+        };
+        /** MetricPolicyOut */
+        MetricPolicyOut: {
+            /** Policy Id */
+            policy_id: string;
+            /** Needed Handling */
+            needed_handling: number;
+            /** Auto Resolved */
+            auto_resolved: number;
+            /** Undone */
+            undone: number;
+            /** Closed By Data Change */
+            closed_by_data_change: number;
         };
         /** PostFixDetectionOut */
         PostFixDetectionOut: {
@@ -1816,6 +2031,12 @@ export interface components {
              * @description Cases detected before the scheduler started that it left alone
              */
             skipped_backlog: number;
+            /**
+             * Skipped Undone
+             * @description Cases whose auto-resolve a person undid: never handled automatically
+             * @default 0
+             */
+            skipped_undone: number;
             /** Errors */
             errors: components["schemas"]["CycleErrorOut"][];
         };
@@ -1963,6 +2184,12 @@ export interface components {
             status: "open" | "awaiting_worker" | "awaiting_supervisor" | "resolved" | "rejected" | "escalated";
             /** Waiting Since */
             waiting_since: string | null;
+            /**
+             * Auto Resolve Undone
+             * @description A person undid its auto-resolve; decide it by hand
+             * @default false
+             */
+            auto_resolve_undone: boolean;
         };
         /** SupervisorQueueOut */
         SupervisorQueueOut: {
@@ -1970,6 +2197,39 @@ export interface components {
             count: number;
             /** Items */
             items: components["schemas"]["SupervisorQueueItemOut"][];
+        };
+        /** TeamAutoFixItemOut */
+        TeamAutoFixItemOut: {
+            /** Exception Id */
+            exception_id: string;
+            /** Employee Id */
+            employee_id: string;
+            /** Employee Name */
+            employee_name: string;
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Policy Id */
+            policy_id: string;
+            /** Title */
+            title: string;
+            /** Summary */
+            summary: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "open" | "awaiting_worker" | "awaiting_supervisor" | "resolved" | "rejected" | "escalated";
+            auto_fix: components["schemas"]["AutoFixOut"] | null;
+        };
+        /** TeamAutoFixesOut */
+        TeamAutoFixesOut: {
+            /** Count */
+            count: number;
+            /** Items */
+            items: components["schemas"]["TeamAutoFixItemOut"][];
         };
         /** ToolCallListOut */
         ToolCallListOut: {
@@ -2009,6 +2269,112 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+        };
+        /** UndoIn */
+        UndoIn: {
+            /**
+             * Reason
+             * @description Why the auto-resolve is undone (at least 10 characters, saved in the audit)
+             * @example The worker says the second tap was a real re-entry
+             */
+            reason: string;
+        };
+        /** UndoOut */
+        UndoOut: {
+            /**
+             * Id
+             * @example P1-E001-2026-04-14
+             */
+            id: string;
+            /** Employee Id */
+            employee_id: string;
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Policy Id */
+            policy_id: string;
+            /** Title */
+            title: string;
+            /** Summary */
+            summary: string;
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "low" | "medium" | "high";
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "breach" | "risk";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "open" | "awaiting_worker" | "awaiting_supervisor" | "resolved" | "rejected" | "escalated";
+            /** Auto Resolved */
+            auto_resolved: boolean;
+            /**
+             * Auto Resolve Undone At
+             * @description Set when a person undid the auto-resolve (Phase 12)
+             */
+            auto_resolve_undone_at?: string | null;
+            /** Auto Resolve Undone By */
+            auto_resolve_undone_by?: string | null;
+            /** Details */
+            details: {
+                [key: string]: unknown;
+            };
+            /** Evidence */
+            evidence: {
+                [key: string]: unknown;
+            }[];
+            /** Fix Options */
+            fix_options: components["schemas"]["FixOptionOut"][];
+            /** Proposed Fix */
+            proposed_fix: {
+                [key: string]: unknown;
+            } | null;
+            worker_recheck?: components["schemas"]["WorkerRecheckOut"] | null;
+            /** Applied Fix */
+            applied_fix: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Assigned To
+             * @description Whose turn it is to act
+             */
+            assigned_to: string | null;
+            /** Waiting Since */
+            waiting_since: string | null;
+            /**
+             * Last Detected At
+             * Format: date-time
+             */
+            last_detected_at: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Audit Trail */
+            audit_trail: components["schemas"]["AuditEntryOut"][];
+            investigation_case?: components["schemas"]["InvestigationCase"] | null;
+            /**
+             * Restored
+             * @description Rows put back to their 'before' values
+             */
+            restored: {
+                [key: string]: unknown;
+            }[];
+            detection: components["schemas"]["PostFixDetectionOut"];
         };
         /** ValidationError */
         ValidationError: {
@@ -2597,6 +2963,71 @@ export interface operations {
             };
         };
     };
+    undo_api_exceptions__exception_id__undo_post: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
+                "X-Actor-Id": string;
+            };
+            path: {
+                exception_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UndoIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UndoOut"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     ask_worker_api_exceptions__exception_id__ask_worker_post: {
         parameters: {
             query?: never;
@@ -2969,6 +3400,91 @@ export interface operations {
             };
             /** @description Not Found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    supervisor_auto_resolved_api_supervisor_auto_resolved_get: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
+                "X-Actor-Id": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeamAutoFixesOut"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    auto_resolve_metric_api_admin_metrics_auto_resolve_get: {
+        parameters: {
+            query?: {
+                date_from?: string | null;
+                date_to?: string | null;
+            };
+            header: {
+                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
+                "X-Actor-Id": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutoResolveMetricOut"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

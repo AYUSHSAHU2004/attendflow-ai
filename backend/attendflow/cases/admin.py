@@ -13,6 +13,7 @@ from typing import Any
 from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session
 
+from attendflow.cases.auto_fix import auto_fix_info
 from attendflow.cases.supervisor import (
     SEVERITY_RANK,
     _policy_section,
@@ -161,6 +162,7 @@ def overview(
                 "kind": row.kind,
                 "status": row.status,
                 "auto_resolved": row.auto_resolved,
+                "auto_resolve_undone": row.auto_resolve_undone_at is not None,
                 "assigned_to": row.assigned_to,
                 "assigned_to_name": assignee.name if assignee else None,
                 "investigated": bool(inv),
@@ -239,7 +241,25 @@ def audit_summary(entry: AuditLogRow, employees: dict[str, EmployeeRow]) -> str:
     if action == "no_longer_detected":
         return "Closed: detection no longer finds it."
     if action == "auto_resolve":
-        return "Auto-resolved by policy (low risk)."
+        basis = after.get("basis")
+        return f"Auto-resolved by the system: {basis}." if basis else "Auto-resolved by policy."
+    if action == "auto_resolve_held":
+        held = "; ".join(after.get("held_because") or []) or "not allowed"
+        return f"Not auto-resolved ({held}); left for a person."
+    if action == "auto_resolve_undone":
+        who = _name(employees, entry.actor_id)
+        restored = len(after.get("changes") or [])
+        data = f", {restored} punch(es) restored" if restored else ", no data to restore"
+        return f"{who} undid the auto-resolve{data}; the case is open again."
+    if action == "undo_refused":
+        return f"Undo refused, nothing changed: {after.get('message') or after.get('code')}."
+    if action == "post_undo_detection":
+        new = after.get("new_exception_ids") or []
+        return (
+            f"Detection re-ran after the undo; new exceptions: {', '.join(new)}."
+            if new
+            else "Detection re-ran after the undo; no new exceptions."
+        )
     if action == "structured_investigation_started":
         return "Investigation started (read-only tools)."
     if action == "structured_investigation_finished":
@@ -392,6 +412,7 @@ def detail(
         "needs_your_decision": _needs_decision(row, actor),
         "can_investigate": row.status == "open",
         "auto_resolved": row.auto_resolved,
+        "auto_fix": auto_fix_info(session, row, sections, employees, actor),
         "employee": {"employee_id": worker.employee_id, "name": worker.name, "team": worker.team},
         "date": row.date,
         "policy_id": row.policy_id,

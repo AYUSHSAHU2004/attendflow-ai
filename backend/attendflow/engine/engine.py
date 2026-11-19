@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from attendflow.data.loader import Dataset
+from attendflow.engine.auto_resolve import apply_guard
 from attendflow.engine.checks import CHECKS
 from attendflow.engine.models import EngineResult
 from attendflow.engine.rules import RuleContext
@@ -57,6 +58,8 @@ def run_engine(
         raise ValueError(f"no check implemented for {unknown}")
 
     exceptions = [exc for pid in selected for exc in CHECKS[pid](ctx)]
+    # Last step: which P2/P7 candidates may close without a person (engine/auto_resolve.py).
+    exceptions = apply_guard(exceptions, policy)
     exceptions.sort(
         key=lambda e: (e.employee_id, e.date, _policy_number(e.policy_id), e.exception_id)
     )

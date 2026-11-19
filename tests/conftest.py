@@ -116,6 +116,7 @@ def api_settings(db_engine):
         demo_mode=False,
         scheduler_enabled=False,
         scheduler_backlog=False,
+        auto_resolve_enabled=True,  # Phase 12 kill switch: on unless a test turns it off
     )
 
 

@@ -187,3 +187,28 @@ export async function sendDemoPunch(body: PunchInput) {
     method: 'POST', body: JSON.stringify(body),
   })).body
 }
+
+// ---------------------------------------------------------------- auto-resolve (Phase 12)
+
+export type AutoResolveMetric = Schemas['AutoResolveMetricOut']
+export type AutoFix = Schemas['AutoFixOut']
+export type TeamAutoFix = Schemas['TeamAutoFixItemOut']
+export type UndoResult = Schemas['UndoOut']
+
+export async function getAutoResolveMetric(signal?: AbortSignal) {
+  return (await request<AutoResolveMetric>(
+    '/api/admin/metrics/auto-resolve', adminActor.id, { signal },
+  )).body
+}
+
+export async function undoAutoResolve(id: string, body: Schemas['UndoIn'], actor: string) {
+  return (await request<UndoResult>(`${casePath(id)}/undo`, actor, {
+    method: 'POST', body: JSON.stringify(body),
+  })).body
+}
+
+export async function getTeamAutoFixes(signal?: AbortSignal, actor = supervisorActor.id) {
+  return (await request<Schemas['TeamAutoFixesOut']>(
+    '/api/supervisor/auto-resolved', actor, { signal },
+  )).body.items
+}

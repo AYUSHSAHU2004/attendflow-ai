@@ -7,6 +7,7 @@ import {
   editCase,
   getCase,
   getQueue,
+  getTeamAutoFixes,
   rejectCase,
   type ApproveResult,
   type CaseOption,
@@ -22,6 +23,7 @@ vi.mock('./api', async (importOriginal) => ({
   approveCase: vi.fn(),
   editCase: vi.fn(),
   rejectCase: vi.fn(),
+  getTeamAutoFixes: vi.fn(),
 }))
 
 const AMIT_P1 = 'P1-E001-2026-04-14'
@@ -37,6 +39,7 @@ const item: QueueItem = {
   kind: 'breach',
   status: 'awaiting_supervisor',
   waiting_since: '2026-04-16T08:00:00',
+  auto_resolve_undone: false,
 }
 
 const newViolations = [
@@ -129,7 +132,10 @@ async function openCase(caseData: SupervisorCase) {
 }
 
 describe('supervisor queue', () => {
-  beforeEach(() => vi.resetAllMocks())
+  beforeEach(() => {
+    vi.resetAllMocks()
+    vi.mocked(getTeamAutoFixes).mockResolvedValue([])
+  })
 
   it('shows the empty state', async () => {
     vi.mocked(getQueue).mockResolvedValue([])
@@ -160,7 +166,10 @@ describe('supervisor queue', () => {
 })
 
 describe('case card', () => {
-  beforeEach(() => vi.resetAllMocks())
+  beforeEach(() => {
+    vi.resetAllMocks()
+    vi.mocked(getTeamAutoFixes).mockResolvedValue([])
+  })
 
   it('shows the approximate time, the worker\'s words, the re-check and the consequence', async () => {
     await openCase(makeCase())

@@ -13,6 +13,7 @@ import {
   type SupervisorCase,
 } from './api'
 import { displayDate } from './WorkerInbox'
+import { TeamAutoFixes } from './AutoFix'
 
 const TIME_ACTIONS = new Set(['set_clock_out', 'set_clock_in', 'correct_clock_out'])
 const MIN_REJECT = 10
@@ -537,7 +538,10 @@ export function SupervisorPage() {
                       <strong>{item.employee_name}</strong>
                       <span className={`badge ${item.severity}`}>{item.severity}</span>
                     </span>
-                    <span className="row-meta">{item.policy_id} · {displayDate(item.date)}{item.status === 'escalated' ? ' · escalated' : ''}</span>
+                    <span className="row-meta">
+                      {item.policy_id} · {displayDate(item.date)}{item.status === 'escalated' ? ' · escalated' : ''}
+                      {item.auto_resolve_undone ? ' · auto-resolve undone' : ''}
+                    </span>
                     <span className="row-summary">{item.summary}</span>
                   </button>
                 </li>
@@ -558,6 +562,10 @@ export function SupervisorPage() {
           />
         )}
       </div>
+      <TeamAutoFixes
+        refresh={refresh}
+        onUndone={(message) => { setNotice(message); setRefresh((value) => value + 1) }}
+      />
     </main>
   )
 }

@@ -220,6 +220,7 @@ DECISION_ACTIONS = frozenset(
         "record_short_rest",
         "accept_reason",
         "record_lateness",
+        "confirm_within_grace",
     }
 )
 

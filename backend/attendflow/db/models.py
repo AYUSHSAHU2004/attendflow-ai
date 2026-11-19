@@ -192,6 +192,10 @@ class ExceptionRow(Base):
     # Hash of the engine facts the stored investigation saw (cases/facts.py). The scheduler
     # investigates again only when the facts changed since.
     investigated_facts_hash: Mapped[str | None] = mapped_column(String(64))
+    # Phase 12: a person undid the auto-resolve. Set once, never cleared: the case is never
+    # auto-resolved again and the scheduler leaves it to people.
+    auto_resolve_undone_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
+    auto_resolve_undone_by: Mapped[str | None] = mapped_column(String(8))
     assigned_to: Mapped[str | None] = mapped_column(ForeignKey("employees.employee_id"))
     waiting_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
     last_detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=False))

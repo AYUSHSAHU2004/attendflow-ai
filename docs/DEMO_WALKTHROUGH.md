@@ -35,6 +35,8 @@ Open `http://localhost:5173/admin` (acting as Priya, E201).
 
 - Counters: **17 all, 16 open, 0 waiting for worker, 0 waiting for supervisor,
   0 escalated, 1 resolved, 0 rejected, 1 auto-resolved.** The database counts them.
+- Above the counters (Phase 12): **"1 of 17 exceptions resolved without a human (5.9%)"**,
+  with "P2: 1 auto-resolved" under it. Code counts it from the database.
 - The table is sorted by severity, then date. Show the filters: Status, Policy, Team,
   Employee, and the name search (type `amit`).
 - Click a counter (for example **Open**) to filter by that status. **Clear filters** resets.
@@ -107,6 +109,28 @@ is shown in step 6 on Meena's case.)
 5. Counters: **19 all, 16 open, 2 resolved, 1 rejected, 0 escalated.** Meena's audit
    trail ends with Ravi's reject (his reason) and Priya's final reject (her reason).
    No data changed.
+
+## 7. Auto-resolve and undo (Phase 12)
+
+Run this on a fresh reset (`ATTENDFLOW_DEMO_MODE=true`, no LLM key needed). The numbers
+below come from the Phase 12 live check.
+
+1. Demo reset (`POST /api/admin/demo/reset` as E201). `/admin` shows **1 of 17 (5.9%)**.
+2. Open **Sana Khan, P2, Mon 13 April 2026**. The blue **Auto-resolved by the system**
+   box shows why it was allowed ("2 'in' taps 2 min apart, within the 5 min duplicate
+   window"), what changed ("P0005 clock-in 08:59: voided"), the policy text, and **Undo**.
+3. Click **Undo**, type a reason (10+ characters), **Confirm undo**. The page says
+   "Undone: 1 punch restored. The case is open for a person." P0005 is no longer voided.
+   The metric becomes **0 of 17**, and the box shows who undid it and why.
+4. Simulate punch: Neha Gupta (E004), Clock in, 15-04-2026, **09:02**, Send. The notice
+   lists new P1 and P7 cases and the closed P10. The metric is **1 of 18 (5.6%)**, and a
+   footnote says 1 case was closed because the data changed (Neha's P10, not counted).
+5. Open `/supervisor` (Ravi). **Auto-resolved for my team** lists Sana's undone P2 and
+   Neha's P7. Undo Neha's P7 with a reason: "Undone. Nothing to restore; the case is
+   open for a person." Both cases are now in Ravi's queue marked "auto-resolve undone".
+   `/admin` shows **0 of 18**, "P2: 0 auto-resolved, 1 undone · P7: 0 auto-resolved,
+   1 undone".
+6. Amit's P1 is untouched: still open with Ravi, only the `detected` audit row.
 
 ## Also worth showing
 
