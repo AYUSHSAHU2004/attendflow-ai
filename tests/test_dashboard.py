@@ -66,7 +66,9 @@ def test_seeded_dashboard_matches_admin_and_scopes_to_each_supervisor(demo):
     assert chart["aging"]["case_age"] == [16, 0, 0, 0]
     meena = next(row for row in chart["overtime"]["workers"] if row["employee_id"] == "E002")
     assert (
-        meena["worked_hours"], meena["scheduled_remaining_hours"], meena["projected_hours"],
+        meena["worked_hours"],
+        meena["scheduled_remaining_hours"],
+        meena["projected_hours"],
     ) == (36, 12, 48)
     assert meena["level"] == "projected_over"
     assert chart["overtime"]["limit_hours"] == 40
@@ -97,9 +99,14 @@ def test_exception_dates_are_inclusive_and_overtime_keeps_its_week(demo):
     assert empty["active_total"] == empty["auto_resolve"]["needed_handling"] == 0
     assert empty["overtime"] == chart["overtime"]
     assert_error(
-        demo.get("/api/dashboard", headers=PRIYA, params={
-            "date_from": "2026-04-16", "date_to": "2026-04-13",
-        }),
+        demo.get(
+            "/api/dashboard",
+            headers=PRIYA,
+            params={
+                "date_from": "2026-04-16",
+                "date_to": "2026-04-13",
+            },
+        ),
         422,
         "invalid_date_range",
     )
@@ -187,8 +194,12 @@ def test_policy_limit_and_warning_margin_change_the_forecast_display(demo, data_
     assert meena["projected_hours"] == 48
     assert meena["level"] == "approaching"
     assert set(meena) == {
-        "employee_id", "employee_name", "worked_hours", "scheduled_remaining_hours",
-        "projected_hours", "level",
+        "employee_id",
+        "employee_name",
+        "worked_hours",
+        "scheduled_remaining_hours",
+        "projected_hours",
+        "level",
     }
     narrower = forecast(1)
     assert "E002" not in {row["employee_id"] for row in narrower["workers"]}

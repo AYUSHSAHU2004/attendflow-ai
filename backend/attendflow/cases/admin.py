@@ -81,9 +81,7 @@ def counters(
         func.count().filter(ExceptionRow.auto_resolved).label("auto_resolved"),
         func.count().filter(stuck_cases()).label("stuck"),
     ).select_from(ExceptionRow)
-    scoped = scope_cases(
-        stmt, date_from=date_from, date_to=date_to, supervisor_id=supervisor_id
-    )
+    scoped = scope_cases(stmt, date_from=date_from, date_to=date_to, supervisor_id=supervisor_id)
     return dict(session.execute(scoped).mappings().one())
 
 
@@ -158,7 +156,8 @@ def overview(
         stmt = stmt.where(stuck_cases())
     elif no_reply == "waiting":
         stmt = stmt.where(
-            ExceptionRow.status == "awaiting_worker", ExceptionRow.no_reply_stage == 0,
+            ExceptionRow.status == "awaiting_worker",
+            ExceptionRow.no_reply_stage == 0,
         )
     elif no_reply in NO_REPLY_STAGES:
         stmt = stmt.where(ExceptionRow.no_reply_stage == NO_REPLY_STAGES[no_reply])

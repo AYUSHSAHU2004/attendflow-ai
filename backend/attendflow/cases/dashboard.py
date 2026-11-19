@@ -100,14 +100,19 @@ def overview(
     counts = admin.counters(session, **scope)
     employees = {row.employee_id: row for row in session.scalars(select(EmployeeRow))}
     workers = [
-        row for row in employees.values()
+        row
+        for row in employees.values()
         if row.role == "worker" and (not supervisor_id or row.supervisor_id == supervisor_id)
     ]
     rows = session.execute(
         scope_cases(
             select(
-                ExceptionRow.employee_id, ExceptionRow.status, ExceptionRow.severity,
-                ExceptionRow.policy_id, ExceptionRow.no_reply_stage, ExceptionRow.created_at,
+                ExceptionRow.employee_id,
+                ExceptionRow.status,
+                ExceptionRow.severity,
+                ExceptionRow.policy_id,
+                ExceptionRow.no_reply_stage,
+                ExceptionRow.created_at,
                 ExceptionRow.waiting_since,
             ).where(active_cases()),
             **scope,

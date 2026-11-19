@@ -32,9 +32,7 @@ def team_members(supervisor_id: str):
 
 def validate_date_range(date_from: date | None, date_to: date | None) -> None:
     if date_from and date_to and date_from > date_to:
-        raise InvalidInputError(
-            "From date must be on or before To date", code="invalid_date_range"
-        )
+        raise InvalidInputError("From date must be on or before To date", code="invalid_date_range")
 
 
 def scope_cases(
