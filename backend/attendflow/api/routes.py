@@ -31,7 +31,9 @@ from attendflow.api.schemas import (
     SeedOut,
     ToolCallListOut,
     ToolCallOut,
+    WorkerInboxOut,
     WorkerReplyIn,
+    WorkerReplyOut,
 )
 from attendflow.cases import service
 from attendflow.cases.transitions import Status
@@ -327,19 +329,24 @@ def reject(
     responses=_DECISION_ERRORS,
 )
 def ask_worker(
-    exception_id: str, body: AskWorkerIn, actor_id: ActorId, session: SessionDep, clock: ClockDep
+    exception_id: str,
+    body: AskWorkerIn,
+    actor_id: ActorId,
+    session: SessionDep,
+    clock: ClockDep,
+    settings: Annotated[Settings, Depends(get_settings_dep)],
 ):
     row = service.ask_worker(
-        session, clock, exception_id=exception_id, actor_id=actor_id, note=body.note
+        session, clock, settings, exception_id=exception_id, actor_id=actor_id, note=body.note
     )
     return _detail(session, row)
 
 
 @router.post(
     "/exceptions/{exception_id}/worker-reply",
-    response_model=ExceptionDetailOut,
+    response_model=WorkerReplyOut,
     tags=["decisions"],
-    summary="The worker's Yes/No + free text (placeholder: stored as-is until Phase 8)",
+    summary="Record the worker's Yes or No and return a receipt",
     responses=_DECISION_ERRORS,
 )
 def worker_reply(
@@ -349,7 +356,7 @@ def worker_reply(
     session: SessionDep,
     clock: ClockDep,
 ):
-    row = service.worker_reply(
+    message = service.worker_reply(
         session,
         clock,
         exception_id=exception_id,
@@ -357,7 +364,18 @@ def worker_reply(
         confirmed=body.confirmed,
         text=body.text,
     )
-    return _detail(session, row)
+    return message
+
+
+@router.get(
+    "/worker/messages",
+    response_model=WorkerInboxOut,
+    tags=["worker"],
+    summary="Questions and pending follow-ups for the worker",
+    responses=_errors(403, 422),
+)
+def worker_messages(actor_id: ActorId, session: SessionDep):
+    return {"items": service.worker_inbox(session, actor_id)}
 
 
 # ---------------------------------------------------------------- logs

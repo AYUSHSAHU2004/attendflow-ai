@@ -466,3 +466,46 @@ python -m uv run attendflow-agent-smoke P1-E001-2026-04-14 --fallback-only
 ```
 
 **Next: Phase 7** adds the worker message and Amit's view.
+
+## Phase 7: Worker messages and inbox (2026-11-19)
+
+- `ask-worker` checks the stored code-owned route, runs one wording attempt
+  using verified facts, and saves the message and source. A model error or
+  message validation failure uses the template. The handoff and audit commit
+  together and `waiting_since` uses the application clock.
+- `GET /api/worker/messages` only returns the actor's own worker-facing
+  questions. Yes returns a small receipt and reassigns the exception to the
+  supervisor. No requires details, sets `needs_actual_time=true`, and stays
+  in the worker inbox, outside the supervisor queue.
+- Migration `0004_worker_messages` adds the questions and replies table and
+  backfills a template for legacy cases already waiting for a worker.
+- Vite and React provide Amit's inbox and the supervisor's `/dev` page.
+  The latter polls the investigation job before enabling the handoff. CI
+  checks generated OpenAPI types, runs component tests and type-checking,
+  and builds the frontend. Review `/dev` in Phases 15 and 22.
+- Local verification passed 444 PostgreSQL tests, with one opt-in provider
+  test skipped, and five frontend tests. OpenAPI drift, TypeScript,
+  Ruff, and the production build passed.
+
+- A mobile Chromium check on an isolated database verified the dev page,
+  polling, the wrong-key template, and the No reply through an inbox reload.
+  The audit recorded HTTP 401 and a 1.38 s template delivery. The case stayed
+  out of Ravi's queue.
+- The single authorized real-key request on Amit's P1 used the template after
+  the model reply failed validation with `worker message must be short plain
+  text`. The message took 2.49 s to generate and is in Amit's dev inbox.
+  No retry was made. All six source tables were unchanged.
+
+- The initial real-key audit retained the generic short-plain-text error and
+  stored template only. The original reply and its formatting were unavailable,
+  so the specific trigger could not be identified. Validation now trims
+  whitespace and wrapping quotes and flattens line breaks. The prompt requests
+  one or two plain sentences, and date, exact-question, and verified-number
+  checks still apply.
+- The single real-key follow-up on an isolated copy of Amit's P1 stored an
+  LLM-written message in 1.16 s with no diagnostic. The existing dev inbox
+  message was preserved. The PostgreSQL suite passed 447 tests, with the
+  opt-in provider test skipped. Ruff lint and formatting passed.
+
+**Next: Phase 8** validates the actual time from a No reply before moving the
+case to the supervisor.

@@ -191,6 +191,28 @@ class ExceptionRow(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=False))
 
 
+class WorkerMessageRow(Base):
+    __tablename__ = "worker_messages"
+    __table_args__ = (
+        CheckConstraint(_in("source", ("llm", "template")), "source"),
+        Index("ix_worker_messages_recipient_id", "recipient_id"),
+        Index("ix_worker_messages_exception_id", "exception_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    exception_id: Mapped[str] = mapped_column(ForeignKey("exceptions.id"))
+    recipient_id: Mapped[str] = mapped_column(ForeignKey("employees.employee_id"))
+    date: Mapped[date] = mapped_column(Date)
+    message: Mapped[str] = mapped_column(Text)
+    reply_prompt: Mapped[str] = mapped_column(Text)
+    source: Mapped[str] = mapped_column(String(8))
+    sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=False))
+    confirmed: Mapped[bool | None] = mapped_column(Boolean)
+    reply_text: Mapped[str | None] = mapped_column(Text)
+    replied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
+    needs_actual_time: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
 class AuditLogRow(Base):
     __tablename__ = "audit_log"
     __table_args__ = (

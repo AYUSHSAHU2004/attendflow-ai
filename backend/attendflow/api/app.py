@@ -13,6 +13,7 @@ from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import Engine
 from sqlalchemy.exc import OperationalError
@@ -132,6 +133,13 @@ def create_app(
             {"name": "decisions", "description": "Human decisions (status flow)"},
             {"name": "logs", "description": "Audit log and agent tool calls"},
         ],
+    )
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+        allow_methods=["GET", "POST"],
+        allow_headers=["X-Actor-Id", "Content-Type"],
+        expose_headers=["Location"],
     )
     app.state.settings = settings
     app.state.engine = engine

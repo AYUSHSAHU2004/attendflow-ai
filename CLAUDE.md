@@ -62,7 +62,7 @@ and CI, 10-minute demo video, 5 slides.
 ## Phase plan
 
 Done: 0 Setup + data + policy + LLM test; 1 Rule engine P1-P7, P15; 2 Rules P8-P14, P16, P17;
-3 Backend + DB + API; 4 Read-only tools + fix options for P3/P4/P6/P7; 5 LLM client + agent loop; 6 structured investigations and jobs.
+3 Backend + DB + API; 4 Read-only tools + fix options for P3/P4/P6/P7; 5 LLM client + agent loop; 6 structured investigations and jobs; 7 worker messages and inbox.
 
 **Prototype (3-10)**
 3. Backend + DB + API
@@ -90,7 +90,7 @@ Done: 0 Setup + data + policy + LLM test; 1 Rule engine P1-P7, P15; 2 Rules P8-P
 23. Tests + evaluation
 24. Delivery
 
-**Next: Phase 7.**
+**Next: Phase 8.**
 
 **Carry-over notes**
 - Phase 5 Groq bug: `run_checks` advertised Pydantic's RFC 3339 `date-time` format for
@@ -303,6 +303,23 @@ Done: 0 Setup + data + policy + LLM test; 1 Rule engine P1-P7, P15; 2 Rules P8-P
   duration without contacting a provider. The optional real-model pytest requires
   `ATTENDFLOW_REAL_LLM_TEST=1` and `LLM_API_KEY`.
 
+**Worker messages and inbox (Phase 7)**
+- `ask-worker` requires a stored investigation routed to the worker. It uses
+  verified structured facts to phrase one question, validates the date and
+  numbers in the message, and falls back to a template on any model failure.
+  The `worker_messages` table retains the message and reply. The receipt and
+  `GET /api/worker/messages` only expose worker-facing data.
+- Yes assigns the case to the supervisor. No requires details and records
+  `needs_actual_time=true`; the case remains `awaiting_worker` and visible
+  in the recipient's inbox. Phase 8 validates the actual time before routing
+  it to the supervisor.
+- The Vite inbox is at `/`. The `/dev` page polls the 202 investigation job,
+  then can send a worker question. Review the dev page and its fixed demo
+  actors in **Phase 15 (role switcher)** and **Phase 22 (deployment)**.
+- `frontend/src/api.generated.ts` comes from FastAPI OpenAPI. Refresh it with
+  `npm run api:generate` from `frontend/`. CI checks drift, runs component
+  tests and type-checking, and builds the frontend.
+
 ## Repo map
 
 ```
@@ -345,7 +362,7 @@ backend/attendflow/
 data/                    6 CSVs + policy.json (limits) + policy.md (plain-language, cited by agent)
 docs/                    PROGRESS.md, PLANTED_CASES.md, LLM_LICENCE.md
 tests/                   pytest suite
-frontend/                React app (from a later phase)
+frontend/                Vite React worker inbox and dev supervisor page
 docker-compose.yml       PostgreSQL 16 (host port 5433); docker/initdb creates the test DB
 .github/workflows/ci.yml lint + validate + tests (with a Postgres service) on Python 3.12
 ```

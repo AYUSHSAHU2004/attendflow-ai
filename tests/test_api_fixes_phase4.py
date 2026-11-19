@@ -18,6 +18,7 @@ from tests.api_helpers import (
     post,
     session_for,
     snapshot,
+    store_test_investigation,
 )
 
 MEENA = {"X-Actor-Id": "E002"}
@@ -45,6 +46,11 @@ def punches_of(client, employee_id: str, day: date) -> list[PunchRow]:
 
 
 def confirm_with_worker(client, exception_id: str, worker: dict, confirmed: bool = True) -> None:
+    case = get(client, exception_id)
+    option = next(
+        option for option in case["fix_options"] if option["requires_worker_confirmation"]
+    )
+    store_test_investigation(client, exception_id, option["option_id"])
     assert (
         post(client, exception_id, "ask-worker", {"note": "Please confirm"}, RAVI).status_code
         == 200
@@ -107,10 +113,9 @@ def test_p3_correction_needs_the_worker_to_confirm_first(demo):
     assert err["details"] == {"worker_replied": False}
     # The worker says No: still refused.
     confirm_with_worker(demo, MEENA_P3_MON, MEENA, confirmed=False)
-    err = assert_error(post(demo, MEENA_P3_MON, "approve", body, RAVI), 409, "worker_not_confirmed")
-    assert err["details"] == {"worker_replied": True}
+    assert_error(post(demo, MEENA_P3_MON, "approve", body, RAVI), 409, "invalid_transition")
     assert snapshot(demo) == before
-    assert audit_count(demo) == audits + 2  # ask_worker + worker_reply only
+    assert audit_count(demo) == audits + 3  # handoff, message generation, and reply
 
 
 def test_p3_correction_voids_the_old_clock_out_and_adds_the_confirmed_one(demo):

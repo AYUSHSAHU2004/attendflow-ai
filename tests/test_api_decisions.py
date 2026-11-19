@@ -36,6 +36,7 @@ from tests.api_helpers import (
     post,
     session_for,
     snapshot,
+    store_test_investigation,
 )
 
 CLOCK_OUT = {"option_id": "set_clock_out_to_scheduled_end"}
@@ -268,6 +269,7 @@ def test_exceptions_without_options_can_still_be_rejected(demo):
 
 
 def test_ask_worker_then_reply(demo):
+    store_test_investigation(demo, AMIT_P1)
     r = post(demo, AMIT_P1, "ask-worker", {"note": "Please confirm your clock-out"}, RAVI)
     assert r.status_code == 200, r.text
     assert (r.json()["status"], r.json()["assigned_to"]) == ("awaiting_worker", "E001")
@@ -287,15 +289,20 @@ def test_ask_worker_then_reply(demo):
         demo, AMIT_P1, "worker-reply", {"confirmed": False, "text": "left around 7:30ish"}, AMIT
     )
     assert r.status_code == 200, r.text
-    exc = r.json()
-    assert (exc["status"], exc["assigned_to"]) == ("awaiting_supervisor", "E101")
+    assert r.json() == {
+        "exception_id": AMIT_P1,
+        "confirmed": False,
+        "needs_actual_time": True,
+    }
+    exc = get(demo, AMIT_P1)
+    assert (exc["status"], exc["assigned_to"]) == ("awaiting_worker", "E001")
     audit = exc["audit_trail"][-1]
     assert (audit["actor"], audit["action"]) == ("worker", "worker_reply")
     assert audit["after"]["text"] == "left around 7:30ish" and audit["after"]["confirmed"] is False
 
-    # Back with Ravi, who can now decide.
+    # Phase 8 will validate the worker's time before the supervisor can act.
     body = {**CLOCK_OUT, "params": {"timestamp": "2026-04-14T19:30"}, "reason": "Per Amit's reply"}
-    assert post(demo, AMIT_P1, "edit", body, RAVI).json()["status"] == "resolved"
+    assert_error(post(demo, AMIT_P1, "edit", body, RAVI), 409, "invalid_transition")
 
 
 def test_worker_reply_only_when_asked(demo):

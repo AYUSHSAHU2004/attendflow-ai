@@ -18,16 +18,19 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from attendflow.cases.transitions import WAITING, check_transition
+from attendflow.cases.worker_message import generate_worker_message, worker_facts
 from attendflow.clock import Clock
+from attendflow.config import Settings
 from attendflow.db.dataset import load_dataset_from_db
-from attendflow.db.models import AuditLogRow, EmployeeRow, ExceptionRow
+from attendflow.db.models import AuditLogRow, EmployeeRow, ExceptionRow, WorkerMessageRow
 from attendflow.engine.engine import run_engine
 from attendflow.engine.models import TimecardException
 from attendflow.errors import (
+    AppError,
     ConflictError,
     ForbiddenError,
     InvalidFixError,
@@ -469,29 +472,112 @@ def reject(
     return row
 
 
+def _worker_handoff(session: Session, row: ExceptionRow, actor_id: str) -> EmployeeRow:
+    actor = _actor(session, actor_id)
+    check_transition(row.status, "awaiting_worker", action="ask_worker")
+    _require_assignee(row, actor, "ask the worker about")
+    investigation = row.investigation_case
+    if investigation is None:
+        raise ConflictError(
+            "investigate the case before asking the worker", code="investigation_required"
+        )
+    if investigation.get("who_to_ask") != "worker":
+        raise ConflictError(
+            "the investigation routes to someone else", code="worker_not_next_contact"
+        )
+    return _actor(session, row.employee_id)
+
+
 def ask_worker(
-    session: Session, clock: Clock, *, exception_id: str, actor_id: str, note: str | None = None
+    session: Session,
+    clock: Clock,
+    settings: Settings,
+    *,
+    exception_id: str,
+    actor_id: str,
+    note: str | None = None,
 ) -> ExceptionRow:
-    """Hand the case to the worker to confirm what happened (the agent does this later)."""
+    """Phrase a verified question and save it with the worker handoff."""
+    with session.begin():
+        row = session.get(ExceptionRow, exception_id)
+        if row is None:
+            raise NotFoundError(f"exception {exception_id} not found", code="exception_not_found")
+        worker = _worker_handoff(session, row, actor_id)
+        facts = worker_facts(row, worker)
+        investigation = row.investigation_case
+    draft = generate_worker_message(settings, facts)
+
     with session.begin():
         row = _get_for_update(session, exception_id)
-        actor = _actor(session, actor_id)
-        check_transition(row.status, "awaiting_worker", action="ask_worker")
-        _require_assignee(row, actor, "ask the worker about")
+        worker = _worker_handoff(session, row, actor_id)
+        if row.investigation_case != investigation or worker_facts(row, worker) != facts:
+            raise ConflictError(
+                "the case changed while preparing the question", code="case_changed"
+            )
         before = _state(row)
         _set_status(row, "awaiting_worker", clock, row.employee_id)
+        message = WorkerMessageRow(
+            exception_id=row.id,
+            recipient_id=row.employee_id,
+            date=row.date,
+            message=draft.text,
+            source=draft.source,
+            reply_prompt=facts.reply_prompt,
+            sent_at=clock.now(),
+        )
+        session.add(message)
+        session.flush()
         _audit(
             session,
             clock,
             exception_id=row.id,
-            actor=ROLE_TO_ACTOR[actor.role],
-            actor_id=actor.employee_id,
+            actor=ROLE_TO_ACTOR[_actor(session, actor_id).role],
+            actor_id=actor_id,
             action="ask_worker",
             before=before,
             after=_state(row),
             reason=note,
         )
+        _audit(
+            session,
+            clock,
+            exception_id=row.id,
+            actor="agent" if draft.source == "llm" else "system",
+            action="worker_message_sent",
+            after={
+                "message_id": message.id,
+                "source": draft.source,
+                "duration_ms": draft.duration_ms,
+            },
+            reason=draft.diagnostic,
+        )
     return row
+
+
+def worker_inbox(session: Session, actor_id: str) -> list[WorkerMessageRow]:
+    actor = _actor(session, actor_id)
+    if actor.role != "worker":
+        raise ForbiddenError("only a worker can read their inbox", code="worker_inbox_only")
+    latest_per_case = (
+        select(func.max(WorkerMessageRow.id))
+        .where(WorkerMessageRow.recipient_id == actor_id)
+        .group_by(WorkerMessageRow.exception_id)
+        .correlate(None)
+    )
+    return list(
+        session.scalars(
+            select(WorkerMessageRow)
+            .join(ExceptionRow, WorkerMessageRow.exception_id == ExceptionRow.id)
+            .where(
+                WorkerMessageRow.id.in_(latest_per_case),
+                WorkerMessageRow.confirmed.is_not(True),
+                ExceptionRow.employee_id == actor_id,
+                ExceptionRow.assigned_to == actor_id,
+                ExceptionRow.status == "awaiting_worker",
+            )
+            .order_by(WorkerMessageRow.date, WorkerMessageRow.id)
+        )
+    )
 
 
 def worker_reply(
@@ -502,11 +588,17 @@ def worker_reply(
     actor_id: str,
     confirmed: bool,
     text: str | None,
-) -> ExceptionRow:
-    """The worker's Yes/No + free text. Placeholder: stored as-is (extraction: Phase 8)."""
+) -> WorkerMessageRow:
+    """Yes routes to a supervisor. No stays with the worker for Phase 8."""
+    if not confirmed and not (text or "").strip():
+        raise AppError("tell us what happened when answering No", code="reply_text_required")
     with session.begin():
-        row = _get_for_update(session, exception_id)
         actor = _actor(session, actor_id)
+        row = session.get(ExceptionRow, exception_id, with_for_update=True)
+        if row is None or actor.role != "worker" or actor_id != row.employee_id:
+            raise ForbiddenError(
+                "only the recipient can reply to this question", code="not_the_worker"
+            )
         if row.status != "awaiting_worker":
             raise InvalidTransitionError(
                 f"worker_reply: {row.id} is {row.status}, not waiting for the worker",
@@ -516,15 +608,28 @@ def worker_reply(
                     "allowed": ["awaiting_worker"],
                 },
             )
-        check_transition(row.status, "awaiting_supervisor", action="worker_reply")
-        if actor.employee_id != row.employee_id:
-            raise ForbiddenError(
-                f"only {row.employee_id} can reply about {row.id}", code="not_the_worker"
-            )
         _require_assignee(row, actor, "reply to")
-        supervisor = session.get(EmployeeRow, row.employee_id).supervisor_id  # type: ignore[union-attr]
+        message = session.scalar(
+            select(WorkerMessageRow)
+            .where(
+                WorkerMessageRow.exception_id == row.id, WorkerMessageRow.recipient_id == actor_id
+            )
+            .order_by(WorkerMessageRow.id.desc())
+            .limit(1)
+        )
+        if message is None or message.replied_at is not None:
+            raise ConflictError("there is no unanswered question", code="no_open_worker_question")
+
         before = _state(row)
-        _set_status(row, "awaiting_supervisor", clock, supervisor)
+        if confirmed:
+            check_transition(row.status, "awaiting_supervisor", action="worker_reply")
+            _set_status(row, "awaiting_supervisor", clock, actor.supervisor_id)
+        else:
+            row.updated_at = clock.now()
+        message.confirmed = confirmed
+        message.reply_text = text
+        message.replied_at = clock.now()
+        message.needs_actual_time = not confirmed
         _audit(
             session,
             clock,
@@ -533,6 +638,12 @@ def worker_reply(
             actor_id=actor.employee_id,
             action="worker_reply",
             before=before,
-            after={**_state(row), "confirmed": confirmed, "text": text},
+            after={
+                **_state(row),
+                "confirmed": confirmed,
+                "text": text,
+                "needs_actual_time": message.needs_actual_time,
+                "message_id": message.id,
+            },
         )
-    return row
+    return message

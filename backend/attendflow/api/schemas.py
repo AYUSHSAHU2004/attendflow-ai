@@ -211,3 +211,27 @@ class AskWorkerIn(RequestModel):
 class WorkerReplyIn(RequestModel):
     confirmed: bool = Field(description="Yes/No: did it happen as described?")
     text: str | None = Field(default=None, max_length=2000, examples=["left around 7:30ish"])
+
+    @model_validator(mode="after")
+    def _no_needs_text(self) -> WorkerReplyIn:
+        if not self.confirmed and not self.text:
+            raise ValueError("tell us what happened when answering No")
+        return self
+
+
+class WorkerMessageOut(ApiModel):
+    exception_id: str
+    date: date
+    message: str
+    reply_prompt: str
+    needs_actual_time: bool
+
+
+class WorkerReplyOut(ApiModel):
+    exception_id: str
+    confirmed: bool
+    needs_actual_time: bool
+
+
+class WorkerInboxOut(ApiModel):
+    items: list[WorkerMessageOut]

@@ -108,6 +108,7 @@ def api_settings(db_engine):
         data_dir=DATA_DIR,
         database_url=db_engine.url.render_as_string(hide_password=False),
         enable_seed=True,
+        llm_api_key=None,
         log_format="text",
         log_level="WARNING",
     )

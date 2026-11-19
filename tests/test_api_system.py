@@ -37,6 +37,7 @@ EXPECTED_PATHS = {
     ("post", "/api/exceptions/{exception_id}/worker-reply"),
     ("get", "/api/audit-log"),
     ("get", "/api/tool-calls"),
+    ("get", "/api/worker/messages"),
 }
 
 

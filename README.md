@@ -104,3 +104,27 @@ or a local Ollama model is a `.env` change. Licence notes: [docs/LLM_LICENCE.md]
 ## Status
 
 See [docs/PROGRESS.md](docs/PROGRESS.md).
+
+## Worker and supervisor demo pages
+
+Start PostgreSQL, migrate to head, and run the API at `http://localhost:8000`.
+If the local database is empty, seed the demo data and run detection using
+`/docs` before opening the frontend. Install the frontend with Node 20.19+
+or Node 22.13+ and run it in a second terminal:
+
+```bash
+cd frontend
+npm ci
+npm run dev
+```
+
+Open `http://localhost:5173/dev`, keep Amit's P1 exception ID, select
+**Investigate**, wait for the result, then select **Ask worker**. Open
+`http://localhost:5173/` for Amit's inbox. **Yes** sends the case to Ravi.
+**No** saves the required details and keeps the question open in Amit's inbox
+until Phase 8 validates the actual time. If the provider is unavailable,
+the same workflow uses a template question.
+
+From `frontend/`, run `npm test`, `npm run typecheck`, and `npm run build`.
+Run `npm run api:generate` after backend API changes to refresh the generated
+OpenAPI types.

@@ -18,7 +18,14 @@ from attendflow.policy import load_policy
 from attendflow.policy.models import load_policy_text
 from attendflow.tools import TOOLS, ToolRunner
 from attendflow.tools.context import ReadOnlyViolation, read_only_session
-from tests.api_helpers import MEENA_P3_MON, MEENA_P5, RAVI, post, session_for
+from tests.api_helpers import (
+    MEENA_P3_MON,
+    MEENA_P5,
+    RAVI,
+    post,
+    session_for,
+    store_test_investigation,
+)
 from tests.conftest import DATA_DIR
 from tests.test_tools import AS_OF, change
 
@@ -174,6 +181,7 @@ def test_run_checks_predicts_what_the_real_fix_gives(
     predicted = _predicted(demo, employee_id, day, option["action"], option["params"])
 
     if confirm:
+        store_test_investigation(demo, exception_id, option_id)
         assert post(demo, exception_id, "ask-worker", {}, RAVI).status_code == 200
         assert (
             post(demo, exception_id, "worker-reply", {"confirmed": True}, confirm).status_code

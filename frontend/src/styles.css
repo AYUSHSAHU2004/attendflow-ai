@@ -1,0 +1,92 @@
+:root {
+  font-family: "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  color: #20312b;
+  background: #f6f5f0;
+  font-synthesis: none;
+  line-height: 1.55;
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 280px; }
+a { color: #206044; }
+.site-header {
+  min-height: 4.5rem;
+  border-bottom: 1px solid #dedfd6;
+  background: #fcfcf8;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem clamp(1rem, 5vw, 3rem);
+}
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  color: inherit;
+  text-decoration: none;
+  font-weight: 750;
+  letter-spacing: -0.035em;
+  font-size: 1.23rem;
+}
+.brand-mark {
+  width: 2rem;
+  height: 2rem;
+  display: grid;
+  place-items: center;
+  border-radius: 0.62rem;
+  background: #23583f;
+  color: #fff;
+  font-weight: 750;
+}
+.identity { color: #4b5b53; font-size: 0.92rem; font-weight: 650; }
+.page { width: min(100% - 2rem, 34rem); margin: clamp(2rem, 7vw, 5rem) auto 3rem; }
+h1 { margin: 0 0 1.6rem; font-size: clamp(2rem, 8vw, 3.4rem); letter-spacing: -0.06em; line-height: 1.03; }
+.question-card, .panel {
+  background: #fff;
+  border: 1px solid #dcdfd6;
+  border-radius: 1rem;
+  padding: clamp(1.2rem, 5vw, 2rem);
+  margin: 0 0 1rem;
+}
+.question-card time { font-weight: 700; color: #34614e; font-size: 0.92rem; }
+.question-text { color: #1f3028; font-size: 1.2rem; margin: 0.65rem 0 1.5rem; }
+.actions { display: flex; flex-wrap: wrap; gap: 0.65rem; margin-top: 1rem; }
+.actions button { flex: 1 1 8rem; }
+button {
+  min-height: 3rem;
+  padding: 0.55rem 1.1rem;
+  color: white;
+  background: #23583f;
+  border: 1px solid #23583f;
+  border-radius: 0.65rem;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+button:hover:not(:disabled) { background: #1a4230; }
+button.secondary { background: #fff; color: #23583f; border-color: #aebfb3; }
+button.secondary:hover:not(:disabled) { background: #edf4ed; }
+button:disabled { opacity: 0.55; cursor: not-allowed; }
+:focus-visible { outline: 3px solid #926315; outline-offset: 3px; }
+label { display: block; font-weight: 700; margin-bottom: 0.45rem; }
+input, textarea {
+  width: 100%;
+  border: 1px solid #aebfb3;
+  border-radius: 0.5rem;
+  padding: 0.7rem;
+  font: inherit;
+  color: inherit;
+  background: white;
+}
+textarea { resize: vertical; }
+.notice, .message-status {
+  background: #e9f2e9;
+  color: #274f3a;
+  padding: 0.75rem 0.9rem;
+  border-radius: 0.55rem;
+}
+.message-status { margin-bottom: 0; }
+.error { color: #8a2824; }
+.text-link { display: inline-block; margin-bottom: 1rem; }

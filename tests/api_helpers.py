@@ -5,13 +5,16 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from attendflow.agent.case import ProposedFix, fallback_case, normalized_params, routing
 from attendflow.db.models import (
     AuditLogRow,
+    ExceptionRow,
     LeaveBalanceRow,
     LeaveRecordRow,
     PunchRow,
     ScheduleEntryRow,
 )
+from attendflow.policy.models import load_policy_text
 
 RAVI = {"X-Actor-Id": "E101"}  # Inbound supervisor: Amit, Meena, Neha, Sana, Arjun
 SUNITA = {"X-Actor-Id": "E102"}  # Outbound supervisor: Ramesh, Karan, Dev, Farah, Pooja
@@ -92,3 +95,27 @@ def assert_error(response, status: int, code: str) -> dict:
     assert body["error"]["code"] == code, body
     assert body["error"]["message"]
     return body["error"]
+
+
+def store_test_investigation(client, exception_id: str, option_id: str | None = None) -> None:
+    """Seed a trusted investigation without contacting a provider."""
+    settings = client.app.state.settings
+    sections = load_policy_text(settings.data_dir / "policy.md")
+    with session_for(client) as session, session.begin():
+        row = session.get(ExceptionRow, exception_id)
+        case = fallback_case(row, sections[row.policy_id], 0)
+        if option_id is not None:
+            option = next(option for option in row.fix_options if option["option_id"] == option_id)
+            proposal = ProposedFix(
+                option_id=option_id, params=normalized_params(option, option["params"])
+            )
+            who, next_action = routing(row, option)
+            case = case.model_copy(
+                update={
+                    "proposed_fix": proposal,
+                    "who_to_ask": who,
+                    "next_action": next_action,
+                }
+            )
+        row.investigation_case = case.model_dump(mode="json")
+        row.proposed_fix = case.proposed_fix.model_dump(mode="json") if case.proposed_fix else None
