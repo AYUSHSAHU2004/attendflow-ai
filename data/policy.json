@@ -1,0 +1,119 @@
+{
+  "version": "2026.1",
+  "effective_from": "2026-01-01",
+  "week_starts_on": "monday",
+  "policies": {
+    "P1": {
+      "title": "Every shift needs a clock-in and a clock-out",
+      "category": "missed_punch",
+      "severity": "high",
+      "auto_resolve": false,
+      "params": {}
+    },
+    "P2": {
+      "title": "Duplicate punches are merged",
+      "category": "duplicate_punch",
+      "severity": "low",
+      "auto_resolve": true,
+      "params": { "duplicate_window_minutes": 5 }
+    },
+    "P3": {
+      "title": "Maximum hours per day",
+      "category": "overtime",
+      "severity": "high",
+      "auto_resolve": false,
+      "params": { "max_hours_per_day": 9 }
+    },
+    "P4": {
+      "title": "Break required on long shifts",
+      "category": "break",
+      "severity": "medium",
+      "auto_resolve": false,
+      "params": { "break_required_after_hours": 5, "min_break_minutes": 30 }
+    },
+    "P5": {
+      "title": "Weekly overtime threshold",
+      "category": "overtime",
+      "severity": "high",
+      "auto_resolve": false,
+      "params": { "weekly_overtime_after_hours": 40 }
+    },
+    "P6": {
+      "title": "Minimum rest between shifts",
+      "category": "rest",
+      "severity": "high",
+      "auto_resolve": false,
+      "params": { "min_rest_hours": 11 }
+    },
+    "P7": {
+      "title": "Late arrival grace period",
+      "category": "lateness",
+      "severity": "low",
+      "auto_resolve": true,
+      "params": { "grace_minutes": 10 }
+    },
+    "P8": {
+      "title": "Unscheduled work needs approval",
+      "category": "schedule",
+      "severity": "medium",
+      "auto_resolve": false,
+      "params": {}
+    },
+    "P9": {
+      "title": "No punches on an approved leave day",
+      "category": "leave_conflict",
+      "severity": "medium",
+      "auto_resolve": false,
+      "params": {}
+    },
+    "P10": {
+      "title": "Unexplained absence",
+      "category": "absence",
+      "severity": "high",
+      "auto_resolve": false,
+      "params": {}
+    },
+    "P11": {
+      "title": "Leave must be within balance",
+      "category": "leave_balance",
+      "severity": "medium",
+      "auto_resolve": false,
+      "params": {}
+    },
+    "P12": {
+      "title": "Long sick leave needs a medical certificate",
+      "category": "leave_certificate",
+      "severity": "medium",
+      "auto_resolve": false,
+      "params": { "max_sick_days_without_certificate": 2 }
+    },
+    "P13": {
+      "title": "Half-day leave means half a day of work",
+      "category": "leave_conflict",
+      "severity": "medium",
+      "auto_resolve": false,
+      "params": { "half_day_hours": 4 }
+    },
+    "P14": {
+      "title": "Holiday work earns holiday pay or comp-off",
+      "category": "holiday",
+      "severity": "medium",
+      "auto_resolve": false,
+      "params": { "compensation_options": ["holiday_pay", "comp_off"] }
+    },
+    "P15": {
+      "title": "Night shifts belong to the date they started",
+      "category": "attribution",
+      "severity": "info",
+      "auto_resolve": false,
+      "params": { "attribute_to": "shift_start_date" }
+    },
+    "P16": {
+      "title": "Maximum consecutive working days",
+      "category": "rest",
+      "severity": "high",
+      "auto_resolve": false,
+      "params": { "max_consecutive_days": 6 }
+    }
+  }
+}

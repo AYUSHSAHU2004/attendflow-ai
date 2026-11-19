@@ -1,0 +1,43 @@
+[project]
+name = "attendflow"
+version = "0.1.0"
+description = "AttendFlow AI: an agent that finds and fixes timecard exceptions before payroll."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "openai>=1.50",
+    "pydantic>=2.9",
+    "python-dotenv>=1.0",
+]
+
+[project.scripts]
+attendflow-generate-data = "attendflow.scripts.generate_data:main"
+attendflow-validate = "attendflow.scripts.validate_data:main"
+attendflow-llm-test = "attendflow.scripts.llm_smoke_test:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "ruff>=0.7",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["backend/attendflow"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["attendflow", "tests"]

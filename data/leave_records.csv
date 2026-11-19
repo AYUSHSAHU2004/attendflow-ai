@@ -1,0 +1,7 @@
+employee_id,date,leave_type,duration,status,certificate_uploaded
+E007,2026-04-13,sick,full,pending,no
+E006,2026-04-15,casual,full,approved,no
+E007,2026-04-15,sick,full,pending,no
+E008,2026-04-15,casual,half,approved,no
+E010,2026-04-15,earned,full,approved,no
+E007,2026-04-16,sick,full,pending,no

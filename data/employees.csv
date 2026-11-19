@@ -1,0 +1,14 @@
+employee_id,name,role,team,supervisor_id
+E101,Ravi Kumar,supervisor,Inbound,
+E102,Sunita Rao,supervisor,Outbound,
+E201,Priya Sharma,payroll_admin,Payroll,
+E001,Amit Verma,worker,Inbound,E101
+E002,Meena Iyer,worker,Inbound,E101
+E003,Ramesh Patil,worker,Outbound,E102
+E004,Neha Gupta,worker,Inbound,E101
+E005,Sana Khan,worker,Inbound,E101
+E006,Karan Mehta,worker,Outbound,E102
+E007,Dev Malhotra,worker,Outbound,E102
+E008,Farah Ali,worker,Outbound,E102
+E009,Arjun Nair,worker,Inbound,E101
+E010,Pooja Singh,worker,Outbound,E102
