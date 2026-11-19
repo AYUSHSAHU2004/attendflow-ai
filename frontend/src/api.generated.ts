@@ -637,7 +637,7 @@ export interface paths {
         put?: never;
         /**
          * Run one scheduler cycle now and return its summary (payroll admin only)
-         * @description Detection, then investigations of new cases and worker messages within the per-cycle limits. 409 scheduler_busy if a cycle is already running.
+         * @description Detection, then investigations of new cases and worker messages within the per-cycle limits. Model-free cycles skip investigation and messaging. 409 scheduler_busy if a cycle is already running.
          */
         post: operations["scheduler_run_now_api_admin_scheduler_run_now_post"];
         delete?: never;
@@ -694,7 +694,7 @@ export interface paths {
         put?: never;
         /**
          * Demo only: reseed, run detection, and reset the scheduler's 'new case' mark
-         * @description Exists only when ATTENDFLOW_DEMO_MODE=true. Payroll admin only. Destructive: wipes every table like POST /api/seed.
+         * @description Requires demo mode and demo reset enabled. Payroll admin only. Destructive: wipes every table like POST /api/seed.
          */
         post: operations["demo_reset_api_admin_demo_reset_post"];
         delete?: never;
@@ -5063,7 +5063,9 @@ export interface operations {
     };
     scheduler_run_now_api_admin_scheduler_run_now_post: {
         parameters: {
-            query?: never;
+            query?: {
+                model_free?: boolean;
+            };
             header: {
                 /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
                 "X-Actor-Id": string;

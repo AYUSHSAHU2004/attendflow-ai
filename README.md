@@ -292,3 +292,11 @@ team at `/supervisor/payroll`. The attendance cutoff governs whether a week is c
 For a demo sign-off, set `ATTENDFLOW_DEMO_EXTRA_WEEK=true` before seeding or resetting
 and select the week of 6 April 2026. Follow the
 [demo walkthrough](docs/DEMO_WALKTHROUGH.md).
+
+## Live demo
+
+Private demo link will be added after the Phase 16.5 deployment. See the
+[deployment guide](docs/DEPLOY.md). The free Render service sleeps after about
+15 minutes idle and takes about a minute to wake. The free database expires after
+30 days. If it is recreated, run the documented seed or demo reset on the new
+synthetic database.

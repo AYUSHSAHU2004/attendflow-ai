@@ -104,7 +104,7 @@ def redact_response_text(
 def _http_error(
     summary: str, exc: APIStatusError, settings: Settings, messages: list[dict[str, Any]]
 ) -> LLMError:
-    diagnostic = _provider_message(exc, settings, messages)
+    diagnostic = "" if settings.deployed else _provider_message(exc, settings, messages)
     error = f"{summary} (HTTP {exc.status_code})"
     return LLMError(f"{error}: {diagnostic}" if diagnostic else error)
 

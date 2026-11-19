@@ -67,7 +67,8 @@ Done: 0 Setup + data + policy + LLM test; 1 Rule engine P1-P7, P15; 2 Rules P8-P
 3 Backend + DB + API; 4 Read-only tools + fix options for P3/P4/P6/P7; 5 LLM client + agent loop; 6 structured investigations and jobs; 7 worker messages and inbox; 8 worker clock-out extraction and re-check; 9 supervisor approval screen; 10 Priya's list +
 end-to-end tests (**prototype complete**); 11 mock punch API + scheduler; 12 auto-resolve + undo +
 "resolved without a human" metric; 13 no-reply escalation ladder + demo clock; 14 Activity
-Center + Autonomy Table (generated, anti-drift tests); 15 operations dashboard.
+Center + Autonomy Table (generated, anti-drift tests); 15 operations dashboard;
+16 payroll readiness and human sign-off.
 
 **Prototype (3-10)**
 3. Backend + DB + API
@@ -86,6 +87,7 @@ Center + Autonomy Table (generated, anti-drift tests); 15 operations dashboard.
 14. Activity Center + autonomy table
 15. Operations dashboard for Priya and supervisors
 16. Payroll readiness
+   - Phase 16.5 dry run: private hosted demo preparation before Phase 17
 17. Briefing + Amit mobile + summary
 18. Settings backend
 19. Admin UI
@@ -95,8 +97,11 @@ Center + Autonomy Table (generated, anti-drift tests); 15 operations dashboard.
 23. Tests + evaluation
 24. Delivery
 
-Phase 15 operations dashboard is verified, CI green. Phase 16 adds payroll readiness
-and human sign-off. Its verification status is tracked in [docs/PROGRESS.md](docs/PROGRESS.md).
+Phases 15 and 16 are verified, CI green. The Phase 16 check recorded 735 backend tests
+passed, 2 skipped, 93 frontend tests passed, type-check, build, a migration round trip,
+and a live payroll page check. The payroll test's scheduler response lookup and the
+read-only dataset guard failure are fixed. Phase 16.5 prepares a private synthetic demo
+deploy. See [docs/PROGRESS.md](docs/PROGRESS.md) for verification status.
 
 **Carry-over notes**
 - Phase 5 Groq bug: `run_checks` advertised Pydantic's RFC 3339 `date-time` format for
@@ -154,6 +159,22 @@ and human sign-off. Its verification status is tracked in [docs/PROGRESS.md](doc
     payroll-admin authorization for signing and reopening. Decide the real attendance cutoff.
     Leave `ATTENDFLOW_DEMO_EXTRA_WEEK=false` in deployment
     unless explicitly approved.
+  - Phase 16.5: the temporary shared-password gate lets anyone who knows it choose any
+    demo actor. Keep synthetic data only and replace this gate with real authentication
+    and actor binding before general access. **OPEN DECISION:** how judges switch between
+    Priya, Ravi, Amit and Neha in the deployed app. Keep the dev-only `?as=` override out
+    of the production bundle. No hosted role switcher was added in the dry run.
+  - Phase 16.5: use a same-origin build, a minimal read-only `/healthz` and runtime-only
+    secrets. Keep diagnostics off. Hosted Postgres URL aliases are normalized to psycopg.
+    Verify runtime secret mounts, migration startup, health checks, and protected routes
+    on a real deployment.
+  - Phase 16.5: retain separate seed/reset switches. Start locked and temporarily arm a
+    destructive operation only for a disposable synthetic DB. The guided profile opens
+    simulator, clock and reset behind the gate.
+  - Phase 16.5: sleeping free web services stop their scheduler. Choose an always-on plan
+    if a schedule must run reliably. Before a manual rollout, stop the old scheduler and
+    wait for its cycle to finish. Review overlapping old/new processes and migrations
+    before increasing replicas. Free Render Postgres expires after 30 days.
 
 ## Decisions so far (do not re-ask)
 
@@ -740,6 +761,9 @@ frontend/                Vite React: worker inbox (/, reminders + notices), supe
                          strip, Autonomy tab), payroll readiness (/payroll, /supervisor/payroll),
                          dev (/dev)
 scripts/check-all.sh     local lint, validation, backend tests and frontend checks
+scripts/start-deployed.sh and scripts/smoke-deployed.py
+                         deploy startup with migrations and hosted model-free smoke
+Dockerfile, render.yaml  single-process app image and the Locked Render blueprint
 docker-compose.yml       PostgreSQL 16 (host port 5433); docker/initdb creates the test DB
 .github/workflows/ci.yml lint + validate + README autonomy check + tests (Postgres service)
 ```

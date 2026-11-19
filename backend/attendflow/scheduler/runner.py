@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -78,7 +79,7 @@ class Scheduler:
         log.info("scheduler stopped", extra={"event": "scheduler_stopped"})
         return True
 
-    def run_once(self, trigger: Trigger) -> dict[str, Any] | None:
+    def run_once(self, trigger: Trigger, *, model_free: bool = False) -> dict[str, Any] | None:
         """Run one cycle now. None if another cycle is still running (skipped)."""
         if not self._lock.acquire(blocking=False):
             self.overlaps_skipped += 1
@@ -88,7 +89,15 @@ class Scheduler:
             )
             return None
         try:
-            return run_cycle(self.deps, trigger)
+            deps = self.deps
+            if model_free:
+                settings = replace(
+                    deps.settings,
+                    scheduler_investigations_per_cycle=0,
+                    scheduler_messages_per_cycle=0,
+                )
+                deps = replace(deps, settings=settings)
+            return run_cycle(deps, trigger)
         finally:
             self._lock.release()
 

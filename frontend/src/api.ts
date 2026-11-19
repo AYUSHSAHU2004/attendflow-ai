@@ -31,7 +31,8 @@ export type DashboardFilters = NonNullable<paths['/api/dashboard']['get']['param
 export type PayrollReadiness = Schemas['PayrollReadinessOut']
 export type ReadinessReason = Schemas['ReadinessReasonOut']
 
-const base = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '')
+const base = (import.meta.env.VITE_API_BASE_URL ||
+  (import.meta.env.DEV ? 'http://localhost:8000' : '')).replace(/\/$/, '')
 
 // Keeps the shared error shape ({error: {code, message, details}}) so pages can explain it.
 export class ApiError extends Error {

@@ -93,6 +93,7 @@ router = APIRouter(prefix="/api")
 # DEMO_MODE only: create_app() includes this router only when ATTENDFLOW_DEMO_MODE=true, so
 # with demo mode off these endpoints do not exist at all (404). Phase 22 checklist.
 demo_router = APIRouter(prefix="/api/admin/demo", tags=["demo"])
+demo_reset_router = APIRouter(prefix="/api/admin/demo", tags=["demo"])
 
 
 def _errors(*codes: int) -> dict:
@@ -1118,12 +1119,18 @@ def scheduler_status(actor_id: ActorId, request: Request, session: SessionDep):
     tags=["scheduler"],
     summary="Run one scheduler cycle now and return its summary (payroll admin only)",
     description="Detection, then investigations of new cases and worker messages within "
-    "the per-cycle limits. 409 scheduler_busy if a cycle is already running.",
+    "the per-cycle limits. Model-free cycles skip investigation and messaging. "
+    "409 scheduler_busy if a cycle is already running.",
     responses=_errors(403, 409, 422),
 )
-def scheduler_run_now(actor_id: ActorId, request: Request, session: SessionDep):
+def scheduler_run_now(
+    actor_id: ActorId,
+    request: Request,
+    session: SessionDep,
+    model_free: bool = False,
+):
     _require_admin(session, actor_id)
-    summary = _scheduler(request).run_once("run_now")
+    summary = _scheduler(request).run_once("run_now", model_free=model_free)
     if summary is None:
         raise ConflictError("a scheduler cycle is already running", code="scheduler_busy")
     return summary
@@ -1159,11 +1166,11 @@ def scheduler_stop(actor_id: ActorId, request: Request, session: SessionDep):
 # ---------------------------------------------------------------- demo helpers (DEMO_MODE)
 
 
-@demo_router.post(
+@demo_reset_router.post(
     "/reset",
     response_model=DemoResetOut,
     summary="Demo only: reseed, run detection, and reset the scheduler's 'new case' mark",
-    description="Exists only when ATTENDFLOW_DEMO_MODE=true. Payroll admin only. "
+    description="Requires demo mode and demo reset enabled. Payroll admin only. "
     "Destructive: wipes every table like POST /api/seed.",
     responses=_errors(403, 409, 422),
 )

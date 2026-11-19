@@ -10,6 +10,7 @@ import logging
 import time
 import uuid
 from contextlib import asynccontextmanager, suppress
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -21,10 +22,11 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from attendflow import __version__, demo_clock
 from attendflow.agent.jobs import InvestigationJobs
+from attendflow.api.deployment import install_health, install_private_demo, log_secrets
 from attendflow.api.logging_setup import configure_logging, request_id_var
-from attendflow.api.routes import demo_router, router
+from attendflow.api.routes import demo_reset_router, demo_router, router
 from attendflow.clock import Clock, DemoClock
-from attendflow.config import Settings, get_settings
+from attendflow.config import REPO_ROOT, Settings, get_settings
 from attendflow.db.session import make_engine, make_session_factory
 from attendflow.errors import AppError
 from attendflow.policy.models import load_policy
@@ -86,9 +88,10 @@ def create_app(
     *,
     engine: Engine | None = None,
     clock: Clock | None = None,
+    frontend_dir: Path | None = None,
 ) -> FastAPI:
     settings = settings or get_settings()
-    configure_logging(settings.log_format, settings.log_level)
+    configure_logging(settings.log_format, settings.log_level, secrets=log_secrets(settings))
     engine = engine or make_engine(settings.database_url)
 
     sessions = make_session_factory(engine)
@@ -194,9 +197,14 @@ def create_app(
             request_id_var.reset(token)
 
     _install_error_handlers(app)
+    install_health(app)
     app.include_router(router)
     if settings.demo_mode:
+        if settings.demo_reset_enabled:
+            app.include_router(demo_reset_router)
         app.include_router(demo_router)
+    if settings.deployed:
+        install_private_demo(app, settings, frontend_dir or REPO_ROOT / "frontend" / "dist")
     log.info(
         "app started",
         extra={

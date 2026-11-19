@@ -1125,13 +1125,34 @@ section 10 of [DEMO_WALKTHROUGH.md](DEMO_WALKTHROUGH.md) on an isolated demo dat
 - Added `scripts/check-all.sh`. It runs the requested backend checks and stops at the
   first failure. Unlike CI, it runs API generation and refuses unexpected drift
   before checking the generated file, and runs frontend tests before type-check.
-- **Verified in this session:** both Ruff checks, demo data validation, the README
-  autonomy check, static audit and source-writer guardrails, 18 database-independent
-  payroll tests, OpenAPI generation and drift check, 93 frontend tests, type-check,
-  and production build. Alembic emitted PostgreSQL SQL for upgrade and downgrade.
-- **Pending:** PostgreSQL integration tests (including the SQL write hook), live
-  migration up/down, and the live desktop and phone walkthrough/screenshots.
-  The sandbox denied the test database connection and a bind on an isolated API
-  port. An existing development API was left running and was not used for the live check.
+- **Verified, CI green.** The project owner ran `./scripts/check-all.sh`: 735 backend
+  tests passed, 2 skipped, and 93 frontend tests passed, with type-check and build.
+  The migration round trip and live payroll page check also passed.
+- Both earlier failures are fixed. The payroll test reads the top-level
+  `messages_sent` field from the scheduler response. The dataset reader uses
+  `session.scalars()` with the same filters and passes the original read-only guard.
 - See section 11 of [DEMO_WALKTHROUGH.md](DEMO_WALKTHROUGH.md) for the in-progress refusal
-  and earlier-week sign-off and reopening. Verify the phase before moving to Phase 17.
+  and earlier-week sign-off and reopening. Phase 16.5 follows before Phase 17.
+
+## Phase 16.5: Rough deploy
+
+- Added a single-process deployment launcher and same-origin production frontend,
+  read-only `/healthz`, shared-password protection, and startup checks for safe
+  deployment settings. Managed Postgres URLs normalize to psycopg before migrations.
+- Added a multi-stage Dockerfile, a Locked Render Blueprint, and a Koyeb/Neon
+  fallback guide. Locked and Guided demo are environment-only profiles. The smoke
+  script checks private access, frontend assets, dashboard and inbox, then runs a
+  model-free scheduler cycle. Seed and reset require explicit opt-in.
+- **Verified locally:** `./scripts/check-all.sh` on a new PostgreSQL test DB.
+  758 backend tests passed, 2 skipped. Both Ruff checks, demo-data validation, the
+  autonomy and data-safety checks, OpenAPI drift check, 93 frontend tests, type-check,
+  and build passed. The bundle passed the dev override, demo name, localhost URL and
+  synthetic secret checks. The native launcher migrated a separate local PostgreSQL
+  DB and passed locked and guided HTTP smoke checks with no LLM key. Guided reset
+  produced the ready closed payroll week. The temporary databases were removed.
+- **Pending:** the Docker image build/container runtime, applying the Blueprint
+  on Render, host cold-start behavior, runtime Groq connectivity, and a live hosted
+  smoke run. The owner has exact Mac build/run and hosted setup steps in
+  [DEPLOY.md](DEPLOY.md). No public deployment was made.
+- **Phase 22:** jury actor switching remains an open decision. Production keeps
+  the dev-only actor override out of the bundle.

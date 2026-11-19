@@ -63,14 +63,43 @@ class TextFormatter(logging.Formatter):
         return line
 
 
-def configure_logging(fmt: str = "json", level: str = "INFO") -> None:
+class RedactingFormatter(logging.Formatter):
+    def __init__(self, formatter: logging.Formatter, secrets: tuple[str, ...]):
+        super().__init__()
+        self.formatter = formatter
+        self.forms = sorted(
+            {form for secret in secrets for form in (secret, json.dumps(secret)[1:-1])},
+            key=len,
+            reverse=True,
+        )
+
+    def format(self, record: logging.LogRecord) -> str:
+        line = self.formatter.format(record)
+        for form in self.forms:
+            line = line.replace(form, "[redacted]")
+        return line
+
+
+def configure_logging(
+    fmt: str = "json",
+    level: str = "INFO",
+    *,
+    secrets: tuple[str, ...] = (),
+) -> None:
     handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(TextFormatter() if fmt == "text" else JsonFormatter())
+    formatter = TextFormatter() if fmt == "text" else JsonFormatter()
+    handler.setFormatter(RedactingFormatter(formatter, secrets) if secrets else formatter)
     handler.addFilter(_RequestIdFilter())
     for name in ("attendflow", "uvicorn.error"):
         logger = logging.getLogger(name)
         logger.handlers = [handler]
         logger.setLevel(level)
         logger.propagate = False
+    if secrets:
+        for name in ("openai", "httpx", "httpcore", "sqlalchemy.engine"):
+            logger = logging.getLogger(name)
+            logger.handlers = [handler]
+            logger.setLevel(logging.WARNING)
+            logger.propagate = False
     # Our middleware logs every request, so uvicorn's own access log would be a duplicate.
     logging.getLogger("uvicorn.access").disabled = True
