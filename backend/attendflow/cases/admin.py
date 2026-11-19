@@ -157,7 +157,9 @@ def overview(
     if no_reply == "any":
         stmt = stmt.where(stuck_cases())
     elif no_reply == "waiting":
-        stmt = stmt.where(ExceptionRow.status == "awaiting_worker", ExceptionRow.no_reply_stage == 0)
+        stmt = stmt.where(
+            ExceptionRow.status == "awaiting_worker", ExceptionRow.no_reply_stage == 0,
+        )
     elif no_reply in NO_REPLY_STAGES:
         stmt = stmt.where(ExceptionRow.no_reply_stage == NO_REPLY_STAGES[no_reply])
     if q and q.strip():

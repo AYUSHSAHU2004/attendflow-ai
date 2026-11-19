@@ -715,7 +715,9 @@ def admin_exceptions(
     q: Annotated[str | None, Query(max_length=60)] = None,
     no_reply: Annotated[
         NoReplyFilter | None,
-        Query(description="Cases the no-reply ladder touched, at one stage, or before the reminder"),
+        Query(
+            description="Cases the no-reply ladder touched, at one stage, or before the reminder",
+        ),
     ] = None,
     active_only: bool = False,
     auto_resolved: bool | None = None,

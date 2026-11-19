@@ -65,9 +65,9 @@ def test_seeded_dashboard_matches_admin_and_scopes_to_each_supervisor(demo):
     assert chart["auto_resolve"]["needed_handling"] == 17
     assert chart["aging"]["case_age"] == [16, 0, 0, 0]
     meena = next(row for row in chart["overtime"]["workers"] if row["employee_id"] == "E002")
-    assert (meena["worked_hours"], meena["scheduled_remaining_hours"], meena["projected_hours"]) == (
-        36, 12, 48,
-    )
+    assert (
+        meena["worked_hours"], meena["scheduled_remaining_hours"], meena["projected_hours"],
+    ) == (36, 12, 48)
     assert meena["level"] == "projected_over"
     assert chart["overtime"]["limit_hours"] == 40
     p5 = _get(demo, f"/api/admin/exceptions/{MEENA_P5}")["details"]
