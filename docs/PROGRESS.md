@@ -1,6 +1,6 @@
 # Progress log
 
-Project path: `C:\dev\attendflow-ai`. Repo: https://github.com/AYUSHSAHU2004/attendflow-ai.
+Project path: the repo root (the path differs per machine). Repo: https://github.com/AYUSHSAHU2004/attendflow-ai.
 Standing rules and all decisions: [../CLAUDE.md](../CLAUDE.md).
 
 ## Phase 0: Project setup, sample data, policy files, LLM test (2026-11-19) ✅
@@ -27,8 +27,8 @@ Standing rules and all decisions: [../CLAUDE.md](../CLAUDE.md).
   client using a fake client.
 
 **Decisions**
-- **Environment:** the project lives at `C:\dev\attendflow-ai` (moved out of OneDrive to
-  avoid sync and lock problems). It uses Python **3.12** via **uv**, with dependencies
+- **Environment:** the project lives at the repo root (the path differs per machine), kept
+  out of OneDrive to avoid sync and lock problems. It uses Python **3.12** via **uv**, with dependencies
   locked in `uv.lock`. The machine's default is Python 3.14, which is too new for some
   libraries, and `uv` is not on PATH, so commands use `python -m uv`.
 - **LLM:** **`openai/gpt-oss-120b`** (open-weight, **Apache 2.0**) on Groq. The plan was
@@ -52,7 +52,7 @@ Standing rules and all decisions: [../CLAUDE.md](../CLAUDE.md).
   `policy.md`, so the text the agent cites cannot drift from the limit the code enforces.
 - Only P2 and P7 (within grace) are marked `auto_resolve` in `policy.json`.
 
-**How to run and verify** (from `C:\dev\attendflow-ai`)
+**How to run and verify** (from the repo root)
 ```bash
 python -m uv sync                                   # install (first time)
 python -m uv run attendflow-validate                # expect "OK: all data files are valid."
@@ -103,7 +103,7 @@ CI runs the same lint, validation and test steps on every push to GitHub.
 - Ramesh's shift spans 21:58-06:00 (8 h) and is one shift; worked hours are 7.53 after his
   30 min break.
 
-**How to run and verify** (from `C:\dev\attendflow-ai`)
+**How to run and verify** (from the repo root)
 ```bash
 python -m uv sync
 python -m uv run attendflow-detect --fixes   # expect 8 exceptions, Meena "36 h + 12 h = 48 h ... over by 8 h"
@@ -159,7 +159,7 @@ Neha P4 (Mon), Sana P2 (Mon, auto-resolved), Karan P7 (Mon). No Ramesh, Arjun or
 - CSV row models now dump JSON in their CSV formats (`09:00`, `yes`), so the engine JSON
   loads back. A round-trip test found this.
 
-**How to run and verify** (from `C:\dev\attendflow-ai`)
+**How to run and verify** (from the repo root)
 ```bash
 python -m uv run attendflow-generate-data           # data unchanged after this (a test checks it)
 python -m uv run attendflow-validate                # expect 17 policies, "OK"
@@ -253,7 +253,7 @@ across Phases 5-8. Phases 0-2 are done; next is Phase 3. The same list is in
 - **Phase 22:** `POST /api/seed` wipes every table. It must be disabled
   (`ATTENDFLOW_ENABLE_SEED=false`) or protected on the deployed server.
 
-**How to run and verify** (from `C:\dev\attendflow-ai`)
+**How to run and verify** (from the repo root)
 ```bash
 python -m uv sync
 docker compose up -d db                    # PostgreSQL on localhost:5433
@@ -343,7 +343,7 @@ Done-when check in `/docs`:
   `requires_worker_confirmation` yet (so the Phase 3 demo approve still works). Decide then.
 - Phase 22: `POST /api/seed` must be disabled or protected on the deployed server.
 
-**How to run and verify** (from `C:\dev\attendflow-ai`; stop a running `attendflow-api`
+**How to run and verify** (from the repo root; stop a running `attendflow-api`
 first, or `uv sync` cannot replace its .exe)
 ```bash
 python -m uv sync
@@ -547,3 +547,70 @@ clock-out, then confirm or use the manual field. The exception detail contains
 the re-check. Repeat with a fresh case and Yes to verify the scheduled time.
 
 **Next: Phase 9** adds Ravi's approval page.
+
+## Phase 9: The supervisor's approval screen (2026-11-19)
+
+**Built**
+- `GET /api/supervisor/queue`: the caller's team cases that are `awaiting_supervisor`,
+  or `open` with an investigation routed to the supervisor, plus escalated cases
+  assigned to the caller. Priya sees only escalated cases assigned to her. Cases still
+  waiting for the worker's time (`needs_actual_time`) never appear. Sorted by severity,
+  date, ID.
+- `GET /api/supervisor/cases/{id}`: the case card for the assignee only. It has the
+  issue, policy quote, the worker's own evidence, raw reply, confirmed time (with
+  `approximate`), stored re-check, and fix options with edit fields. It also carries a
+  consequence note built by code (for example "Approving a 19:30 clock-out makes the
+  day 9.5 h, over the 9 h limit (P3) and projects 41.5 h for the week, over 40 h
+  (P5)..."). Other workers' IDs and names are redacted. No LLM calls.
+- Approve/edit/reject hardened: workers get 403 `supervisor_only` on every supervisor
+  endpoint, reject needs 10+ characters, decision notes need 3+, and audit rows hold the
+  option with params before and after. After a data-changing fix, detection re-runs
+  (own transaction, no duplicates) and returns the worker's new exception IDs.
+  `applied_fix.label` names the time actually applied.
+- P9 and P13 options now need the worker's confirmation. Three older tests now get a
+  worker Yes first.
+- Frontend `/supervisor`: queue (loading, empty, error), case card, Approve with a
+  confirmation step when the fix creates violations, Edit form (typed inputs, locked
+  P1 time, P13 punch-time form), Reject with a required reason, and refusals in plain
+  words. The acting reviewer lives in `actors.ts`; `?as=E102`/`?as=E201` works in dev
+  builds only.
+- Docs: machine-specific paths removed from CLAUDE.md and this log.
+
+**Decisions**
+- Detection runs automatically after an approval that changed data. Its failure never
+  undoes the approval (`post_fix_detection_failed` in the audit).
+- Open cases join the queue only after an investigation routes them to the supervisor.
+  Worker-routed cases wait for the worker's reply.
+- P10 keeps no worker guard (its policy asks only for supervisor approval).
+- A P1 time is locked to what the worker confirmed. P3 corrections stay editable after
+  a Yes (Phase 4 behaviour).
+
+**Checks**
+- 500 backend tests passed (2 opt-in real-LLM tests skipped), including 22 new
+  Phase 9 tests: queue scope and sort, needs_actual_time, card and consequence note,
+  redaction, edit/reject/decision-only rules, detection failure, the permission
+  matrix, and Amit's story end to end. 23 frontend tests (15 new). Ruff, type-check,
+  production build and the OpenAPI drift check passed.
+- Live check (dev DB reseeded, no LLM key, so the investigation used the template and
+  Amit used the manual time field): Amit answered No with "left around 7:30ish" and
+  sent 19:30. Ravi's queue showed the case only after that. The card showed the time,
+  his words, the re-check (9.5 h day, 41.5 h week) and the note. Approve asked for
+  confirmation, wrote a 19:30 correction punch, and opened P3-E001-2026-04-14 and
+  P5-E001-2026-04-13 for Ravi. The audit ran from detected to post_fix_detection.
+  Sunita got 403 on the card. Ravi rejected Meena's P5 from the UI. It landed
+  escalated for E201 with the reason saved, appeared on `/supervisor?as=E201`, and
+  Ravi then got 403. Two display bugs found here were fixed and tested.
+
+**Phase 22 checklist (deployment)**
+- Disable or protect `POST /api/seed`.
+- Review or remove the `/dev` page.
+- Confirm the dev-only `?as=` reviewer override is absent from the deployed bundle.
+- Replace `X-Actor-Id` with real login.
+
+**Verify:** start the DB, `alembic upgrade head`, `attendflow-api`, and `npm run dev`.
+Seed, detect, investigate Amit's P1 and ask him on `/dev`. Answer No on `/` and send
+19:30. Then open `/supervisor`, check the card, and approve. `GET
+/api/exceptions?employee_id=E001` shows the new P3 and P5. Try `/supervisor?as=E102`
+(Sunita sees none of Ravi's cases).
+
+**Next: Phase 10** gives Priya her plain list and adds the prototype integration test.

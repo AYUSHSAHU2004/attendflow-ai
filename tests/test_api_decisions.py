@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from attendflow.cases import service
 from attendflow.db.models import (
+    AuditLogRow,
     ExceptionRow,
     LeaveBalanceRow,
     LeaveRecordRow,
@@ -38,8 +39,11 @@ from tests.api_helpers import (
     session_for,
     snapshot,
     store_test_investigation,
+    worker_says_yes,
 )
 
+KARAN = {"X-Actor-Id": "E006"}
+FARAH = {"X-Actor-Id": "E008"}
 CLOCK_OUT = {"option_id": "set_clock_out_to_scheduled_end"}
 
 
@@ -55,6 +59,10 @@ def corrections(client, employee_id: str) -> list[PunchRow]:
 
 
 # ---------------------------------------------------------------- approve
+
+
+def _last(exc: dict, action: str) -> dict:
+    return next(a for a in reversed(exc["audit_trail"]) if a["action"] == action)
 
 
 def test_approve_applies_fix_and_writes_audit(demo):
@@ -76,8 +84,13 @@ def test_approve_applies_fix_and_writes_audit(demo):
     assert punch.created_by_exception == AMIT_P1
     assert punch.location == "Warehouse 1 - Inbound Gate"
 
-    audit = exc["audit_trail"][-1]
+    audit = _last(exc, "approve")
     assert (audit["actor"], audit["actor_id"], audit["action"]) == ("supervisor", "E101", "approve")
+    assert audit["before"]["option_id"] == "set_clock_out_to_scheduled_end"
+    assert (
+        audit["before"]["params"]["timestamp"]
+        == audit["after"]["applied_fix"]["params"]["timestamp"]
+    )
     assert (
         audit["before"]["status"] == "awaiting_supervisor"
         and audit["after"]["status"] == "resolved"
@@ -134,14 +147,14 @@ def test_auto_resolved_exception_cannot_be_approved(demo):
     [
         (SUNITA, "not_assigned"),  # supervises the other team
         (PRIYA, "not_assigned"),  # admin acts only after an escalation
-        (AMIT, "not_assigned"),  # the worker cannot approve his own fix
+        (AMIT, "supervisor_only"),  # a worker cannot call a supervisor endpoint
         ({"X-Actor-Id": "E999"}, "unknown_actor"),
     ],
 )
 def test_only_the_assignee_can_decide(demo, headers, code):
     before = snapshot(demo)
     assert_error(post(demo, AMIT_P1, "approve", CLOCK_OUT, headers), 403, code)
-    assert_error(post(demo, AMIT_P1, "reject", {"reason": "not ok"}, headers), 403, code)
+    assert_error(post(demo, AMIT_P1, "reject", {"reason": "not ok at all"}, headers), 403, code)
     assert snapshot(demo) == before
     assert get(demo, AMIT_P1)["status"] == "open"
 
@@ -186,7 +199,7 @@ def test_edit_applies_changed_params(demo):
     exc = r.json()
     assert exc["applied_fix"]["edited"] is True
     assert exc["applied_fix"]["params"]["timestamp"] == "2026-04-14T17:30:00"
-    assert exc["audit_trail"][-1]["action"] == "edit_and_approve"
+    assert _last(exc, "edit_and_approve")["after"]["applied_fix"]["edited"] is True
     assert [p.timestamp.time() for p in corrections(demo, "E001")] == [time(17, 30)]
 
 
@@ -245,7 +258,9 @@ def test_supervisor_reject_escalates_to_payroll_admin(demo):
 def test_admin_reject_of_escalated_case_is_final(demo):
     post(demo, AMIT_P1, "reject", {"reason": "not convinced"}, RAVI)
     # The supervisor no longer owns it.
-    assert_error(post(demo, AMIT_P1, "reject", {"reason": "again"}, RAVI), 403, "not_assigned")
+    assert_error(
+        post(demo, AMIT_P1, "reject", {"reason": "again, still no"}, RAVI), 403, "not_assigned"
+    )
     before = snapshot(demo)
     r = post(demo, AMIT_P1, "reject", {"reason": "Agree, no change"}, PRIYA)
     assert r.status_code == 200, r.text
@@ -259,7 +274,7 @@ def test_admin_reject_of_escalated_case_is_final(demo):
 
 def test_admin_can_approve_an_escalated_case(demo):
     confirm_amit_clock_out(demo)
-    post(demo, AMIT_P1, "reject", {"reason": "not sure"}, RAVI)
+    post(demo, AMIT_P1, "reject", {"reason": "not sure about it"}, RAVI)
     assert_error(post(demo, AMIT_P1, "approve", CLOCK_OUT, RAVI), 403, "not_assigned")
     r = post(demo, AMIT_P1, "approve", CLOCK_OUT, PRIYA)
     assert r.status_code == 200, r.text
@@ -368,6 +383,13 @@ def test_reduce_upcoming_shifts(demo):
 
 
 def test_cancel_leave_gives_the_day_back(demo):
+    # P9: the policy says the worker is asked first.
+    assert_error(
+        post(demo, KARAN_P9, "approve", {"option_id": "cancel_leave"}, SUNITA),
+        409,
+        "worker_not_confirmed",
+    )
+    worker_says_yes(demo, KARAN_P9, "cancel_leave", SUNITA, KARAN)
     _approve(demo, KARAN_P9, "cancel_leave", SUNITA)
     with session_for(demo) as s:
         assert (
@@ -431,6 +453,9 @@ def test_edit_punches_needs_the_new_times(demo):
         "params": {"changes": [{"punch_id": out["punch_id"], "timestamp": "2026-04-15T13:00"}]},
         "reason": "Farah confirmed she left at 13:00",
     }
+    # P13: the policy says the worker is asked first.
+    assert_error(post(demo, FARAH_P13, "edit", body, SUNITA), 409, "worker_not_confirmed")
+    worker_says_yes(demo, FARAH_P13, None, SUNITA, FARAH)  # no times to propose yet
     r = post(demo, FARAH_P13, "edit", body, SUNITA)
     assert r.status_code == 200, r.text
     with session_for(demo) as s:
@@ -442,6 +467,7 @@ def test_edit_punches_needs_the_new_times(demo):
 def test_stale_fix_is_refused(demo):
     # Cancel Karan's leave through P9, then a hand-made stale exception that still points at
     # it must fail cleanly instead of writing anything.
+    worker_says_yes(demo, KARAN_P9, "cancel_leave", SUNITA, KARAN)
     _approve(demo, KARAN_P9, "cancel_leave", SUNITA)
     with session_for(demo) as s, s.begin():
         row = s.get(ExceptionRow, KARAN_P9)
@@ -450,6 +476,17 @@ def test_stale_fix_is_refused(demo):
             | {"id": "P9-E006-stale", "status": "open", "applied_fix": None}
         )
         s.add(stale)
+        s.flush()
+        s.add(
+            AuditLogRow(
+                exception_id="P9-E006-stale",
+                actor="worker",
+                actor_id="E006",
+                action="worker_reply",
+                after={"confirmed": True},
+                created_at=row.updated_at,
+            )
+        )
     before = snapshot(demo)
     assert_error(
         post(demo, "P9-E006-stale", "approve", {"option_id": "cancel_leave"}, SUNITA),

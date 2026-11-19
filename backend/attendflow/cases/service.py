@@ -23,6 +23,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from attendflow.cases import time_extraction, time_review
+from attendflow.cases.supervisor import require_reviewer, time_label
 from attendflow.cases.transitions import WAITING, check_transition
 from attendflow.cases.worker_message import (
     generate_worker_message,
@@ -152,6 +153,7 @@ class DetectionSummary:
     closed_no_longer_detected: list[str] = field(default_factory=list)
     by_policy: dict[str, int] = field(default_factory=dict)
     exception_ids: list[str] = field(default_factory=list)
+    created_ids: list[str] = field(default_factory=list)
 
 
 def _content(exc: TimecardException) -> dict[str, Any]:
@@ -217,6 +219,7 @@ def run_detection(session: Session, policy: PolicyConfig, clock: Clock) -> Detec
                 session.add(row)
                 session.flush()
                 summary.created += 1
+                summary.created_ids.append(row.id)
                 _audit(
                     session,
                     clock,
@@ -390,8 +393,8 @@ def approve(
     edited = params is not None
     action_name = "edit" if edited else "approve"
     with session.begin():
+        actor = require_reviewer(session, actor_id)
         row = _get_for_update(session, exception_id)
-        actor = _actor(session, actor_id)
         check_transition(row.status, "resolved", action=action_name)
         _require_assignee(row, actor, action_name)
         option = _find_option(row, option_id)
@@ -420,24 +423,27 @@ def approve(
                 except ValueError as exc:
                     raise InvalidFixError(str(exc), code="punch_outside_shift") from None
         _require_worker_confirmation(session, row, option)
-        if (
-            row.policy_id == "P1"
-            and params_json(parsed).get("timestamp") != confirmed_params["timestamp"]
-        ):
-            raise ConflictError(
-                "the worker must confirm the changed punch time", code="worker_not_confirmed"
-            )
-        before = _state(row)
+        if row.policy_id == "P1" and confirmed_params is not None:
+            # Phase 8: a P1 time is approved as the worker confirmed it; a new time needs
+            # the worker again. (P3 corrections may still be edited after a Yes.)
+            if params_json(parsed).get("timestamp") != confirmed_params.get("timestamp"):
+                raise ConflictError(
+                    "the worker must confirm the changed punch time",
+                    code="worker_not_confirmed",
+                    details={"confirmed_timestamp": confirmed_params.get("timestamp")},
+                )
+        before = {**_state(row), "option_id": option_id, "params": default_params}
         changes = apply_fix(session, row, option["action"], parsed, policy, clock.now())
         _set_status(row, "resolved", clock, row.assigned_to)
         row.applied_fix = {
             "option_id": option_id,
             "action": option["action"],
-            "label": option["label"],
+            "label": time_label(option, params_json(parsed)),
             "params": params_json(parsed),
             "edited": edited,
             "changes": changes,
             "approved_by": actor.employee_id,
+            "params_before": default_params,
         }
         _audit(
             session,
@@ -463,14 +469,79 @@ def approve(
     return row
 
 
+def detect_after_fix(
+    session: Session, policy: PolicyConfig, clock: Clock, exception_id: str
+) -> dict[str, Any]:
+    """After an approved fix that changed data: run detection so that exceptions the fix
+    created appear as new open cases. Runs in its own transaction, after the approval was
+    saved. Detection upserts by stable ID, so it never duplicates a case. If it fails, the
+    approval stands and the next detection run picks the change up."""
+    with session.begin():
+        row = session.get(ExceptionRow, exception_id)
+        changed = bool(row and (row.applied_fix or {}).get("changes"))
+        employee_id = row.employee_id if row else None
+    if not changed:
+        return {"ran": False, "new_exception_ids": [], "closed_exception_ids": [], "error": None}
+    try:
+        summary = run_detection(session, policy, clock)
+    except Exception as exc:  # noqa: BLE001 - detection must never undo an approval
+        log.exception(
+            "detection after fix failed",
+            extra={"event": "post_fix_detection_failed", "exception_id": exception_id},
+        )
+        message = "Detection did not run after the fix; the next detection run will pick it up."
+        try:
+            with session.begin():
+                _audit(
+                    session,
+                    clock,
+                    exception_id=exception_id,
+                    actor="system",
+                    action="post_fix_detection_failed",
+                    reason=f"{message} ({type(exc).__name__})",
+                )
+        except Exception:  # noqa: BLE001
+            log.exception("could not audit the failed detection run")
+        return {
+            "ran": False,
+            "new_exception_ids": [],
+            "closed_exception_ids": [],
+            "error": message,
+        }
+    with session.begin():
+        ids = summary.created_ids + summary.closed_no_longer_detected
+        owners = dict(
+            session.execute(
+                select(ExceptionRow.id, ExceptionRow.employee_id).where(ExceptionRow.id.in_(ids))
+            ).all()
+        )
+        new_ids = [i for i in summary.created_ids if owners.get(i) == employee_id]
+        closed = [i for i in summary.closed_no_longer_detected if owners.get(i) == employee_id]
+        _audit(
+            session,
+            clock,
+            exception_id=exception_id,
+            actor="system",
+            action="post_fix_detection",
+            after={"new_exception_ids": new_ids, "closed_exception_ids": closed},
+            reason="Detection re-ran after the approved fix changed data.",
+        )
+    return {
+        "ran": True,
+        "new_exception_ids": new_ids,
+        "closed_exception_ids": closed,
+        "error": None,
+    }
+
+
 def reject(
     session: Session, clock: Clock, *, exception_id: str, actor_id: str, reason: str
 ) -> ExceptionRow:
     """Supervisor reject -> escalated to the payroll admin. Assignee's reject of an
     escalated case -> rejected (final). No data changes either way."""
     with session.begin():
+        actor = require_reviewer(session, actor_id)
         row = _get_for_update(session, exception_id)
-        actor = _actor(session, actor_id)
         target = "rejected" if row.status == "escalated" else "escalated"
         check_transition(row.status, target, action="reject")
         _require_assignee(row, actor, "reject")
@@ -506,7 +577,7 @@ def reject(
 
 
 def _worker_handoff(session: Session, row: ExceptionRow, actor_id: str) -> EmployeeRow:
-    actor = _actor(session, actor_id)
+    actor = require_reviewer(session, actor_id)
     check_transition(row.status, "awaiting_worker", action="ask_worker")
     _require_assignee(row, actor, "ask the worker about")
     investigation = row.investigation_case
@@ -653,9 +724,10 @@ def _handoff_confirmed_time(
     clock: Clock,
     review: dict,
     source: str,
+    approximate: bool = False,
 ) -> None:
     before = _state(row)
-    confirmed_time = {**review, "source": source}
+    confirmed_time = {**review, "source": source, "approximate": approximate}
     row.worker_recheck = confirmed_time
     row.proposed_fix = review["proposed_fix"]
     message.time_review = {
@@ -837,6 +909,7 @@ def submit_worker_time(
         if option is None or ctx is None:
             raise ConflictError("this case has no clock-out option", code="time_not_supported")
         candidate = message.time_review or {}
+        approximate = False
         if time is None:
             if candidate.get("stage") != "candidate":
                 raise ConflictError(
@@ -845,6 +918,7 @@ def submit_worker_time(
             stamp = datetime.fromisoformat(candidate["timestamp"])
             time, actual_date = stamp.strftime("%H:%M"), stamp.date()
             source = "llm"
+            approximate = bool(candidate.get("approximate"))
         else:
             source = "manual"
         try:
@@ -852,5 +926,5 @@ def submit_worker_time(
         except ValueError as exc:
             raise InvalidFixError(str(exc), code="invalid_time") from None
         review = time_review.recheck(session, row, option, stamp, policy, clock.now())
-        _handoff_confirmed_time(session, row, actor, message, clock, review, source)
+        _handoff_confirmed_time(session, row, actor, message, clock, review, source, approximate)
     return message

@@ -80,6 +80,7 @@ def check_p9_punches_on_leave(ctx: RuleContext) -> list[TimecardException]:
                         action="cancel_leave",
                         label=cancel,
                         params={"date": on.isoformat(), "leave_type": leave.leave_type, "days": 1},
+                        requires_worker_confirmation=True,
                     ),
                     FixOption(
                         option_id="void_punches",
@@ -87,6 +88,7 @@ def check_p9_punches_on_leave(ctx: RuleContext) -> list[TimecardException]:
                         label="Keep the leave and void the punches made by mistake "
                         "(worker is asked first)",
                         params={"punch_ids": punch_ids},
+                        requires_worker_confirmation=True,
                     ),
                 ],
             )
@@ -332,12 +334,14 @@ def check_p13_half_day(ctx: RuleContext) -> list[TimecardException]:
                     label="Cancel the half-day leave: the full day counts as worked and 0.5 day "
                     f"goes back to the {leave.leave_type} balance",
                     params={"date": on.isoformat(), "leave_type": leave.leave_type, "days": 0.5},
+                    requires_worker_confirmation=True,
                 ),
                 FixOption(
                     option_id="edit_punches",
                     action="edit_punches",
                     label="Keep the leave and correct the punches to the times the worker confirms",
                     params={"punch_ids": punch_ids},
+                    requires_worker_confirmation=True,
                 ),
             ]
             found.append(
@@ -360,18 +364,21 @@ def check_p13_half_day(ctx: RuleContext) -> list[TimecardException]:
                     action="convert_to_full_day_leave",
                     label=f"Change it to a full day of {leave.leave_type} leave",
                     params={"date": on.isoformat(), "leave_type": leave.leave_type},
+                    requires_worker_confirmation=True,
                 ),
                 FixOption(
                     option_id="mark_unpaid_hours",
                     action="mark_unpaid_hours",
                     label=f"Keep the half-day leave and mark {fmt(missing)} h as unpaid",
                     params={"date": on.isoformat(), "hours": h(missing)},
+                    requires_worker_confirmation=True,
                 ),
                 FixOption(
                     option_id="edit_punches",
                     action="edit_punches",
                     label="Correct or add punches to the times the worker confirms",
                     params={"punch_ids": punch_ids},
+                    requires_worker_confirmation=True,
                 ),
             ]
             found.append(

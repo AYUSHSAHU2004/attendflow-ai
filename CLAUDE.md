@@ -62,7 +62,7 @@ and CI, 10-minute demo video, 5 slides.
 ## Phase plan
 
 Done: 0 Setup + data + policy + LLM test; 1 Rule engine P1-P7, P15; 2 Rules P8-P14, P16, P17;
-3 Backend + DB + API; 4 Read-only tools + fix options for P3/P4/P6/P7; 5 LLM client + agent loop; 6 structured investigations and jobs; 7 worker messages and inbox; 8 worker clock-out extraction and re-check.
+3 Backend + DB + API; 4 Read-only tools + fix options for P3/P4/P6/P7; 5 LLM client + agent loop; 6 structured investigations and jobs; 7 worker messages and inbox; 8 worker clock-out extraction and re-check; 9 supervisor approval screen.
 
 **Prototype (3-10)**
 3. Backend + DB + API
@@ -90,23 +90,34 @@ Done: 0 Setup + data + policy + LLM test; 1 Rule engine P1-P7, P15; 2 Rules P8-P
 23. Tests + evaluation
 24. Delivery
 
-**Next: Phase 9.**
+**Next: Phase 10.**
 
 **Carry-over notes**
 - Phase 5 Groq bug: `run_checks` advertised Pydantic's RFC 3339 `date-time` format for
   timezone-free local timestamps. Groq rejected minute-precision values with HTTP 400.
   The schema now advertises the app's local time patterns; the registry tests check
   every tool schema recursively for unsupported formats and schema references.
-- Phase 9: Review whether P9, P10 and P13 should have the same worker confirmation
-  guard as P1. Their policy text says the worker is asked first.
-- Phase 22: `POST /api/seed` wipes every table. It must be disabled
-  (`ATTENDFLOW_ENABLE_SEED=false`) or protected on the deployed server.
+- Phase 13 (no-reply escalation): approving needs the worker's confirmation for P1,
+  P3 `correct_clock_out`, P4 `record_break` and every P9/P13 option. A no-reply
+  escalation needs a supervisor path that does not require it (e.g. an explicit,
+  audited "decide without the worker" action). It must also clear `needs_actual_time`
+  on escalation, or the supervisor queue keeps hiding the case.
+- Phase 15 (role switcher): replace `frontend/src/actors.ts` (the only place that names
+  the acting user, including the dev-only `?as=` override).
+- **Phase 22 checklist (deployment):**
+  - `POST /api/seed` wipes every table. Disable it (`ATTENDFLOW_ENABLE_SEED=false`) or
+    protect it.
+  - Review or remove the `/dev` page and its fixed demo actors.
+  - The `?as=E102` reviewer override in `actors.ts` works only in dev builds
+    (`import.meta.env.DEV`); a test checks this. Confirm it is absent from the deployed
+    bundle (`grep URLSearchParams frontend/dist/assets/*.js` finds nothing).
+  - `X-Actor-Id` is not authentication. Add real login before going public.
 
 ## Decisions so far (do not re-ask)
 
 **Environment**
-- Project path: `C:\dev\attendflow-ai`. It was moved out of OneDrive to avoid sync and lock
-  problems. GitHub: https://github.com/AYUSHSAHU2004/attendflow-ai (branch `main`).
+- Project path: the repo root (the path differs per machine). Keep it out of cloud-synced
+  folders such as OneDrive to avoid sync and lock problems. GitHub: https://github.com/AYUSHSAHU2004/attendflow-ai (branch `main`).
 - Python **3.12** managed with **uv**; dependencies are pinned in `uv.lock`. The machine's
   default Python is 3.14, so always go through uv. `uv` is not on PATH here, so use
   `python -m uv ...`.
@@ -338,6 +349,47 @@ Done: 0 Setup + data + policy + LLM test; 1 Rule engine P1-P7, P15; 2 Rules P8-P
   text is personal data. The raw reply audit also requires access controls and
   a retention policy.
 
+**Supervisor approval (Phase 9)**
+- Endpoints: `GET /api/supervisor/queue` and `GET /api/supervisor/cases/{id}` (the case
+  card). Decisions stay on `POST /api/exceptions/{id}/approve|edit|reject|ask-worker`.
+- Queue: a supervisor sees their own team's cases assigned to them that are
+  `awaiting_supervisor`, or `open` with a stored investigation whose `who_to_ask` is
+  `supervisor`; plus `escalated` cases assigned to them. Priya (payroll admin) sees only
+  escalated cases assigned to her (her full list is Phase 10). A case whose latest worker
+  message has `needs_actual_time=true` never appears. Sort: severity (high first), date,
+  ID.
+- Permissions: workers calling any supervisor endpoint (queue, card, approve, edit,
+  reject, ask-worker) get 403 `supervisor_only`; that check runs first. Otherwise only
+  the person in `assigned_to` may open the card or act (403 `not_assigned`). So Sunita
+  cannot touch Ravi's team, and Ravi cannot touch a case escalated to Priya.
+- The card is read-only and uses no LLM. It holds the issue, the policy (the
+  investigation's verbatim quote, else the policy.md rule), the case worker's own
+  evidence only, the worker's raw reply, the confirmed time (`approximate` is stored in
+  `worker_recheck`), the stored re-check, and per-option `fields` for the edit form
+  (`punches` for P13 `edit_punches`). Other workers' IDs and names in text are replaced
+  with "another worker"; supervisors' IDs are not.
+- Consequence note per option, built by code in `cases/supervisor.py`: from the worker
+  re-check if it is for that option, else from the investigation's stored simulation,
+  else "Records a decision only" (decision-only) or "Not checked yet" (unchecked).
+  `creates_violations` triggers the UI's confirmation step.
+- P9 and P13 options are now `requires_worker_confirmation` (policy: "The worker is asked
+  first"). P10 is not: its policy says supervisor approval only.
+- A P1 time is approved exactly as the worker confirmed it (the card locks it; a new
+  time needs the worker again). P3 corrections can still be edited after a Yes.
+  `applied_fix.label` names the time actually applied (not the engine's default).
+- Notes: reject reason >= 10 characters (trimmed, 422 `validation_error`); required notes
+  of decision-only options >= 3 characters (422 `invalid_params`).
+- Audit: approve/edit rows store `before.option_id` + `before.params` and
+  `after.applied_fix.params` (also `params_before`) with the reason.
+- After an approve/edit that changed data, detection re-runs in its own transaction
+  (upsert by ID, so no duplicates). The response has `detection.new_exception_ids` for
+  that worker, and the audit gets `post_fix_detection`. If detection fails, the approval
+  stands, the audit gets `post_fix_detection_failed`, and the next run picks it up.
+- Frontend: `/supervisor` (queue + card, Approve/Edit/Reject, confirmation before a fix
+  that creates violations, refusals in plain words). The acting reviewer comes from
+  `frontend/src/actors.ts`; in dev builds `?as=E102` or `?as=E201` switches it.
+- `.claude/launch.json` starts `api` and `web` for the Claude desktop preview.
+
 ## Repo map
 
 ```
@@ -366,7 +418,9 @@ backend/attendflow/
   fixes/params.py        Pydantic params per fix action; decision-only action list
   fixes/apply.py         the ONLY writer of timecards/schedule/leave after approval
   cases/transitions.py   status flow table + check_transition()
-  cases/service.py       run_detection (upsert), approve/edit, reject, ask_worker, worker_reply
+  cases/service.py       run_detection (upsert), approve/edit, reject, ask_worker, worker_reply,
+                         detect_after_fix
+  cases/supervisor.py    supervisor queue, case card, consequence note, reviewer permission
   tools/models.py        tool inputs/outputs (Pydantic), ok/error envelope, ProposedChange
   tools/read_tools.py    get_schedule, get_leave, get_leave_balance, get_punches, get_policy
   tools/run_checks.py    run_checks: simulate a change, re-run the engine, diff the week
@@ -380,7 +434,7 @@ backend/attendflow/
 data/                    6 CSVs + policy.json (limits) + policy.md (plain-language, cited by agent)
 docs/                    PROGRESS.md, PLANTED_CASES.md, LLM_LICENCE.md
 tests/                   pytest suite
-frontend/                Vite React worker inbox and dev supervisor page
+frontend/                Vite React: worker inbox (/), supervisor page (/supervisor), dev page (/dev)
 docker-compose.yml       PostgreSQL 16 (host port 5433); docker/initdb creates the test DB
 .github/workflows/ci.yml lint + validate + tests (with a Postgres service) on Python 3.12
 ```

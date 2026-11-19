@@ -16,6 +16,7 @@ from attendflow.api.schemas import (
     POLICY_ID,
     ActorType,
     ApproveIn,
+    ApproveOut,
     AskWorkerIn,
     AuditEntryOut,
     AuditListOut,
@@ -29,6 +30,8 @@ from attendflow.api.schemas import (
     InvestigationJobOut,
     RejectIn,
     SeedOut,
+    SupervisorCaseOut,
+    SupervisorQueueOut,
     ToolCallListOut,
     ToolCallOut,
     WorkerInboxOut,
@@ -36,7 +39,7 @@ from attendflow.api.schemas import (
     WorkerReplyOut,
     WorkerTimeIn,
 )
-from attendflow.cases import service
+from attendflow.cases import service, supervisor
 from attendflow.cases.transitions import Status
 from attendflow.clock import Clock
 from attendflow.config import Settings
@@ -44,7 +47,7 @@ from attendflow.data.loader import DataValidationError
 from attendflow.db.models import AuditLogRow, ExceptionRow, ToolCallRow
 from attendflow.db.seed import seed_from_csv
 from attendflow.errors import AppError, ForbiddenError, NotFoundError
-from attendflow.policy.models import PolicyConfig
+from attendflow.policy.models import PolicyConfig, load_policy_text
 
 router = APIRouter(prefix="/api")
 
@@ -250,11 +253,22 @@ def poll_investigation(exception_id: str, job_id: str, actor: ActorId, request: 
 _DECISION_ERRORS = _errors(403, 404, 409, 422)
 
 
+def _approved(session: Session, policy: PolicyConfig, clock: Clock, row: ExceptionRow):
+    exception_id = row.id
+    detection = service.detect_after_fix(session, policy, clock, exception_id)
+    with session.begin():
+        fresh = session.get(ExceptionRow, exception_id, populate_existing=True)
+        detail = _detail(session, fresh)
+    return ApproveOut(**detail.model_dump(), detection=detection)
+
+
 @router.post(
     "/exceptions/{exception_id}/approve",
-    response_model=ExceptionDetailOut,
+    response_model=ApproveOut,
     tags=["decisions"],
     summary="Approve a fix option: applies it and resolves the exception (one transaction)",
+    description="Supervisors and the payroll admin only, and only the assignee. After a fix "
+    "that changed data, detection re-runs so new exceptions it created appear as open cases.",
     responses=_DECISION_ERRORS,
 )
 def approve(
@@ -274,12 +288,12 @@ def approve(
         option_id=body.option_id,
         reason=body.reason,
     )
-    return _detail(session, row)
+    return _approved(session, policy, clock, row)
 
 
 @router.post(
     "/exceptions/{exception_id}/edit",
-    response_model=ExceptionDetailOut,
+    response_model=ApproveOut,
     tags=["decisions"],
     summary="Approve a fix option with changed params (validated before anything is saved)",
     responses=_DECISION_ERRORS,
@@ -302,7 +316,7 @@ def edit(
         reason=body.reason,
         params=body.params,
     )
-    return _detail(session, row)
+    return _approved(session, policy, clock, row)
 
 
 @router.post(
@@ -424,6 +438,51 @@ def worker_manual_time(
 )
 def worker_messages(actor_id: ActorId, session: SessionDep):
     return {"items": service.worker_inbox(session, actor_id)}
+
+
+# ---------------------------------------------------------------- supervisor
+
+
+@router.get(
+    "/supervisor/queue",
+    response_model=SupervisorQueueOut,
+    tags=["supervisor"],
+    summary="Cases waiting for the caller's decision",
+    description="A supervisor sees their own team's cases assigned to them that are "
+    "awaiting_supervisor, or open with an investigation routed to the supervisor, plus "
+    "escalated cases assigned to them. The payroll admin sees escalated cases assigned to "
+    "them. Cases still waiting for the worker's actual time never appear. Workers get 403. "
+    "Sorted by severity (high first), then date, then ID.",
+    responses=_errors(403, 422),
+)
+def supervisor_queue(actor_id: ActorId, session: SessionDep):
+    with session.begin():
+        items = supervisor.queue(session, actor_id)
+    return SupervisorQueueOut(count=len(items), items=items)
+
+
+@router.get(
+    "/supervisor/cases/{exception_id}",
+    response_model=SupervisorCaseOut,
+    tags=["supervisor"],
+    summary="The case card: issue, policy, evidence, worker reply, re-check and fix options",
+    description="Only the assignee (a supervisor or the payroll admin) may open it. Evidence "
+    "rows of other workers are left out and their names are redacted. Every text is stored "
+    "data or built by code; this endpoint never calls the LLM.",
+    responses=_errors(403, 404, 422),
+)
+def supervisor_case(
+    exception_id: str,
+    actor_id: ActorId,
+    session: SessionDep,
+    policy: PolicyDep,
+    settings: Annotated[Settings, Depends(get_settings_dep)],
+):
+    sections = load_policy_text(settings.data_dir / "policy.md")
+    with session.begin():
+        return supervisor.case_card(
+            session, policy, sections, exception_id=exception_id, actor_id=actor_id
+        )
 
 
 # ---------------------------------------------------------------- logs

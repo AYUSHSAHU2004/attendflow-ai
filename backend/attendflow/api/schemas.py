@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from attendflow.agent.case import InvestigationCase
 from attendflow.cases.transitions import Status
 from attendflow.engine.models import ACTION_INFO
-from attendflow.tools.models import RunChecksOut
+from attendflow.tools.models import Finding, RunChecksOut
 
 ActorType = Literal["system", "agent", "worker", "supervisor", "admin"]
 EMPLOYEE_ID = r"^E\d{3}$"
@@ -68,6 +68,9 @@ class DetectionRunOut(ApiModel):
     closed_no_longer_detected: list[str]
     by_policy: dict[str, int]
     exception_ids: list[str]
+    created_ids: list[str] = Field(
+        default_factory=list, description="Exceptions this run stored for the first time"
+    )
 
 
 # ---------------------------------------------------------------- exceptions
@@ -102,6 +105,9 @@ class WorkerRecheckOut(ApiModel):
     proposed_fix: dict[str, Any]
     result: RunChecksOut
     impact_note: str
+    approximate: bool = Field(
+        default=False, description="The worker confirmed an approximate time (e.g. '7:30ish')"
+    )
 
 
 class ExceptionOut(ApiModel):
@@ -213,7 +219,12 @@ class EditIn(RequestModel):
 
 
 class RejectIn(RequestModel):
-    reason: str = Field(min_length=3, max_length=1000, examples=["The worker was on site"])
+    reason: str = Field(
+        min_length=10,
+        max_length=1000,
+        description="Why the fix is rejected (at least 10 characters, saved in the audit log)",
+        examples=["The worker was on site all day"],
+    )
 
 
 class AskWorkerIn(RequestModel):
@@ -263,3 +274,141 @@ class WorkerReplyOut(ApiModel):
 
 class WorkerInboxOut(ApiModel):
     items: list[WorkerMessageOut]
+
+
+# ---------------------------------------------------------------- supervisor
+
+
+class PostFixDetectionOut(ApiModel):
+    ran: bool = Field(description="False for decision-only fixes, or if detection failed")
+    new_exception_ids: list[str] = Field(
+        description="New open exceptions for this worker that the approved fix created"
+    )
+    closed_exception_ids: list[str]
+    error: str | None = None
+
+
+class ApproveOut(ExceptionDetailOut):
+    detection: PostFixDetectionOut
+
+
+class SupervisorQueueItemOut(ApiModel):
+    exception_id: str
+    employee_id: str
+    employee_name: str
+    date: date
+    policy_id: str
+    title: str
+    summary: str
+    severity: Literal["low", "medium", "high"]
+    kind: Literal["breach", "risk"]
+    status: Status
+    waiting_since: datetime | None
+
+
+class SupervisorQueueOut(ApiModel):
+    count: int
+    items: list[SupervisorQueueItemOut]
+
+
+class CardEmployeeOut(ApiModel):
+    employee_id: str
+    name: str
+    team: str
+
+
+class CardPolicyOut(ApiModel):
+    policy_id: str
+    title: str
+    rule: str
+    cited_text: str = Field(description="The investigation's verbatim quote, else the rule")
+
+
+class CardInvestigationOut(ApiModel):
+    what_happened: str | None
+    confidence: Literal["low", "medium", "high"] | None
+    fallback: bool
+    who_to_ask: Literal["worker", "supervisor", "hr"] | None
+    next_action: str | None
+    evidence: list[dict[str, Any]]
+
+
+class CardWorkerOut(ApiModel):
+    replied: bool
+    confirmed: bool | None
+    reply_text: str | None = Field(description="The worker's own words, unchanged")
+    replied_at: datetime | None
+    needs_actual_time: bool
+
+
+class CardConfirmedTimeOut(ApiModel):
+    timestamp: str
+    approximate: bool
+    source: Literal["yes", "llm", "manual"] | None
+    option_id: str | None
+
+
+class CardFieldOut(ApiModel):
+    name: str
+    kind: Literal["datetime", "date", "time", "number", "text", "fixed"]
+    value: Any
+    editable: bool
+    locked_reason: str | None = None
+
+
+class CardPunchOut(ApiModel):
+    punch_id: str
+    type: str | None
+    timestamp: str | None
+
+
+class CardConsequenceOut(ApiModel):
+    source: Literal["worker_recheck", "investigation", "decision_only", "unchecked"]
+    note: str = Field(description="Built by code from the stored re-check; never LLM text")
+    creates_violations: bool
+    new_violations: list[Finding]
+    resolved: list[Finding]
+    day_worked_hours: float | None
+    week_projected_hours: float | None
+    weekly_limit_hours: float | None
+
+
+class CardOptionOut(ApiModel):
+    option_id: str
+    action: str
+    label: str
+    description: str
+    params: dict[str, Any]
+    decision_only: bool
+    requires_worker_confirmation: bool
+    worker_confirmed: bool
+    note_field: str | None = Field(description="Decision-only options: the required note param")
+    fields: list[CardFieldOut]
+    punches: list[CardPunchOut] | None = Field(
+        description="edit_punches: the punches whose times may be changed"
+    )
+    consequence: CardConsequenceOut
+
+
+class SupervisorCaseOut(ApiModel):
+    exception_id: str
+    status: Status
+    assigned_to: str | None
+    employee: CardEmployeeOut
+    date: date
+    policy_id: str
+    title: str
+    summary: str
+    severity: Literal["low", "medium", "high"]
+    kind: Literal["breach", "risk"]
+    details: dict[str, Any]
+    policy: CardPolicyOut
+    evidence: list[dict[str, Any]]
+    other_workers_evidence_hidden: int
+    investigation: CardInvestigationOut | None
+    worker: CardWorkerOut | None
+    confirmed_time: CardConfirmedTimeOut | None
+    recheck: RunChecksOut | None
+    options: list[CardOptionOut]
+    applied_fix: dict[str, Any] | None
+    min_note_length: int

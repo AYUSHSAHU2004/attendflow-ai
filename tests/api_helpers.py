@@ -121,6 +121,17 @@ def store_test_investigation(client, exception_id: str, option_id: str | None = 
         row.proposed_fix = case.proposed_fix.model_dump(mode="json") if case.proposed_fix else None
 
 
+def worker_says_yes(
+    client, exception_id: str, option_id: str | None, supervisor: dict, worker: dict
+) -> None:
+    """Investigate (template), ask the worker and record their Yes for this option."""
+    store_test_investigation(client, exception_id, option_id)
+    asked = post(client, exception_id, "ask-worker", {}, supervisor)
+    assert asked.status_code == 200, asked.text
+    reply = post(client, exception_id, "worker-reply", {"confirmed": True}, worker)
+    assert reply.status_code == 200, reply.text
+
+
 def confirm_amit_clock_out(client, time: str | None = None) -> None:
     store_test_investigation(client, AMIT_P1)
     assert post(client, AMIT_P1, "ask-worker", {}, RAVI).status_code == 200

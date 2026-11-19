@@ -265,12 +265,16 @@ def validate_decision_params(original: dict[str, Any], params: dict[str, Any]) -
     return params
 
 
+MIN_NOTE_LENGTH = 3
+
+
 def validate_required_note(action: str, params: dict[str, Any]) -> None:
     key = REQUIRED_NOTE.get(action)
-    if key is not None and not str(params.get(key) or "").strip():
+    if key is not None and len(str(params.get(key) or "").strip()) < MIN_NOTE_LENGTH:
         raise FixParamsError(
-            f"{action} needs a {key.replace('_', '-')} note: send it as the approve reason",
-            [{"loc": key, "msg": "must not be empty"}],
+            f"{action} needs a {key.replace('_', '-')} note of at least {MIN_NOTE_LENGTH} "
+            "characters: send it as the approve reason",
+            [{"loc": key, "msg": f"must be at least {MIN_NOTE_LENGTH} characters"}],
         )
 
 

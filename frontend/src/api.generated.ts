@@ -134,7 +134,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Approve a fix option: applies it and resolves the exception (one transaction) */
+        /**
+         * Approve a fix option: applies it and resolves the exception (one transaction)
+         * @description Supervisors and the payroll admin only, and only the assignee. After a fix that changed data, detection re-runs so new exceptions it created appear as open cases.
+         */
         post: operations["approve_api_exceptions__exception_id__approve_post"];
         delete?: never;
         options?: never;
@@ -261,6 +264,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/supervisor/queue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Cases waiting for the caller's decision
+         * @description A supervisor sees their own team's cases assigned to them that are awaiting_supervisor, or open with an investigation routed to the supervisor, plus escalated cases assigned to them. The payroll admin sees escalated cases assigned to them. Cases still waiting for the worker's actual time never appear. Workers get 403. Sorted by severity (high first), then date, then ID.
+         */
+        get: operations["supervisor_queue_api_supervisor_queue_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/supervisor/cases/{exception_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The case card: issue, policy, evidence, worker reply, re-check and fix options
+         * @description Only the assignee (a supervisor or the payroll admin) may open it. Evidence rows of other workers are left out and their names are redacted. Every text is stored data or built by code; this endpoint never calls the LLM.
+         */
+        get: operations["supervisor_case_api_supervisor_cases__exception_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/audit-log": {
         parameters: {
             query?: never;
@@ -309,6 +352,89 @@ export interface components {
             /** Reason */
             reason?: string | null;
         };
+        /** ApproveOut */
+        ApproveOut: {
+            /**
+             * Id
+             * @example P1-E001-2026-04-14
+             */
+            id: string;
+            /** Employee Id */
+            employee_id: string;
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Policy Id */
+            policy_id: string;
+            /** Title */
+            title: string;
+            /** Summary */
+            summary: string;
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "low" | "medium" | "high";
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "breach" | "risk";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "open" | "awaiting_worker" | "awaiting_supervisor" | "resolved" | "rejected" | "escalated";
+            /** Auto Resolved */
+            auto_resolved: boolean;
+            /** Details */
+            details: {
+                [key: string]: unknown;
+            };
+            /** Evidence */
+            evidence: {
+                [key: string]: unknown;
+            }[];
+            /** Fix Options */
+            fix_options: components["schemas"]["FixOptionOut"][];
+            /** Proposed Fix */
+            proposed_fix: {
+                [key: string]: unknown;
+            } | null;
+            worker_recheck?: components["schemas"]["WorkerRecheckOut"] | null;
+            /** Applied Fix */
+            applied_fix: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Assigned To
+             * @description Whose turn it is to act
+             */
+            assigned_to: string | null;
+            /** Waiting Since */
+            waiting_since: string | null;
+            /**
+             * Last Detected At
+             * Format: date-time
+             */
+            last_detected_at: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Audit Trail */
+            audit_trail: components["schemas"]["AuditEntryOut"][];
+            investigation_case?: components["schemas"]["InvestigationCase"] | null;
+            detection: components["schemas"]["PostFixDetectionOut"];
+        };
         /** AskWorkerIn */
         AskWorkerIn: {
             /** Note */
@@ -352,6 +478,157 @@ export interface components {
             /** Items */
             items: components["schemas"]["AuditEntryOut"][];
         };
+        /** CardConfirmedTimeOut */
+        CardConfirmedTimeOut: {
+            /** Timestamp */
+            timestamp: string;
+            /** Approximate */
+            approximate: boolean;
+            /** Source */
+            source: ("yes" | "llm" | "manual") | null;
+            /** Option Id */
+            option_id: string | null;
+        };
+        /** CardConsequenceOut */
+        CardConsequenceOut: {
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "worker_recheck" | "investigation" | "decision_only" | "unchecked";
+            /**
+             * Note
+             * @description Built by code from the stored re-check; never LLM text
+             */
+            note: string;
+            /** Creates Violations */
+            creates_violations: boolean;
+            /** New Violations */
+            new_violations: components["schemas"]["Finding"][];
+            /** Resolved */
+            resolved: components["schemas"]["Finding"][];
+            /** Day Worked Hours */
+            day_worked_hours: number | null;
+            /** Week Projected Hours */
+            week_projected_hours: number | null;
+            /** Weekly Limit Hours */
+            weekly_limit_hours: number | null;
+        };
+        /** CardEmployeeOut */
+        CardEmployeeOut: {
+            /** Employee Id */
+            employee_id: string;
+            /** Name */
+            name: string;
+            /** Team */
+            team: string;
+        };
+        /** CardFieldOut */
+        CardFieldOut: {
+            /** Name */
+            name: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "datetime" | "date" | "time" | "number" | "text" | "fixed";
+            /** Value */
+            value: unknown;
+            /** Editable */
+            editable: boolean;
+            /** Locked Reason */
+            locked_reason?: string | null;
+        };
+        /** CardInvestigationOut */
+        CardInvestigationOut: {
+            /** What Happened */
+            what_happened: string | null;
+            /** Confidence */
+            confidence: ("low" | "medium" | "high") | null;
+            /** Fallback */
+            fallback: boolean;
+            /** Who To Ask */
+            who_to_ask: ("worker" | "supervisor" | "hr") | null;
+            /** Next Action */
+            next_action: string | null;
+            /** Evidence */
+            evidence: {
+                [key: string]: unknown;
+            }[];
+        };
+        /** CardOptionOut */
+        CardOptionOut: {
+            /** Option Id */
+            option_id: string;
+            /** Action */
+            action: string;
+            /** Label */
+            label: string;
+            /** Description */
+            description: string;
+            /** Params */
+            params: {
+                [key: string]: unknown;
+            };
+            /** Decision Only */
+            decision_only: boolean;
+            /** Requires Worker Confirmation */
+            requires_worker_confirmation: boolean;
+            /** Worker Confirmed */
+            worker_confirmed: boolean;
+            /**
+             * Note Field
+             * @description Decision-only options: the required note param
+             */
+            note_field: string | null;
+            /** Fields */
+            fields: components["schemas"]["CardFieldOut"][];
+            /**
+             * Punches
+             * @description edit_punches: the punches whose times may be changed
+             */
+            punches: components["schemas"]["CardPunchOut"][] | null;
+            consequence: components["schemas"]["CardConsequenceOut"];
+        };
+        /** CardPolicyOut */
+        CardPolicyOut: {
+            /** Policy Id */
+            policy_id: string;
+            /** Title */
+            title: string;
+            /** Rule */
+            rule: string;
+            /**
+             * Cited Text
+             * @description The investigation's verbatim quote, else the rule
+             */
+            cited_text: string;
+        };
+        /** CardPunchOut */
+        CardPunchOut: {
+            /** Punch Id */
+            punch_id: string;
+            /** Type */
+            type: string | null;
+            /** Timestamp */
+            timestamp: string | null;
+        };
+        /** CardWorkerOut */
+        CardWorkerOut: {
+            /** Replied */
+            replied: boolean;
+            /** Confirmed */
+            confirmed: boolean | null;
+            /**
+             * Reply Text
+             * @description The worker's own words, unchanged
+             */
+            reply_text: string | null;
+            /** Replied At */
+            replied_at: string | null;
+            /** Needs Actual Time */
+            needs_actual_time: boolean;
+        };
         /** DetectionRunOut */
         DetectionRunOut: {
             /** As Of */
@@ -387,6 +664,11 @@ export interface components {
             };
             /** Exception Ids */
             exception_ids: string[];
+            /**
+             * Created Ids
+             * @description Exceptions this run stored for the first time
+             */
+            created_ids?: string[];
         };
         /** EditIn */
         EditIn: {
@@ -747,6 +1029,23 @@ export interface components {
             /** Reason */
             reason: string | null;
         };
+        /** PostFixDetectionOut */
+        PostFixDetectionOut: {
+            /**
+             * Ran
+             * @description False for decision-only fixes, or if detection failed
+             */
+            ran: boolean;
+            /**
+             * New Exception Ids
+             * @description New open exceptions for this worker that the approved fix created
+             */
+            new_exception_ids: string[];
+            /** Closed Exception Ids */
+            closed_exception_ids: string[];
+            /** Error */
+            error?: string | null;
+        };
         /** ProposedFix */
         ProposedFix: {
             /** Option Id */
@@ -760,7 +1059,8 @@ export interface components {
         RejectIn: {
             /**
              * Reason
-             * @example The worker was on site
+             * @description Why the fix is rejected (at least 10 characters, saved in the audit log)
+             * @example The worker was on site all day
              */
             reason: string;
         };
@@ -799,6 +1099,107 @@ export interface components {
             counts: {
                 [key: string]: number;
             };
+        };
+        /** SupervisorCaseOut */
+        SupervisorCaseOut: {
+            /** Exception Id */
+            exception_id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "open" | "awaiting_worker" | "awaiting_supervisor" | "resolved" | "rejected" | "escalated";
+            /** Assigned To */
+            assigned_to: string | null;
+            employee: components["schemas"]["CardEmployeeOut"];
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Policy Id */
+            policy_id: string;
+            /** Title */
+            title: string;
+            /** Summary */
+            summary: string;
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "low" | "medium" | "high";
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "breach" | "risk";
+            /** Details */
+            details: {
+                [key: string]: unknown;
+            };
+            policy: components["schemas"]["CardPolicyOut"];
+            /** Evidence */
+            evidence: {
+                [key: string]: unknown;
+            }[];
+            /** Other Workers Evidence Hidden */
+            other_workers_evidence_hidden: number;
+            investigation: components["schemas"]["CardInvestigationOut"] | null;
+            worker: components["schemas"]["CardWorkerOut"] | null;
+            confirmed_time: components["schemas"]["CardConfirmedTimeOut"] | null;
+            recheck: components["schemas"]["RunChecksOut"] | null;
+            /** Options */
+            options: components["schemas"]["CardOptionOut"][];
+            /** Applied Fix */
+            applied_fix: {
+                [key: string]: unknown;
+            } | null;
+            /** Min Note Length */
+            min_note_length: number;
+        };
+        /** SupervisorQueueItemOut */
+        SupervisorQueueItemOut: {
+            /** Exception Id */
+            exception_id: string;
+            /** Employee Id */
+            employee_id: string;
+            /** Employee Name */
+            employee_name: string;
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Policy Id */
+            policy_id: string;
+            /** Title */
+            title: string;
+            /** Summary */
+            summary: string;
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "low" | "medium" | "high";
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "breach" | "risk";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "open" | "awaiting_worker" | "awaiting_supervisor" | "resolved" | "rejected" | "escalated";
+            /** Waiting Since */
+            waiting_since: string | null;
+        };
+        /** SupervisorQueueOut */
+        SupervisorQueueOut: {
+            /** Count */
+            count: number;
+            /** Items */
+            items: components["schemas"]["SupervisorQueueItemOut"][];
         };
         /** ToolCallListOut */
         ToolCallListOut: {
@@ -890,6 +1291,12 @@ export interface components {
             result: components["schemas"]["RunChecksOut"];
             /** Impact Note */
             impact_note: string;
+            /**
+             * Approximate
+             * @description The worker confirmed an approximate time (e.g. '7:30ish')
+             * @default false
+             */
+            approximate: boolean;
         };
         /** WorkerReplyIn */
         WorkerReplyIn: {
@@ -1237,7 +1644,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ExceptionDetailOut"];
+                    "application/json": components["schemas"]["ApproveOut"];
                 };
             };
             /** @description Forbidden */
@@ -1302,7 +1709,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ExceptionDetailOut"];
+                    "application/json": components["schemas"]["ApproveOut"];
                 };
             };
             /** @description Forbidden */
@@ -1687,6 +2094,99 @@ export interface operations {
             };
             /** @description Forbidden */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    supervisor_queue_api_supervisor_queue_get: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
+                "X-Actor-Id": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SupervisorQueueOut"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    supervisor_case_api_supervisor_cases__exception_id__get: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
+                "X-Actor-Id": string;
+            };
+            path: {
+                exception_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SupervisorCaseOut"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

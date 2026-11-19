@@ -41,6 +41,8 @@ EXPECTED_PATHS = {
     ("get", "/api/audit-log"),
     ("get", "/api/tool-calls"),
     ("get", "/api/worker/messages"),
+    ("get", "/api/supervisor/queue"),
+    ("get", "/api/supervisor/cases/{exception_id}"),
 }
 
 
@@ -217,8 +219,9 @@ def test_detection_closes_open_exceptions_that_disappear(demo):
         headers=RAVI,
     )
     assert r.status_code == 200, r.text
-    run = demo.post("/api/detection/run").json()
-    assert run["closed_no_longer_detected"] == ["P14-E005-2026-04-14-P0038"]
+    # Detection re-runs after a fix that changed data (Phase 9); a second run finds nothing.
+    assert r.json()["detection"]["closed_exception_ids"] == ["P14-E005-2026-04-14-P0038"]
+    assert demo.post("/api/detection/run").json()["closed_no_longer_detected"] == []
     p14 = get(demo, "P14-E005-2026-04-14-P0038")
     assert p14["status"] == "resolved"
     assert p14["audit_trail"][-1]["action"] == "no_longer_detected"
@@ -233,8 +236,8 @@ def test_detection_refreshes_open_exceptions(demo):
         json={"option_id": "set_clock_out_to_scheduled_end"},
         headers=RAVI,
     )
-    run = demo.post("/api/detection/run").json()
-    assert run["updated"] == 1
+    # The approve already re-ran detection (Phase 9), so a second run changes nothing.
+    assert demo.post("/api/detection/run").json()["updated"] == 0
     p14 = get(demo, "P14-E001-2026-04-14-P0037")
     assert p14["status"] == "open"
     assert "missing punch" not in p14["summary"]
