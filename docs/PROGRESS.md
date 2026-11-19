@@ -1065,3 +1065,46 @@ tests/test_activity_api.py`; `python -m uv run attendflow-autonomy --check`; the
 of [DEMO_WALKTHROUGH.md](DEMO_WALKTHROUGH.md).
 
 **Next: Phase 15** (role switcher + Priya dashboard).
+
+## Phase 15: Operations dashboard (2026-11-20)
+
+**Built**
+- `GET /api/dashboard` reads a consistent PostgreSQL snapshot in a read-only transaction.
+  Priya sees all teams, supervisors see their own team, and workers get 403. From and To
+  filter inclusive exception dates. The existing admin counters and Phase 12 metric
+  supply the matching current-state numbers. Activity continues to count recorded events.
+- The page shows active cases by severity, status and policy, the four no-reply stages,
+  case and waiting age buckets, workload by the worker's supervisor, P5 weekly hours, and
+  the auto-resolve metric. No schema change, audit action, model call or pay calculation.
+- The P5 panel calls the engine's existing weekly hours helper at the data cutoff.
+  `OVERTIME_WARNING_MARGIN_HOURS` defaults to 4, must be positive and finite, and is
+  included in `.env.example` and the Phase 22 checklist.
+- The existing admin and supervisor pages link to the dashboard. Priya's drill-down
+  links open matching case filters, with the selected dates where applicable. The
+  supervisor dashboard links back to its decision queue. This phase retains the
+  existing demo identities. Charts use labeled HTML and CSS with no chart dependency.
+
+**Checks**
+- Passed a standalone TypeScript check of application sources and built an offline
+  esbuild bundle against the cached React packages. Compared with the previous commit
+  using the same bundler, the change adds approximately 2.7 KB gzip total (2.3 KB
+  JavaScript and 0.4 KB CSS). The output contains no `URLSearchParams` reference.
+- Python syntax, seeded engine hours, warning-margin validation, the static source-data
+  writer and audit action checks, and the README Autonomy Table check passed.
+- Added backend coverage for exact admin filter counts, activity event consistency,
+  permissions, date bounds, punch and ladder transitions, undo, read-only SQL, and
+  changes to the policy limit and warning margin. Added component coverage for panels,
+  loading, empty and error states, and date-aware drill-down links.
+- **Pending in a configured development environment:** `REQUIRE_DB=1` pytest with the
+  API stopped, the Vitest suite, Vite build, full project type-check, and OpenAPI drift
+  check. The locked dependencies and PostgreSQL were unavailable in this session.
+  API client types were updated to match the declared schema and still need the
+  generator drift check. The live workflow and desktop and phone screenshots are
+  pending. The session could not bind a loopback server.
+
+**Verify:** With the API stopped, run `REQUIRE_DB=1 uv run pytest` and
+`uv run attendflow-autonomy --check`. From `frontend/`, run `npm run api:generate`,
+`npm run api:check`, `npm test`, `npm run typecheck`, and `npm run build`. Then follow
+section 10 of [DEMO_WALKTHROUGH.md](DEMO_WALKTHROUGH.md) on an isolated demo database.
+
+**Next:** Finish Phase 15 verification, then move to Phase 16 (payroll readiness).

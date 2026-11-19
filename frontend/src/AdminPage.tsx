@@ -15,10 +15,11 @@ import { SchedulerPanel } from './SchedulerPanel'
 import { CaseCard, noReplyBadge, plainError } from './SupervisorPage'
 import { displayDate } from './WorkerInbox'
 
-type Filters = Pick<AdminFilters, 'status' | 'policy_id' | 'team' | 'employee_id' | 'q' | 'no_reply'>
+type Filters = Omit<AdminFilters, 'sort' | 'limit' | 'offset'>
 
 const NO_REPLY_LABELS: Record<string, string> = {
   any: 'Any step',
+  waiting: 'Waiting for first reminder',
   reminded: 'Reminder sent',
   supervisor: 'With supervisor',
   payroll_admin: 'Sent to payroll',
@@ -336,8 +337,34 @@ export function AdminDetail({
 
 // ---------------------------------------------------------------- page
 
+function dashboardFilters(): Filters {
+  if (typeof window === 'undefined') return {}
+  const params = new URL(window.location.href).searchParams
+  const date = (key: string) => {
+    const value = params.get(key) ?? ''
+    return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : undefined
+  }
+  const id = (key: string, pattern: RegExp) => {
+    const value = params.get(key) ?? ''
+    return pattern.test(value) ? value : undefined
+  }
+  const filters: Filters = {
+    status: COUNTERS.find((counter) => counter.status === params.get('status'))?.status,
+    no_reply: Object.keys(NO_REPLY_LABELS).find((step) => step === params.get('no_reply')) as Filters['no_reply'],
+    severity: (['low', 'medium', 'high'] as const).find((value) => value === params.get('severity')),
+    policy_id: id('policy_id', /^P\d{1,2}$/),
+    employee_id: id('employee_id', /^E\d{3}$/),
+    supervisor_id: id('supervisor_id', /^E\d{3}$/),
+    active_only: params.get('active_only') === 'true' || undefined,
+    auto_resolved: params.get('auto_resolved') === 'true' || undefined,
+    date_from: date('date_from'),
+    date_to: date('date_to'),
+  }
+  return Object.fromEntries(Object.entries(filters).filter(([, value]) => value !== undefined))
+}
+
 export function AdminPage() {
-  const [filters, setFilters] = useState<Filters>({})
+  const [filters, setFilters] = useState<Filters>(dashboardFilters)
   const [search, setSearch] = useState('')
   const [data, setData] = useState<AdminOverview | null>(null)
   const [error, setError] = useState('')
@@ -367,13 +394,14 @@ export function AdminPage() {
   }
 
   const options = data?.filter_options
-  const filtered = Boolean(filters.status || filters.policy_id || filters.team || filters.employee_id || filters.q || filters.no_reply)
+  const filtered = Object.values(filters).some(Boolean)
 
   return (
     <main className="page wide admin" id="main">
       <h1>All exceptions</h1>
       <p className="lede">
-        Signed in as {adminActor.name} ({adminActor.id}) · <a href="/activity">Activity and autonomy</a>
+        Signed in as {adminActor.name} ({adminActor.id}) ·{' '}
+        <a href="/dashboard">Operations dashboard</a> · <a href="/activity">Activity and autonomy</a>
       </p>
 
       <SchedulerPanel onChanged={() => setRefresh((value) => value + 1)} />
@@ -399,6 +427,19 @@ export function AdminPage() {
         </section>
       )}
 
+      {(filters.active_only || filters.auto_resolved || filters.severity || filters.supervisor_id
+        || filters.date_from || filters.date_to) && (
+        <p className="hint">
+          {[
+            filters.active_only && 'Active cases',
+            filters.auto_resolved && 'Auto-resolved cases',
+            filters.severity && `Severity: ${filters.severity}`,
+            filters.supervisor_id && `Supervisor: ${filters.supervisor_id}`,
+            filters.date_from && `From ${filters.date_from}`,
+            filters.date_to && `Through ${filters.date_to}`,
+          ].filter(Boolean).join(' · ')}
+        </p>
+      )}
       <form className="filters" aria-label="Filters" onSubmit={(event) => event.preventDefault()}>
         <label>
           Search

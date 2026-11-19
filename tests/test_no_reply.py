@@ -572,7 +572,9 @@ def test_admin_list_has_the_stage_the_stuck_counter_and_filter(demo):
     to_stage(demo, 2)
     body = demo.get("/api/admin/exceptions", headers=PRIYA).json()
     assert body["counters"]["stuck"] == 1
-    assert body["filter_options"]["no_reply"] == ["any", "reminded", "supervisor", "payroll_admin"]
+    assert body["filter_options"]["no_reply"] == [
+        "any", "reminded", "supervisor", "payroll_admin", "waiting",
+    ]
     for value, expected in (("any", [AMIT_P1]), ("supervisor", [AMIT_P1]), ("reminded", [])):
         r = demo.get(f"/api/admin/exceptions?no_reply={value}", headers=PRIYA).json()
         assert [i["exception_id"] for i in r["items"]] == expected

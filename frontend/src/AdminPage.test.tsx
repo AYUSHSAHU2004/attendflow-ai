@@ -136,6 +136,21 @@ beforeEach(() => {
 })
 
 describe('AdminPage', () => {
+  it('opens a dashboard drill-down with the active, severity and date filters', async () => {
+    const original = window.location.href
+    window.history.replaceState(null, '', '/admin?active_only=true&severity=high&date_from=2026-04-14')
+    try {
+      render(<AdminPage />)
+      await screen.findByRole('region', { name: 'Counters' })
+      expect(getAdminOverview).toHaveBeenLastCalledWith(
+        { active_only: true, severity: 'high', date_from: '2026-04-14' }, expect.anything(),
+      )
+      expect(screen.getByText('Active cases · Severity: high · From 2026-04-14')).toBeVisible()
+    } finally {
+      window.history.replaceState(null, '', original)
+    }
+  })
+
   it('shows the counters and every exception', async () => {
     render(<AdminPage />)
     const counters = await screen.findByRole('region', { name: 'Counters' })

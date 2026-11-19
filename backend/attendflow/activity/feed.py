@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 
 from attendflow.activity import autonomy
 from attendflow.cases.admin import audit_summary
+from attendflow.cases.selection import team_members
 from attendflow.cases.supervisor import require_reviewer
 from attendflow.db.models import AuditLogRow, EmployeeRow, ExceptionRow
 
@@ -130,8 +131,7 @@ def _scoped(
         AuditLogRow.action.notin_(autonomy.HIDDEN_FROM_FEED)
     )
     if actor.role != "payroll_admin":
-        team = select(EmployeeRow.employee_id).where(EmployeeRow.supervisor_id == actor.employee_id)
-        stmt = stmt.where(ExceptionRow.employee_id.in_(team))
+        stmt = stmt.where(ExceptionRow.employee_id.in_(team_members(actor.employee_id)))
     if policy_id:
         stmt = stmt.where(ExceptionRow.policy_id == policy_id)
     if exception_id:

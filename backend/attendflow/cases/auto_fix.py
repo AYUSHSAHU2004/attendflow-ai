@@ -17,6 +17,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from attendflow.cases.selection import scope_cases
 from attendflow.cases.supervisor import require_reviewer
 from attendflow.db.models import AuditLogRow, EmployeeRow, ExceptionRow
 from attendflow.engine.rules import to_minute
@@ -179,6 +180,7 @@ def metric(
     auto_resolve_enabled: bool,
     date_from: date | None = None,
     date_to: date | None = None,
+    supervisor_id: str | None = None,
 ) -> dict[str, Any]:
     """X of Y resolved without a human, counted from the database.
 
@@ -188,11 +190,9 @@ def metric(
       except those closed as `no_longer_detected` (the data changed and nobody had to act).
       Those are reported apart as `closed_by_data_change`.
     """
-    stmt = select(ExceptionRow)
-    if date_from:
-        stmt = stmt.where(ExceptionRow.date >= date_from)
-    if date_to:
-        stmt = stmt.where(ExceptionRow.date <= date_to)
+    stmt = scope_cases(
+        select(ExceptionRow), date_from=date_from, date_to=date_to, supervisor_id=supervisor_id
+    )
     rows = session.scalars(stmt).all()
     closed_ids = set(
         session.scalars(

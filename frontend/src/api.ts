@@ -26,6 +26,8 @@ type WithoutWorker = 'without_worker' | 'confirm_time_without_worker'
 export type ApproveInput = Omit<Schemas['ApproveIn'], WithoutWorker> & Partial<Pick<Schemas['ApproveIn'], WithoutWorker>>
 export type EditInput = Omit<Schemas['EditIn'], WithoutWorker> & Partial<Pick<Schemas['EditIn'], WithoutWorker>>
 export type AdminFilters = NonNullable<paths['/api/admin/exceptions']['get']['parameters']['query']>
+export type Dashboard = Schemas['DashboardOut']
+export type DashboardFilters = NonNullable<paths['/api/dashboard']['get']['parameters']['query']>
 
 const base = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '')
 
@@ -164,12 +166,17 @@ export async function rejectCase(id: string, body: Schemas['RejectIn'], actor = 
 // ---------------------------------------------------------------- payroll admin
 
 export async function getAdminOverview(filters: AdminFilters, signal?: AbortSignal) {
-  // Built by hand: the Phase 22 check greps the bundle for URLSearchParams (dev-only ?as=).
-  const query = Object.entries(filters)
-    .filter(([, value]) => value !== undefined && value !== null && String(value) !== '')
-    .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`)
-  const suffix = query.length ? `?${query.join('&')}` : ''
-  return (await request<AdminOverview>('/api/admin/exceptions' + suffix, adminActor.id, { signal })).body
+  return (await request<AdminOverview>(
+    '/api/admin/exceptions' + queryString(filters), adminActor.id, { signal },
+  )).body
+}
+
+export function adminListHref(filters: AdminFilters): string {
+  return '/admin' + queryString(filters)
+}
+
+export async function getDashboard(filters: DashboardFilters, actor: string, signal?: AbortSignal) {
+  return (await request<Dashboard>('/api/dashboard' + queryString(filters), actor, { signal })).body
 }
 
 export async function getAdminCase(id: string, signal?: AbortSignal) {

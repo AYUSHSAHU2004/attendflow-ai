@@ -2,7 +2,10 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { ActivityPage } from './ActivityPage'
 import { AdminPage } from './AdminPage'
-import { activityActor, adminActor, supervisorActor, workerActor } from './actors'
+import {
+  activityActor, adminActor, dashboardActor, supervisorActor, supervisorDashboardPath, workerActor,
+} from './actors'
+import { DashboardPage } from './DashboardPage'
 import { DevPage } from './DevPage'
 import { SupervisorPage } from './SupervisorPage'
 import { WorkerInbox } from './WorkerInbox'
@@ -13,14 +16,17 @@ const page = path === '/dev' ? 'dev'
   : path === '/supervisor' ? 'supervisor'
     : path === '/admin' ? 'admin'
       : path === '/activity' ? 'activity'
-        : 'worker'
+        : path === '/dashboard' || path === supervisorDashboardPath ? 'dashboard'
+          : 'worker'
 const actor = page === 'worker' ? workerActor
   : page === 'admin' ? adminActor
     : page === 'activity' ? activityActor
-      : supervisorActor
+      : page === 'dashboard' ? dashboardActor
+        : supervisorActor
 document.title = {
   activity: 'AttendFlow | Activity',
   admin: 'AttendFlow | All exceptions',
+  dashboard: 'AttendFlow | Operations dashboard',
   dev: 'AttendFlow | Dev tools',
   supervisor: 'AttendFlow | Decisions',
   worker: 'AttendFlow | Attendance inbox',
@@ -28,7 +34,7 @@ document.title = {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <header className="site-header">
+    <header className={page === 'dashboard' ? 'site-header dashboard-header' : 'site-header'}>
       <a href="/" className="brand">
         <span className="brand-mark" aria-hidden="true">A</span>
         AttendFlow
@@ -39,6 +45,7 @@ createRoot(document.getElementById('root')!).render(
       : page === 'supervisor' ? <SupervisorPage />
         : page === 'admin' ? <AdminPage />
           : page === 'activity' ? <ActivityPage />
-            : <WorkerInbox />}
+            : page === 'dashboard' ? <DashboardPage />
+              : <WorkerInbox />}
   </StrictMode>,
 )

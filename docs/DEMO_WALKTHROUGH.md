@@ -214,6 +214,37 @@ Phase 14 live check (database `attendflow_phase14`, API :8001, Vite :5174).
    guardrails" is generated from the same registry, and tests fail if either drifts.
 7. Amit's P1 is still untouched: open with Ravi, only the `detected` row.
 
+## 10. Operations dashboard (Phase 15)
+
+Use a fresh demo database, for example `attendflow_phase15`, separate from any open
+session. Set `DATABASE_URL` to that database, migrate it with `uv run alembic upgrade head`,
+and set `ATTENDFLOW_DEMO_MODE=true` and `SCHEDULER_ENABLED=false`. For a template-only
+demo, set `LLM_BASE_URL=http://127.0.0.1:1/v1` and confirm port 1 has no listener. This
+also prevents a key loaded from `.env` from sending a request to the configured provider.
+If running the API and Vite on alternate ports, set `VITE_API_BASE_URL` to the API
+origin and add the Vite origin to `ATTENDFLOW_CORS_ORIGINS`.
+
+1. Seed the isolated database once if it is empty. As Priya on `/admin`, reset the demo
+   and open **Operations dashboard**. Expect 16 active cases, **1 of 17** resolved
+   without a human, and Meena at 36 h worked + 12 h scheduled = 48 h projected
+   against the 40 h limit.
+2. Go back to `/admin` and simulate Neha (E004) clocking in on 15 April at **08:58**.
+   Run the scheduler once. Reopen the dashboard and verify the extra P1 and one case
+   waiting for its first reminder. Neha's absence (P10) closes because the data changed.
+3. Advance the demo clock by **+8 h**, then run the scheduler once. Reload the dashboard.
+   Expect one reminded case and **Stuck: 1**. Waiting age moves to **8 to under 24 h**.
+   Compare the matching cases on `/admin` and the reminder event on `/activity`.
+4. On `/supervisor`, undo Sana's P2 as Ravi. Reload the dashboard to see P2 in open work,
+   one more active case and **0 of 17** resolved without a human. `/activity` retains
+   the one original auto-resolve and adds the undo.
+5. Open **Operations dashboard** from `/supervisor` for Ravi's Inbound view. In a dev
+   build, `/supervisor/dashboard?as=E102` opens Sunita's Outbound view. Confirm the
+   workloads, case counts and overtime workers are scoped to the current team.
+6. Click a severity or policy in Priya's view and verify the matching active cases.
+   Apply a date range and check that the link carries it. At phone width (375 px),
+   check that the panels stack without horizontal page scrolling. In Amit's P1
+   detail, verify that the case is still open with only the `detected` audit row.
+
 ## Also worth showing
 
 - Refusals: `/admin?as=E101` (dev builds only) shows "Only the payroll admin can open

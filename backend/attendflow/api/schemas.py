@@ -364,7 +364,7 @@ class ApproveOut(ExceptionDetailOut):
 
 
 NoReplyKey = Literal["reminded", "supervisor", "payroll_admin"]
-NoReplyFilter = Literal["any", "reminded", "supervisor", "payroll_admin"]
+NoReplyFilter = Literal["any", "reminded", "supervisor", "payroll_admin", "waiting"]
 
 
 class NoReplyOut(ApiModel):
@@ -589,7 +589,7 @@ class AdminFilterOptionsOut(ApiModel):
     employees: list[AdminEmployeeOptionOut]
     severities: list[Severity]
     no_reply: list[NoReplyFilter] = Field(
-        default_factory=lambda: ["any", "reminded", "supervisor", "payroll_admin"]
+        default_factory=lambda: ["any", "reminded", "supervisor", "payroll_admin", "waiting"]
     )
 
 
@@ -965,6 +965,52 @@ class AutoResolveMetricOut(ApiModel):
     auto_resolve_enabled: bool = Field(description="The AUTO_RESOLVE_ENABLED kill switch")
     allowed_policies: list[str] = Field(description="Policies policy.json lets auto-resolve")
     by_policy: list[MetricPolicyOut]
+
+
+class DashboardAgingOut(ApiModel):
+    limits_hours: list[int]
+    case_age: list[int]
+    waiting_age: list[int]
+
+
+class DashboardWorkloadOut(ApiModel):
+    supervisor_id: str | None
+    supervisor_name: str
+    active: int
+    awaiting_worker: int
+    awaiting_supervisor: int
+
+
+class DashboardOvertimeWorkerOut(ApiModel):
+    employee_id: str
+    employee_name: str
+    worked_hours: float
+    scheduled_remaining_hours: float
+    projected_hours: float
+    level: Literal["approaching", "at_limit", "projected_over", "already_over"]
+
+
+class DashboardOvertimeOut(ApiModel):
+    week_start: date
+    week_end: date
+    limit_hours: float
+    warning_margin_hours: float
+    workers: list[DashboardOvertimeWorkerOut]
+
+
+class DashboardOut(ApiModel):
+    scope: Literal["all", "team"]
+    workflow_now: datetime
+    active_total: int
+    stuck: int
+    by_status: dict[str, int]
+    by_severity: dict[str, int]
+    by_policy: dict[str, int]
+    ladder: dict[str, int]
+    aging: DashboardAgingOut
+    workload: list[DashboardWorkloadOut]
+    overtime: DashboardOvertimeOut
+    auto_resolve: AutoResolveMetricOut
 
 
 # ---------------------------------------------------------------- Phase 14: activity

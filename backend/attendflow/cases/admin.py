@@ -8,7 +8,7 @@ the decision endpoints (Phase 9); investigating reuses the investigate job (Phas
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from sqlalchemy import case, func, or_, select
@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from attendflow.activity.trace import result_summary
 from attendflow.cases import no_reply as ladder
 from attendflow.cases.auto_fix import auto_fix_info
+from attendflow.cases.selection import NO_REPLY_STAGES, active_cases, scope_cases, stuck_cases
 from attendflow.cases.supervisor import (
     SEVERITY_RANK,
     _policy_section,
@@ -43,9 +44,6 @@ STATUSES = (
     "rejected",
 )
 SORTS = ("severity", "date", "employee", "updated")
-FINAL = ("resolved", "rejected")
-# Phase 13: "stuck" = not final and the no-reply ladder took at least one step.
-NO_REPLY_STAGES = {"reminded": 1, "supervisor": 2, "payroll_admin": 3}
 DEFAULT_LIMIT = 200
 MAX_LIMIT = 500
 
@@ -69,26 +67,24 @@ def require_admin(session: Session, actor_id: str) -> EmployeeRow:
 # ------------------------------------------------------------------ counters
 
 
-def counters(session: Session) -> dict[str, int]:
-    """Counted by the database over every stored exception (filters never apply)."""
-    by_status = dict(
-        session.execute(
-            select(ExceptionRow.status, func.count()).group_by(ExceptionRow.status)
-        ).all()
+def counters(
+    session: Session,
+    *,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    supervisor_id: str | None = None,
+) -> dict[str, int]:
+    """The admin tiles use the global counts. The dashboard passes its case scope."""
+    stmt = select(
+        func.count().label("total"),
+        *(func.count().filter(ExceptionRow.status == status).label(status) for status in STATUSES),
+        func.count().filter(ExceptionRow.auto_resolved).label("auto_resolved"),
+        func.count().filter(stuck_cases()).label("stuck"),
+    ).select_from(ExceptionRow)
+    scoped = scope_cases(
+        stmt, date_from=date_from, date_to=date_to, supervisor_id=supervisor_id
     )
-    auto = session.scalar(
-        select(func.count()).select_from(ExceptionRow).where(ExceptionRow.auto_resolved)
-    )
-    stuck = session.scalar(
-        select(func.count())
-        .select_from(ExceptionRow)
-        .where(ExceptionRow.no_reply_stage > 0, ExceptionRow.status.not_in(FINAL))
-    )
-    out = {"total": sum(by_status.values())}
-    out.update({status: by_status.get(status, 0) for status in STATUSES})
-    out["auto_resolved"] = auto or 0
-    out["stuck"] = stuck or 0
-    return out
+    return dict(session.execute(scoped).mappings().one())
 
 
 # ------------------------------------------------------------------ overview
@@ -125,6 +121,11 @@ def overview(
     severity: str | None = None,
     q: str | None = None,
     no_reply: str | None = None,
+    active_only: bool = False,
+    auto_resolved: bool | None = None,
+    supervisor_id: str | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
     sort: str = "severity",
     limit: int = DEFAULT_LIMIT,
     offset: int = 0,
@@ -133,9 +134,16 @@ def overview(
     actor = require_admin(session, actor_id)
     employees = {e.employee_id: e for e in session.scalars(select(EmployeeRow))}
 
-    stmt = select(ExceptionRow).join(
-        EmployeeRow, EmployeeRow.employee_id == ExceptionRow.employee_id
+    stmt = scope_cases(
+        select(ExceptionRow).join(EmployeeRow, EmployeeRow.employee_id == ExceptionRow.employee_id),
+        date_from=date_from,
+        date_to=date_to,
+        supervisor_id=supervisor_id,
     )
+    if active_only:
+        stmt = stmt.where(active_cases())
+    if auto_resolved is not None:
+        stmt = stmt.where(ExceptionRow.auto_resolved == auto_resolved)
     if status:
         stmt = stmt.where(ExceptionRow.status == status)
     if policy_id:
@@ -147,7 +155,9 @@ def overview(
     if severity:
         stmt = stmt.where(ExceptionRow.severity == severity)
     if no_reply == "any":
-        stmt = stmt.where(ExceptionRow.no_reply_stage > 0, ExceptionRow.status.not_in(FINAL))
+        stmt = stmt.where(stuck_cases())
+    elif no_reply == "waiting":
+        stmt = stmt.where(ExceptionRow.status == "awaiting_worker", ExceptionRow.no_reply_stage == 0)
     elif no_reply in NO_REPLY_STAGES:
         stmt = stmt.where(ExceptionRow.no_reply_stage == NO_REPLY_STAGES[no_reply])
     if q and q.strip():
@@ -221,7 +231,7 @@ def _filter_options(session: Session, employees: dict[str, EmployeeRow]) -> dict
             for eid in sorted(employee_ids, key=lambda e: employees[e].name)
         ],
         "severities": list(SEVERITY_RANK),
-        "no_reply": list(ladder.FILTERS),
+        "no_reply": [*ladder.FILTERS, "waiting"],
     }
 
 

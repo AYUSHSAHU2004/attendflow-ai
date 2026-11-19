@@ -30,6 +30,7 @@ from attendflow.api.schemas import (
     AuditListOut,
     AutonomyTableOut,
     AutoResolveMetricOut,
+    DashboardOut,
     DemoClockIn,
     DemoClockOut,
     DemoPunchIn,
@@ -64,7 +65,8 @@ from attendflow.api.schemas import (
     WorkerReplyOut,
     WorkerTimeIn,
 )
-from attendflow.cases import admin, auto_fix, service, supervisor
+from attendflow.cases import admin, auto_fix, dashboard, service, supervisor
+from attendflow.cases.selection import validate_date_range
 from attendflow.cases.transitions import Status
 from attendflow.clock import Clock
 from attendflow.config import Settings
@@ -666,6 +668,31 @@ def auto_resolve_metric(
 
 
 @router.get(
+    "/dashboard",
+    response_model=DashboardOut,
+    tags=["operations"],
+    summary="Read-only operations dashboard for payroll admins and supervisors",
+    description="Supervisors only see their own team. Optional dates filter exception dates. "
+    "Overtime always covers the engine's current week.",
+    responses=_errors(403, 422),
+)
+def operations_dashboard(
+    actor_id: ActorId,
+    session: SessionDep,
+    clock: ClockDep,
+    policy: PolicyDep,
+    settings: Annotated[Settings, Depends(get_settings_dep)],
+    date_from: date | None = None,
+    date_to: date | None = None,
+):
+    with session.begin():
+        session.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"))
+        return dashboard.overview(
+            session, actor_id, clock, policy, settings, date_from=date_from, date_to=date_to
+        )
+
+
+@router.get(
     "/admin/exceptions",
     response_model=AdminOverviewOut,
     tags=["admin"],
@@ -688,13 +715,19 @@ def admin_exceptions(
     q: Annotated[str | None, Query(max_length=60)] = None,
     no_reply: Annotated[
         NoReplyFilter | None,
-        Query(description="Cases the no-reply ladder touched (any) or at one stage"),
+        Query(description="Cases the no-reply ladder touched, at one stage, or before the reminder"),
     ] = None,
+    active_only: bool = False,
+    auto_resolved: bool | None = None,
+    supervisor_id: Annotated[str | None, Query(pattern=EMPLOYEE_ID)] = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
     sort: AdminSort = "severity",
     limit: Annotated[int, Query(ge=1, le=admin.MAX_LIMIT)] = admin.DEFAULT_LIMIT,
     offset: Annotated[int, Query(ge=0)] = 0,
 ):
     with session.begin():
+        validate_date_range(date_from, date_to)
         return admin.overview(
             session,
             actor_id,
@@ -705,6 +738,11 @@ def admin_exceptions(
             severity=severity,
             q=q,
             no_reply=no_reply,
+            active_only=active_only,
+            auto_resolved=auto_resolved,
+            supervisor_id=supervisor_id,
+            date_from=date_from,
+            date_to=date_to,
             sort=sort,
             limit=limit,
             offset=offset,

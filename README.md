@@ -76,7 +76,7 @@ Generated from `backend/attendflow/activity/autonomy.py` by `python -m uv run at
 
 ```
 backend/attendflow/   Python package (config, data, policy, rule engine, DB, fixes, cases, API, LLM client)
-frontend/             React + TypeScript app (from a later phase)
+frontend/             React + TypeScript app (inbox, decisions, admin, activity, dashboard)
 data/                 Demo CSVs, policy.json (limits), policy.md (plain-language policy)
 docs/                 PROGRESS, PLANTED_CASES, LLM_LICENCE
 tests/                pytest suite
@@ -151,7 +151,7 @@ or a local Ollama model is a `.env` change. Licence notes: [docs/LLM_LICENCE.md]
 **Prototype complete (Phase 10); Phase 11 adds a mock attendance device and a scheduler;
 Phase 12 adds auto-resolve with undo and the "resolved without a human" metric;
 Phase 13 adds the no-reply escalation ladder; Phase 14 adds the Activity Center and the
-generated Autonomy Table.**
+generated Autonomy Table. Phase 15 adds the operations dashboard.**
 See [docs/PROGRESS.md](docs/PROGRESS.md), and
 [docs/DEMO_WALKTHROUGH.md](docs/DEMO_WALKTHROUGH.md) for the click-by-click demo.
 
@@ -261,6 +261,19 @@ enforced in the API (`GET /api/activity`, `/api/activity/summary`, `/api/autonom
 feed never shows prompts, keys, tool outputs or model diagnostics. The **Autonomy** tab
 shows the table above. Walkthrough: section 9 of
 [docs/DEMO_WALKTHROUGH.md](docs/DEMO_WALKTHROUGH.md).
+
+## Operations dashboard (Phase 15)
+
+Open **Operations dashboard** from `/admin` for all teams or `/supervisor` for your team.
+`GET /api/dashboard` is read-only and returns 403 for workers. The page shows active cases
+by severity, status and policy, no-reply stages, aging, supervisor workloads, weekly overtime
+risk, and the existing auto-resolve metric.
+
+From and To filter by exception date. Case aging uses the workflow clock, and the overtime
+forecast uses the week at the engine's data cutoff and the P5 limit from `data/policy.json`.
+Set `OVERTIME_WARNING_MARGIN_HOURS` to change how many hours below the P5 limit a forecast
+appears (default 4). The dashboard only reports attendance hours. See section 10 of the
+[demo walkthrough](docs/DEMO_WALKTHROUGH.md) for the punch, reminder and undo sequence.
 
 From `frontend/`, run `npm test`, `npm run typecheck`, and `npm run build`.
 Run `npm run api:generate` after backend API changes to refresh the generated

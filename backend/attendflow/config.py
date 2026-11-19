@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_AS_OF = "2026-04-16T08:00:00"
+DEFAULT_OVERTIME_WARNING_MARGIN_HOURS = 4.0
 DEFAULT_DATABASE_URL = "postgresql+psycopg://attendflow:attendflow@localhost:5433/attendflow"
 
 
@@ -60,8 +61,12 @@ class Settings:
     no_reply_reminder_hours: float = 8
     no_reply_supervisor_hours: float = 24
     no_reply_admin_hours: float = 24
+    overtime_warning_margin_hours: float = DEFAULT_OVERTIME_WARNING_MARGIN_HOURS
 
     def __post_init__(self) -> None:
+        margin = self.overtime_warning_margin_hours
+        if not isfinite(margin) or margin <= 0:
+            raise ValueError("OVERTIME_WARNING_MARGIN_HOURS must be positive and finite")
         ladder = (
             self.no_reply_reminder_hours,
             self.no_reply_supervisor_hours,
@@ -126,6 +131,9 @@ def get_settings(env_file: Path | None = REPO_ROOT / ".env") -> Settings:
         no_reply_reminder_hours=float(os.getenv("NO_REPLY_REMINDER_HOURS") or 8),
         no_reply_supervisor_hours=float(os.getenv("NO_REPLY_SUPERVISOR_HOURS") or 24),
         no_reply_admin_hours=float(os.getenv("NO_REPLY_ADMIN_HOURS") or 24),
+        overtime_warning_margin_hours=float(
+            os.getenv("OVERTIME_WARNING_MARGIN_HOURS") or DEFAULT_OVERTIME_WARNING_MARGIN_HOURS
+        ),
     )
 
 

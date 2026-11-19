@@ -289,3 +289,55 @@ select { font: inherit; padding: 0.55rem 0.6rem; border: 1px solid #aebfb3; bord
   .feed-row { grid-template-columns: 1fr; }
   .admin-split.with-detail { grid-template-columns: 1fr; }
 }
+
+/* Operations dashboard */
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 1rem;
+}
+.dashboard-panel { min-width: 0; }
+.dashboard-panel h2 { margin-top: 0; }
+.dashboard-panel h3 { font-size: 1rem; margin-bottom: .45rem; }
+.dashboard-timestamp { font-size: .875rem; }
+.dashboard-bars { list-style: none; padding: 0; margin: 0; }
+.dashboard-bars li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: .2rem .6rem;
+  margin-block: .45rem;
+}
+.dashboard-bar-track {
+  grid-column: 1 / -1;
+  height: .35rem;
+  background: #dfe6df;
+  border-radius: .25rem;
+  overflow: hidden;
+}
+.dashboard-bar-track > span { display: block; height: 100%; background: #327454; }
+.dashboard-table { border-collapse: collapse; width: 100%; font-size: .9rem; }
+.dashboard-table th, .dashboard-table td {
+  border-bottom: 1px solid #dfe6df;
+  padding: .5rem .3rem;
+  text-align: right;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.dashboard-table th:first-child { text-align: left; }
+.dashboard-risk { display: block; font-weight: 400; }
+.dashboard-metric > a { display: inline-block; margin-top: .35rem; }
+@media (max-width: 740px) {
+  .dashboard-grid { grid-template-columns: minmax(0, 1fr); }
+}
+@media (prefers-color-scheme: dark) {
+  :root:has(.dashboard) { color-scheme: dark; background: #15231d; color: #edf4ee; }
+  .dashboard-header, .dashboard .panel { background: #1e3329; border-color: #466253; color: #edf4ee; }
+  .dashboard .filters { background: #1e3329; border-color: #466253; }
+  .dashboard a, .dashboard .hint, .dashboard .lede, .dashboard .metric-percent { color: #afe4c6; }
+  .dashboard .error { color: #ffb4ad; }
+  .dashboard input, .dashboard button.secondary { background: #243b30; border-color: #759384; color: #edf4ee; }
+  .dashboard-bar-track { background: #385244; }
+  .dashboard-bar-track > span { background: #87cdaa; }
+  .dashboard-table th, .dashboard-table td { border-color: #466253; }
+}

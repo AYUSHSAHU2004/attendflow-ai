@@ -1,5 +1,5 @@
 import { type FormEvent, useEffect, useState } from 'react'
-import { reviewers, supervisorActor } from './actors'
+import { reviewers, supervisorActor, teamDashboardHref } from './actors'
 import {
   ApiError,
   approveCase,
@@ -646,7 +646,7 @@ export function SupervisorPage() {
       <h1>Decisions</h1>
       <p className="lede">
         Signed in as {supervisorActor.name} ({supervisorActor.id}) ·{' '}
-        {/* Dev builds keep the acting reviewer; the Phase 15 role switcher replaces this. */}
+        <a href={teamDashboardHref}>Operations dashboard</a> ·{' '}
         <a href={import.meta.env.DEV ? `/activity?as=${supervisorActor.id}` : '/activity'}>Team activity</a>
       </p>
       {notice && <p role="status" className="notice">{notice}</p>}

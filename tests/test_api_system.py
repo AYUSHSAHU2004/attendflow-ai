@@ -41,6 +41,7 @@ EXPECTED_PATHS = {
     ("get", "/api/activity"),  # Phase 14
     ("get", "/api/activity/summary"),
     ("get", "/api/autonomy"),
+    ("get", "/api/dashboard"),
     ("get", "/api/audit-log"),
     ("get", "/api/tool-calls"),
     ("get", "/api/worker/messages"),

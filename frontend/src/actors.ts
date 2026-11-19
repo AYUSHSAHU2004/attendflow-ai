@@ -1,5 +1,4 @@
-// Local demo identity: the one place that says who is acting. The Phase 15 role switcher
-// replaces this module.
+// Local demo identity: the one place that says who is acting.
 export type Actor = { id: string; name: string }
 
 const defaultWorker: Actor = { id: 'E001', name: 'Amit Verma' }
@@ -55,3 +54,13 @@ export const workerActor: Actor = import.meta.env.DEV ? workerFor(search, true) 
 // The Activity Center (/activity, Phase 14) acts as Priya, who sees everything. Dev builds
 // only: `?as=E101` (or E102) shows a supervisor's team-only view. The API enforces the scope.
 export const activityActor: Actor = adminActor
+
+export const supervisorDashboardPath = '/supervisor/dashboard'
+export const dashboardActor: Actor =
+  typeof window !== 'undefined' && window.location.pathname === supervisorDashboardPath
+    ? supervisorActor
+    : adminActor
+
+export const teamDashboardHref = import.meta.env.DEV
+  ? `${supervisorDashboardPath}?as=${supervisorActor.id}`
+  : supervisorDashboardPath

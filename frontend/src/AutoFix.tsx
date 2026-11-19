@@ -54,6 +54,10 @@ export function AutoResolveMetricLine({ refresh }: { refresh: number }) {
 
   if (error) return <p role="alert" className="error metric-line">{error}</p>
   if (!metric) return null
+  return <AutoResolveSummary metric={metric} />
+}
+
+export function AutoResolveSummary({ metric }: { metric: AutoResolveMetric }) {
   const x = metric.resolved_without_human
   const y = metric.needed_handling
   return (

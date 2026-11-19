@@ -384,6 +384,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/dashboard": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read-only operations dashboard for payroll admins and supervisors
+         * @description Supervisors only see their own team. Optional dates filter exception dates. Overtime always covers the engine's current week.
+         */
+        get: operations["operations_dashboard_api_dashboard_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/exceptions": {
         parameters: {
             query?: never;
@@ -980,7 +1000,7 @@ export interface components {
             /** Severities */
             severities: ("low" | "medium" | "high")[];
             /** No Reply */
-            no_reply?: ("any" | "reminded" | "supervisor" | "payroll_admin")[];
+            no_reply?: ("any" | "reminded" | "supervisor" | "payroll_admin" | "waiting")[];
         };
         /** AdminJobOut */
         AdminJobOut: {
@@ -1675,6 +1695,103 @@ export interface components {
             to_supervisor?: string[];
             /** To Admin */
             to_admin?: string[];
+        };
+        /** DashboardAgingOut */
+        DashboardAgingOut: {
+            /** Limits Hours */
+            limits_hours: number[];
+            /** Case Age */
+            case_age: number[];
+            /** Waiting Age */
+            waiting_age: number[];
+        };
+        /** DashboardOut */
+        DashboardOut: {
+            /**
+             * Scope
+             * @enum {string}
+             */
+            scope: "all" | "team";
+            /**
+             * Workflow Now
+             * Format: date-time
+             */
+            workflow_now: string;
+            /** Active Total */
+            active_total: number;
+            /** Stuck */
+            stuck: number;
+            /** By Status */
+            by_status: {
+                [key: string]: number;
+            };
+            /** By Severity */
+            by_severity: {
+                [key: string]: number;
+            };
+            /** By Policy */
+            by_policy: {
+                [key: string]: number;
+            };
+            /** Ladder */
+            ladder: {
+                [key: string]: number;
+            };
+            aging: components["schemas"]["DashboardAgingOut"];
+            /** Workload */
+            workload: components["schemas"]["DashboardWorkloadOut"][];
+            overtime: components["schemas"]["DashboardOvertimeOut"];
+            auto_resolve: components["schemas"]["AutoResolveMetricOut"];
+        };
+        /** DashboardOvertimeOut */
+        DashboardOvertimeOut: {
+            /**
+             * Week Start
+             * Format: date
+             */
+            week_start: string;
+            /**
+             * Week End
+             * Format: date
+             */
+            week_end: string;
+            /** Limit Hours */
+            limit_hours: number;
+            /** Warning Margin Hours */
+            warning_margin_hours: number;
+            /** Workers */
+            workers: components["schemas"]["DashboardOvertimeWorkerOut"][];
+        };
+        /** DashboardOvertimeWorkerOut */
+        DashboardOvertimeWorkerOut: {
+            /** Employee Id */
+            employee_id: string;
+            /** Employee Name */
+            employee_name: string;
+            /** Worked Hours */
+            worked_hours: number;
+            /** Scheduled Remaining Hours */
+            scheduled_remaining_hours: number;
+            /** Projected Hours */
+            projected_hours: number;
+            /**
+             * Level
+             * @enum {string}
+             */
+            level: "approaching" | "at_limit" | "projected_over" | "already_over";
+        };
+        /** DashboardWorkloadOut */
+        DashboardWorkloadOut: {
+            /** Supervisor Id */
+            supervisor_id: string | null;
+            /** Supervisor Name */
+            supervisor_name: string;
+            /** Active */
+            active: number;
+            /** Awaiting Worker */
+            awaiting_worker: number;
+            /** Awaiting Supervisor */
+            awaiting_supervisor: number;
         };
         /** DemoClockIn */
         DemoClockIn: {
@@ -4142,6 +4259,50 @@ export interface operations {
             };
         };
     };
+    operations_dashboard_api_dashboard_get: {
+        parameters: {
+            query?: {
+                date_from?: string | null;
+                date_to?: string | null;
+            };
+            header: {
+                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
+                "X-Actor-Id": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DashboardOut"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     admin_exceptions_api_admin_exceptions_get: {
         parameters: {
             query?: {
@@ -4151,8 +4312,13 @@ export interface operations {
                 employee_id?: string | null;
                 severity?: ("low" | "medium" | "high") | null;
                 q?: string | null;
-                /** @description Cases the no-reply ladder touched (any) or at one stage */
-                no_reply?: ("any" | "reminded" | "supervisor" | "payroll_admin") | null;
+                /** @description Cases the no-reply ladder touched, at one stage, or before the reminder */
+                no_reply?: ("any" | "reminded" | "supervisor" | "payroll_admin" | "waiting") | null;
+                active_only?: boolean;
+                auto_resolved?: boolean | null;
+                supervisor_id?: string | null;
+                date_from?: string | null;
+                date_to?: string | null;
                 sort?: "severity" | "date" | "employee" | "updated";
                 limit?: number;
                 offset?: number;

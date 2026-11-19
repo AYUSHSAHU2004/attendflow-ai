@@ -82,7 +82,7 @@ Center + Autonomy Table (generated, anti-drift tests).
 12. Auto-resolve + undo
 13. No-reply escalation
 14. Activity Center + autonomy table
-15. Role switcher + Priya dashboard
+15. Operations dashboard for Priya and supervisors
 16. Payroll readiness
 17. Briefing + Amit mobile + summary
 18. Settings backend
@@ -93,17 +93,17 @@ Center + Autonomy Table (generated, anti-drift tests).
 23. Tests + evaluation
 24. Delivery
 
-**Next: Phase 15.**
+Phase 15 operations dashboard is implemented. Its full verification is tracked in
+[docs/PROGRESS.md](docs/PROGRESS.md). Phase 16 (payroll readiness) is next after verification.
 
 **Carry-over notes**
 - Phase 5 Groq bug: `run_checks` advertised Pydantic's RFC 3339 `date-time` format for
   timezone-free local timestamps. Groq rejected minute-precision values with HTTP 400.
   The schema now advertises the app's local time patterns; the registry tests check
   every tool schema recursively for unsupported formats and schema references.
-- Phase 15 (role switcher): replace `frontend/src/actors.ts` (the only place that names
-  the acting user, including the dev-only `?as=` override). `/activity` acts as Priya
-  (`activityActor`); a supervisor's team-only view needs `?as=E101` in dev until then, and
-  the `/supervisor` "Team activity" link adds it in dev builds only.
+- Phase 15 kept the demo actors in `frontend/src/actors.ts` and deferred a role switcher.
+  Priya opens `/dashboard`, supervisors open `/supervisor/dashboard`, and dev links carry
+  the current reviewer via `?as=`. The API scopes counts and forecasts to that reviewer's team.
 - Any phase that adds an audit action: add its row to `activity/autonomy.py` first (tests
   fail otherwise), then `python -m uv run attendflow-autonomy --write-readme`.
 - **Phase 22 checklist (deployment):**
@@ -145,6 +145,9 @@ Center + Autonomy Table (generated, anti-drift tests).
     reasons and a worker's free-text "No" reply to payroll and the team's supervisor.
   - Phase 14: the supervisor case card now opens read-only for any case of the
     supervisor's own team (`can_decide` false); decisions still need the assignee.
+  - Phase 15: tie `GET /api/dashboard` and both dashboard routes to authenticated reviewer
+    identities. Review `OVERTIME_WARNING_MARGIN_HOURS` (default 4, positive) and the P5
+    weekly hours limit in `policy.json` before deploying.
 
 ## Decisions so far (do not re-ask)
 
@@ -358,7 +361,7 @@ Center + Autonomy Table (generated, anti-drift tests).
   it to the supervisor.
 - The Vite inbox is at `/`. The `/dev` page polls the 202 investigation job,
   then can send a worker question. Review the dev page and its fixed demo
-  actors in **Phase 15 (role switcher)** and **Phase 22 (deployment)**.
+  actors in **Phase 22 (deployment)**.
 - `frontend/src/api.generated.ts` comes from FastAPI OpenAPI. Refresh it with
   `npm run api:generate` from `frontend/`. CI checks drift, runs component
   tests and type-checking, and builds the frontend.
@@ -755,3 +758,17 @@ curl -X POST localhost:8000/api/admin/demo/clock -H "X-Actor-Id: E201" -H "Conte
 curl -X POST localhost:8000/api/admin/scheduler/run-now -H "X-Actor-Id: E201"
 python -m uv run ruff check . && python -m uv run ruff format --check .
 ```
+
+**Operations dashboard (Phase 15)**
+- Backend: `cases/dashboard.py` composes the read-only snapshot, `cases/selection.py` holds
+  shared case filters, and the API uses a PostgreSQL read-only transaction with a consistent
+  snapshot. It reuses admin counters, the Phase 12 metric, and the engine's `week_hours`.
+- Frontend: `DashboardPage.tsx` serves Priya and supervisor views with labeled CSS bars and
+  tables. Priya's links open matching filters on `/admin`, including exception dates.
+  Supervisors can return to their decision queue.
+- Active work comprises open, awaiting worker, awaiting supervisor and escalated cases.
+  Age uses the workflow clock and the first detection or current waiting status timestamp.
+  Overtime always uses the Monday–Sunday week at the engine data cutoff. A configurable
+  positive `OVERTIME_WARNING_MARGIN_HOURS` defaults to 4. Forecast hours and limits use P5.
+- The dashboard has no audit actions. Activity still counts historical events by workflow
+  date. The dashboard reports current case state by exception date.
