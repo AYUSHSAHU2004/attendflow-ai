@@ -23,6 +23,7 @@ unscheduled shift, once the maximum shift length in P15 has passed since the clo
 **Allowed fixes:** Add the missing punch at the time the worker confirms, or at the
 scheduled shift end if the worker confirms they left on time. The supervisor must approve.
 The worker is asked first.
+If the worker does not reply in time, the supervisor may decide on the evidence.
 
 ## P2: Duplicate punches are merged
 
@@ -47,6 +48,7 @@ clock-out, minus breaks. More than 9 hours is a breach.
 
 **Allowed fixes:** The supervisor confirms the extra hours were authorised (they stay as
 overtime) or corrects a wrong punch. Hours are never removed without the worker being told.
+If the worker does not reply in time, the supervisor may decide on the evidence.
 
 ## P4: Break required on long shifts
 
@@ -61,6 +63,7 @@ less than 30 minutes, the shift breaches this policy.
 **Allowed fixes:** If the worker confirms they took a break but did not punch it, add the
 break punches as confirmed. If no break was taken, the supervisor records the breach and
 notes follow-up. Missed breaks are never hidden.
+If the worker does not reply in time, the supervisor may decide on the evidence.
 
 ## P5: Weekly overtime threshold
 
@@ -135,6 +138,7 @@ Rejected leave is ignored. Half-day leave is handled by P13 instead.
 
 **Allowed fixes:** Cancel the leave (the day becomes a worked day and the balance is
 restored) or void the punches if they were made by mistake. The worker is asked first.
+If the worker does not reply in time, the supervisor may decide on the evidence.
 
 ## P10: Unexplained absence
 
@@ -191,6 +195,7 @@ half-day leave day. A short day with no leave on file is a P7 case, not P13.
 **Allowed fixes:** Cancel the half-day leave (restoring the balance) if the worker worked the
 full day, or correct the punches. If the working half is missing, record a full day of leave
 or unpaid hours. The worker is asked first.
+If the worker does not reply in time, the supervisor may decide on the evidence.
 
 ## P14: Holiday work earns holiday pay or comp-off
 

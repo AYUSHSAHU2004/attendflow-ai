@@ -7,8 +7,11 @@ or not at all.
 Who may act: the person in `assigned_to` (it always names whose turn it is):
 - open / awaiting_supervisor -> the worker's supervisor
 - awaiting_worker            -> the worker
-- escalated                  -> the payroll admin after a supervisor reject (or the
-                                supervisor after a no-reply escalation, Phase 13)
+- escalated                  -> the payroll admin (after a supervisor reject or escalate,
+                                or the no-reply ladder, Phase 13)
+
+Two times (Phase 13, clock.py): rows are stamped with clock.now(); every data cut-off
+(detection, fixes, worker time checks) uses data_as_of(clock), which never moves.
 """
 
 from __future__ import annotations
@@ -22,7 +25,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from attendflow.cases import time_extraction, time_review
+from attendflow.cases import no_reply, time_extraction, time_review
 from attendflow.cases.facts import CONTENT_FIELDS
 from attendflow.cases.supervisor import require_reviewer, time_label
 from attendflow.cases.transitions import WAITING, check_transition
@@ -31,7 +34,7 @@ from attendflow.cases.worker_message import (
     validate_worker_message,
     worker_facts,
 )
-from attendflow.clock import Clock
+from attendflow.clock import Clock, data_as_of
 from attendflow.config import Settings
 from attendflow.db.dataset import load_dataset_from_db
 from attendflow.db.models import AuditLogRow, EmployeeRow, ExceptionRow, WorkerMessageRow
@@ -233,7 +236,7 @@ def run_detection(
         ds = load_dataset_from_db(session)
         if not ds.employees:
             raise ConflictError("no data loaded: call POST /api/seed first", code="not_seeded")
-        as_of = clock.now()
+        as_of = data_as_of(clock)
         result = run_engine(ds, policy, as_of)
         found = [
             e for e in result.exceptions if scope is None or scope.covers(e.employee_id, e.date)
@@ -405,7 +408,7 @@ def _auto_resolve(session: Session, row: ExceptionRow, policy: PolicyConfig, clo
         raise ConflictError(f"{row.id} was undone by a person", code="auto_resolve_undone")
     before = _state(row)
     basis = (row.details.get("auto_resolve") or {}).get("basis")
-    fix = apply_auto_resolve(session, row, policy, clock.now())
+    fix = apply_auto_resolve(session, row, policy, data_as_of(clock))
     check_transition(row.status, "resolved", action="auto_resolve")
     _set_status(row, "resolved", clock, row.assigned_to)
     row.auto_resolved = True
@@ -509,7 +512,7 @@ def undo_auto_resolve(
                         code="undo_conflict",
                         details={"later_fixes": later},
                     )
-            changes = apply_undo(session, row, policy, clock.now())
+            changes = apply_undo(session, row, policy, data_as_of(clock))
             before = _state(row)
             worker = session.get(EmployeeRow, row.employee_id)
             _set_status(row, "open", clock, worker.supervisor_id if worker else row.assigned_to)
@@ -583,6 +586,47 @@ def _find_option(row: ExceptionRow, option_id: str) -> dict[str, Any]:
     )
 
 
+MIN_WITHOUT_WORKER_REASON = 10
+
+
+def _without_worker_check(
+    row: ExceptionRow, option: dict, reason: str | None, confirm_time: bool
+) -> dict[str, Any]:
+    """Phase 13: deciding without the worker is allowed only after the ladder brought a
+    reviewer in (stage 2 or 3), with a reason, and with an explicit tick for a time."""
+    stage = row.no_reply_stage or no_reply.NONE
+    if stage < no_reply.WITH_SUPERVISOR:
+        raise ConflictError(
+            "deciding without the worker is possible only after the worker missed the reply "
+            "deadline and the case came to you",
+            code="no_reply_not_escalated",
+            details={"no_reply_stage": stage},
+        )
+    text = (reason or "").strip()
+    if len(text) < MIN_WITHOUT_WORKER_REASON:
+        raise InvalidFixError(
+            f"give a reason of at least {MIN_WITHOUT_WORKER_REASON} characters for deciding "
+            "without the worker",
+            code="reason_required",
+        )
+    if option["action"] in time_review.TIME_ACTIONS and not confirm_time:
+        raise InvalidFixError(
+            "tick “I'm confirming this time without the worker's reply” to set a punch time",
+            code="time_confirmation_required",
+        )
+    return {
+        "reason": text,
+        "no_reply_stage": stage,
+        "hours_without_reply": no_reply.hours_text(
+            (row.no_reply_admin_at or row.no_reply_supervisor_at) - no_reply.wait_start(row)
+        )
+        if row.no_reply_supervisor_at and no_reply.wait_start(row)
+        else None,
+        "time": None,
+        "time_source": None,
+    }
+
+
 def approve(
     session: Session,
     policy: PolicyConfig,
@@ -593,9 +637,17 @@ def approve(
     option_id: str,
     reason: str | None = None,
     params: dict[str, Any] | None = None,
+    without_worker: bool = False,
+    confirm_time_without_worker: bool = False,
 ) -> ExceptionRow:
     """Approve one fix option (edit = approve with changed params). Applies the data change,
-    resolves the exception and writes the audit row in one transaction."""
+    resolves the exception and writes the audit row in one transaction.
+
+    `without_worker` (Phase 13): decide on the evidence after the worker missed the reply
+    deadline (no-reply stage 2 or 3 only). It needs a reason of MIN_WITHOUT_WORKER_REASON+
+    characters; an option that sets a punch time also needs `confirm_time_without_worker`.
+    The worker-confirmation check is skipped, never the time validation, and the fix is
+    still applied by fixes/apply.py. Audited as its own `decided_without_worker` row."""
     edited = params is not None
     action_name = "edit" if edited else "approve"
     with session.begin():
@@ -618,17 +670,29 @@ def approve(
         except FixParamsError as exc:
             raise InvalidFixError(str(exc), code="invalid_params", details=exc.errors) from exc
 
-        if row.policy_id == "P1" and option["action"] == "set_clock_out" and edited:
+        without = None
+        if without_worker:
+            without = _without_worker_check(row, option, reason, confirm_time_without_worker)
+            stamp = params_json(parsed).get("timestamp")
+            if option["action"] in time_review.TIME_ACTIONS and stamp:
+                without["time"] = stamp
+                prefilled = (default_params or {}).get("timestamp")
+                same = bool(prefilled) and datetime.fromisoformat(
+                    str(prefilled)
+                ) == datetime.fromisoformat(str(stamp))
+                without["time_source"] = "prefilled" if same else "edited"
+        if row.policy_id == "P1" and option["action"] == "set_clock_out" and (edited or without):
             proposed_stamp = datetime.fromisoformat(params_json(parsed)["timestamp"])
-            ctx = time_review.context(session, row, policy, clock.now())
-            if proposed_stamp > clock.now():
+            ctx = time_review.context(session, row, policy, data_as_of(clock))
+            if proposed_stamp > data_as_of(clock):
                 raise InvalidFixError("the punch time is in the future", code="punch_in_future")
             if ctx is not None:
                 try:
                     ctx.resolve(proposed_stamp.strftime("%H:%M"), proposed_stamp.date())
                 except ValueError as exc:
                     raise InvalidFixError(str(exc), code="punch_outside_shift") from None
-        _require_worker_confirmation(session, row, option)
+        if without is None:
+            _require_worker_confirmation(session, row, option)
         if row.policy_id == "P1" and confirmed_params is not None:
             # Phase 8: a P1 time is approved as the worker confirmed it; a new time needs
             # the worker again. (P3 corrections may still be edited after a Yes.)
@@ -639,7 +703,7 @@ def approve(
                     details={"confirmed_timestamp": confirmed_params.get("timestamp")},
                 )
         before = {**_state(row), "option_id": option_id, "params": default_params}
-        changes = apply_fix(session, row, option["action"], parsed, policy, clock.now())
+        changes = apply_fix(session, row, option["action"], parsed, policy, data_as_of(clock))
         _set_status(row, "resolved", clock, row.assigned_to)
         row.applied_fix = {
             "option_id": option_id,
@@ -651,6 +715,9 @@ def approve(
             "approved_by": actor.employee_id,
             "params_before": default_params,
         }
+        if without is not None:
+            without["decided_at"] = clock.now().isoformat()
+            row.applied_fix["without_worker"] = without
         _audit(
             session,
             clock,
@@ -662,6 +729,17 @@ def approve(
             after={**_state(row), "applied_fix": row.applied_fix},
             reason=reason,
         )
+        if without is not None:
+            _audit(
+                session,
+                clock,
+                exception_id=row.id,
+                actor=ROLE_TO_ACTOR[actor.role],
+                actor_id=actor.employee_id,
+                action="decided_without_worker",
+                after={"option_id": option_id, **without},
+                reason=reason,
+            )
     log.info(
         "fix approved",
         extra={
@@ -866,6 +944,42 @@ def reject(
     return row
 
 
+MIN_ESCALATE_REASON = 10
+
+
+def escalate(
+    session: Session, clock: Clock, *, exception_id: str, actor_id: str, reason: str
+) -> ExceptionRow:
+    """Phase 13: the supervisor sends a case to the payroll admin without rejecting the
+    fix ("I can't decide this"). Only the assignee; no data changes."""
+    with session.begin():
+        actor = require_reviewer(session, actor_id)
+        row = _get_for_update(session, exception_id)
+        check_transition(row.status, "escalated", action="escalate")
+        _require_assignee(row, actor, "escalate")
+        admin = _payroll_admin(session)
+        if actor.employee_id == admin.employee_id:
+            raise ConflictError("the payroll admin decides escalated cases", code="already_payroll")
+        before = {**_state(row), "no_reply_stage": row.no_reply_stage}
+        _set_status(row, "escalated", clock, admin.employee_id)
+        _audit(
+            session,
+            clock,
+            exception_id=row.id,
+            actor=ROLE_TO_ACTOR[actor.role],
+            actor_id=actor.employee_id,
+            action="escalate_to_admin",
+            before=before,
+            after=_state(row),
+            reason=reason,
+        )
+    log.info(
+        "exception escalated",
+        extra={"event": "escalate_to_admin", "exception_id": exception_id, "actor_id": actor_id},
+    )
+    return row
+
+
 def _worker_handoff(session: Session, row: ExceptionRow, actor_id: str | None) -> EmployeeRow:
     """actor_id None = the scheduler acting as "system" (no reviewer or assignee check; the
     investigation's code-owned route must still say the worker is next)."""
@@ -915,9 +1029,10 @@ def ask_worker(
             raise ConflictError(
                 "the case changed while preparing the question", code="case_changed"
             )
-        before = _state(row)
+        before = {**_state(row), "no_reply_stage": row.no_reply_stage}
         _set_status(row, "awaiting_worker", clock, row.employee_id)
         row.worker_recheck = None
+        no_reply.start_wait(row, clock.now())  # a new question = a new wait (Phase 13)
         message = WorkerMessageRow(
             exception_id=row.id,
             recipient_id=row.employee_id,
@@ -957,7 +1072,10 @@ def ask_worker(
     return row
 
 
-def worker_inbox(session: Session, actor_id: str) -> list[WorkerMessageRow]:
+def worker_inbox(session: Session, actor_id: str, clock: Clock) -> dict[str, Any]:
+    """Open questions (with the reminder, if one was sent) plus plain notices: a question
+    the supervisor now reviews (still answerable), one payroll now handles (closed), and
+    a case decided without the worker's reply (Phase 13)."""
     actor = _actor(session, actor_id)
     if actor.role != "worker":
         raise ForbiddenError("only a worker can read their inbox", code="worker_inbox_only")
@@ -967,20 +1085,76 @@ def worker_inbox(session: Session, actor_id: str) -> list[WorkerMessageRow]:
         .group_by(WorkerMessageRow.exception_id)
         .correlate(None)
     )
-    return list(
-        session.scalars(
-            select(WorkerMessageRow)
-            .join(ExceptionRow, WorkerMessageRow.exception_id == ExceptionRow.id)
-            .where(
-                WorkerMessageRow.id.in_(latest_per_case),
-                WorkerMessageRow.confirmed.is_not(True),
-                ExceptionRow.employee_id == actor_id,
-                ExceptionRow.assigned_to == actor_id,
-                ExceptionRow.status == "awaiting_worker",
-            )
-            .order_by(WorkerMessageRow.date, WorkerMessageRow.id)
-        )
+    waiting_for_worker = (ExceptionRow.status == "awaiting_worker") & (
+        ExceptionRow.assigned_to == actor_id
     )
+    late_allowed = (ExceptionRow.status == "awaiting_supervisor") & (
+        ExceptionRow.no_reply_stage == no_reply.WITH_SUPERVISOR
+    )
+    rows = session.execute(
+        select(WorkerMessageRow, ExceptionRow)
+        .join(ExceptionRow, WorkerMessageRow.exception_id == ExceptionRow.id)
+        .where(
+            WorkerMessageRow.id.in_(latest_per_case),
+            WorkerMessageRow.confirmed.is_not(True),
+            ExceptionRow.employee_id == actor_id,
+            waiting_for_worker | late_allowed,
+        )
+        .order_by(WorkerMessageRow.date, WorkerMessageRow.id)
+    ).all()
+    items = [
+        {
+            "exception_id": m.exception_id,
+            "date": m.date,
+            "message": m.message,
+            "reply_prompt": m.reply_prompt,
+            "needs_actual_time": m.needs_actual_time,
+            "time_review": m.time_review,
+            "reminder": (
+                {"text": m.reminder_text, "sent_at": m.reminded_at} if m.reminded_at else None
+            ),
+            "status_note": (
+                no_reply.WITH_SUPERVISOR_NOTE if row.status == "awaiting_supervisor" else None
+            ),
+        }
+        for m, row in rows
+    ]
+    notices = []
+    cases = session.scalars(
+        select(ExceptionRow)
+        .where(
+            ExceptionRow.employee_id == actor_id,
+            ExceptionRow.status.in_(("resolved", "escalated")),
+        )
+        .order_by(ExceptionRow.date, ExceptionRow.id)
+    ).all()
+    for row in cases:
+        without = (row.applied_fix or {}).get("without_worker")
+        if row.status == "resolved" and without:
+            notices.append(
+                {
+                    "exception_id": row.id,
+                    "date": row.date,
+                    "kind": "decided_without_reply",
+                    "title": no_reply.DECIDED_NOTE,
+                    "text": f"{row.applied_fix.get('label')}.",
+                    "reason": without.get("reason"),
+                    "at": without.get("decided_at"),
+                }
+            )
+        elif row.status == "escalated" and (row.no_reply_stage or 0) >= no_reply.WITH_SUPERVISOR:
+            notices.append(
+                {
+                    "exception_id": row.id,
+                    "date": row.date,
+                    "kind": "with_payroll",
+                    "title": "With payroll",
+                    "text": no_reply.WITH_PAYROLL_NOTE,
+                    "reason": None,
+                    "at": row.no_reply_admin_at or row.updated_at,
+                }
+            )
+    return {"items": items, "notices": notices}
 
 
 def _worker_question(
@@ -992,7 +1166,12 @@ def _worker_question(
     row = session.get(ExceptionRow, exception_id, with_for_update=True)
     if row is None or actor.role != "worker" or actor_id != row.employee_id:
         raise ForbiddenError("only the recipient can reply to this question", code="not_the_worker")
-    if row.status != "awaiting_worker":
+    # Phase 13: after the ladder brought the supervisor in, the worker may still answer
+    # (a late reply resumes the normal flow). Once payroll has it, the question is closed.
+    late = row.status == "awaiting_supervisor" and row.no_reply_stage == no_reply.WITH_SUPERVISOR
+    if row.status == "escalated" and (row.no_reply_stage or 0) >= no_reply.WITH_SUPERVISOR:
+        raise ConflictError(no_reply.WITH_PAYROLL_NOTE, code="handled_by_payroll")
+    if row.status != "awaiting_worker" and not late:
         raise InvalidTransitionError(
             f"worker_reply: {row.id} is {row.status}, not waiting for the worker",
             details={
@@ -1001,7 +1180,8 @@ def _worker_question(
                 "allowed": ["awaiting_worker"],
             },
         )
-    _require_assignee(row, actor, "reply to")
+    if not late:
+        _require_assignee(row, actor, "reply to")
     message = session.scalar(
         select(WorkerMessageRow)
         .where(WorkerMessageRow.exception_id == row.id, WorkerMessageRow.recipient_id == actor_id)
@@ -1011,6 +1191,35 @@ def _worker_question(
     if message is None:
         raise ConflictError("there is no unanswered question", code="no_open_worker_question")
     return row, actor, message
+
+
+def _stop_ladder(
+    session: Session, clock: Clock, row: ExceptionRow, actor: EmployeeRow, stage: int, how: str
+) -> None:
+    """Audit that the worker's answer stopped the no-reply ladder (Phase 13). `stage` is
+    what no_reply.stop() returned; written after the reply's own audit row so the trail
+    reads in order. A reply after the supervisor was brought in is recorded as late."""
+    if stage == no_reply.NONE:
+        return
+    late = stage >= no_reply.WITH_SUPERVISOR
+    _audit(
+        session,
+        clock,
+        exception_id=row.id,
+        actor="system",
+        action="no_reply_ladder_stopped",
+        after={"stage_before": stage, "late": late, "reply": how},
+        reason=f"{actor.name} replied"
+        + (" late, after the supervisor was brought in" if late else " after the reminder")
+        + "; the no-reply ladder stopped.",
+    )
+
+
+def _to_supervisor(row: ExceptionRow, clock: Clock, supervisor_id: str | None, action: str) -> None:
+    """Hand the case to the supervisor. A late reply finds it there already (Phase 13)."""
+    if row.status != "awaiting_supervisor":
+        check_transition(row.status, "awaiting_supervisor", action=action)
+    _set_status(row, "awaiting_supervisor", clock, supervisor_id)
 
 
 def _handoff_confirmed_time(
@@ -1034,8 +1243,7 @@ def _handoff_confirmed_time(
         "approximate": False,
     }
     message.needs_actual_time = False
-    check_transition(row.status, "awaiting_supervisor", action="worker_time_confirmed")
-    _set_status(row, "awaiting_supervisor", clock, actor.supervisor_id)
+    _to_supervisor(row, clock, actor.supervisor_id, "worker_time_confirmed")
     _audit(
         session,
         clock,
@@ -1089,11 +1297,13 @@ def worker_reply(
         message.reply_text = text
         message.replied_at = clock.now()
         message.needs_actual_time = not confirmed
+        late = row.status == "awaiting_supervisor"
+        stopped_at = no_reply.stop(row, clock.now())
         if confirmed:
             if asked:
                 option = _find_option(row, asked["option_id"])
                 stamp = datetime.fromisoformat(asked["params"]["timestamp"])
-                review = time_review.recheck(session, row, option, stamp, policy, clock.now())
+                review = time_review.recheck(session, row, option, stamp, policy, data_as_of(clock))
                 _handoff_confirmed_time(session, row, actor, message, clock, review, "yes")
             elif row.policy_id == "P1":
                 raise ConflictError(
@@ -1101,13 +1311,16 @@ def worker_reply(
                     code="worker_time_required",
                 )
             else:
-                check_transition(row.status, "awaiting_supervisor", action="worker_reply")
-                _set_status(row, "awaiting_supervisor", clock, actor.supervisor_id)
+                _to_supervisor(row, clock, actor.supervisor_id, "worker_reply")
         else:
+            if late:  # a late No: back to the worker for the actual time (normal Phase 8)
+                check_transition(row.status, "awaiting_worker", action="worker_reply")
+                _set_status(row, "awaiting_worker", clock, actor.employee_id)
+            no_reply.start_wait(row, clock.now())  # waiting for the time = a new wait
             row.updated_at = clock.now()
             option = time_review.clock_out_option(row, asked)
             if option:
-                ctx = time_review.context(session, row, policy, clock.now())
+                ctx = time_review.context(session, row, policy, data_as_of(clock))
             if ctx:
                 message.time_review = {"stage": "manual", "approximate": False}
         _audit(
@@ -1126,6 +1339,7 @@ def worker_reply(
                 "message_id": message.id,
             },
         )
+        _stop_ladder(session, clock, row, actor, stopped_at, "yes" if confirmed else "no")
 
     if ctx is None:
         return message
@@ -1150,10 +1364,13 @@ def worker_reply(
         if row.status == "awaiting_worker" and message.needs_actual_time and extraction.timestamp:
             try:
                 option = time_review.clock_out_option(row, message.asked_fix)
-                if option is None or time_review.context(session, row, policy, clock.now()) != ctx:
+                if (
+                    option is None
+                    or time_review.context(session, row, policy, data_as_of(clock)) != ctx
+                ):
                     raise ConflictError("the shift context changed", code="case_changed")
                 preview = time_review.recheck(
-                    session, row, option, extraction.timestamp, policy, clock.now()
+                    session, row, option, extraction.timestamp, policy, data_as_of(clock)
                 )
                 check_result = preview["result"]
                 assert extraction.reply is not None
@@ -1202,7 +1419,7 @@ def submit_worker_time(
                 "this question is not waiting for an actual time", code="time_not_requested"
             )
         option = time_review.clock_out_option(row, message.asked_fix)
-        ctx = time_review.context(session, row, policy, clock.now()) if option else None
+        ctx = time_review.context(session, row, policy, data_as_of(clock)) if option else None
         if option is None or ctx is None:
             raise ConflictError("this case has no clock-out option", code="time_not_supported")
         candidate = message.time_review or {}
@@ -1222,6 +1439,8 @@ def submit_worker_time(
             stamp = ctx.resolve(time, actual_date)
         except ValueError as exc:
             raise InvalidFixError(str(exc), code="invalid_time") from None
-        review = time_review.recheck(session, row, option, stamp, policy, clock.now())
+        review = time_review.recheck(session, row, option, stamp, policy, data_as_of(clock))
+        stopped_at = no_reply.stop(row, clock.now())
         _handoff_confirmed_time(session, row, actor, message, clock, review, source, approximate)
+        _stop_ladder(session, clock, row, actor, stopped_at, "time")
     return message

@@ -1,11 +1,11 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { confirmWorkerTime, getWorkerMessages, sendReply, submitManualTime, type WorkerMessage } from './api'
+import { confirmWorkerTime, getWorkerInbox, sendReply, submitManualTime, type WorkerMessage } from './api'
 import { WorkerInbox } from './WorkerInbox'
 
 vi.mock('./api', () => ({
-  getWorkerMessages: vi.fn(),
+  getWorkerInbox: vi.fn(),
   sendReply: vi.fn(),
   confirmWorkerTime: vi.fn(),
   submitManualTime: vi.fn(),
@@ -23,7 +23,7 @@ describe('worker inbox', () => {
   beforeEach(() => vi.resetAllMocks())
 
   it('confirms Yes and removes the answered question', async () => {
-    vi.mocked(getWorkerMessages).mockResolvedValue([item])
+    vi.mocked(getWorkerInbox).mockResolvedValue({ items: [item], notices: [] })
     vi.mocked(sendReply).mockResolvedValue({
       exception_id: item.exception_id, confirmed: true, needs_actual_time: false,
     })
@@ -36,7 +36,7 @@ describe('worker inbox', () => {
   })
 
   it('sends No with text and keeps the question visible', async () => {
-    vi.mocked(getWorkerMessages).mockResolvedValue([item])
+    vi.mocked(getWorkerInbox).mockResolvedValue({ items: [item], notices: [] })
     vi.mocked(sendReply).mockResolvedValue({
       exception_id: item.exception_id, confirmed: false, needs_actual_time: true,
     })
@@ -55,14 +55,14 @@ describe('worker inbox', () => {
   })
 
   it('shows the empty inbox', async () => {
-    vi.mocked(getWorkerMessages).mockResolvedValue([])
+    vi.mocked(getWorkerInbox).mockResolvedValue({ items: [], notices: [] })
     render(<WorkerInbox />)
     expect(await screen.findByText('Nothing needs your attention')).toBeVisible()
   })
 
   it('shows a load error and retries the inbox request', async () => {
-    vi.mocked(getWorkerMessages).mockRejectedValueOnce(new Error('The inbox could not be loaded.'))
-    vi.mocked(getWorkerMessages).mockResolvedValueOnce([])
+    vi.mocked(getWorkerInbox).mockRejectedValueOnce(new Error('The inbox could not be loaded.'))
+    vi.mocked(getWorkerInbox).mockResolvedValueOnce({ items: [], notices: [] })
     const user = userEvent.setup()
     render(<WorkerInbox />)
     expect(await screen.findByRole('alert')).toHaveTextContent('The inbox could not be loaded.')
@@ -71,7 +71,7 @@ describe('worker inbox', () => {
   })
 
   it('shows the candidate after a No reply and confirms it', async () => {
-    vi.mocked(getWorkerMessages).mockResolvedValue([item])
+    vi.mocked(getWorkerInbox).mockResolvedValue({ items: [item], notices: [] })
     vi.mocked(sendReply).mockResolvedValue({
       exception_id: item.exception_id, confirmed: false, needs_actual_time: true,
       time_review: { stage: 'candidate', timestamp: '2026-04-14T19:30:00', approximate: true },
@@ -92,10 +92,10 @@ describe('worker inbox', () => {
   })
 
   it('lets the worker edit a stored candidate after reload', async () => {
-    vi.mocked(getWorkerMessages).mockResolvedValue([{
+    vi.mocked(getWorkerInbox).mockResolvedValue({ notices: [], items: [{
       ...item, needs_actual_time: true,
       time_review: { stage: 'candidate', approximate: false, timestamp: '2026-04-14T19:30:00' },
-    }])
+    }] })
     vi.mocked(submitManualTime).mockResolvedValue({
       exception_id: item.exception_id, confirmed: false, needs_actual_time: false,
       time_review: { stage: 'confirmed', approximate: false, timestamp: '2026-04-14T18:30:00' },
@@ -114,9 +114,9 @@ describe('worker inbox', () => {
   })
 
   it('asks for an exact manual time when extraction has no candidate', async () => {
-    vi.mocked(getWorkerMessages).mockResolvedValue([{
+    vi.mocked(getWorkerInbox).mockResolvedValue({ notices: [], items: [{
       ...item, needs_actual_time: true, time_review: { stage: 'manual', approximate: false },
-    }])
+    }] })
     vi.mocked(submitManualTime).mockResolvedValue({
       exception_id: item.exception_id, confirmed: false, needs_actual_time: false,
       time_review: { stage: 'confirmed', approximate: false, timestamp: '2026-04-14T18:00:00' },
@@ -129,5 +129,43 @@ describe('worker inbox', () => {
     await user.click(screen.getByRole('button', { name: 'Send time' }))
     expect(submitManualTime).toHaveBeenCalledWith(item.exception_id, { time: '18:00', actual_date: undefined })
     expect(await screen.findByText('18:00 sent to your supervisor.')).toBeVisible()
+  })
+  it('shows the reminder and that the supervisor now reviews it (still answerable)', async () => {
+    vi.mocked(getWorkerInbox).mockResolvedValue({ notices: [], items: [{
+      ...item,
+      reminder: {
+        text: "Reminder: we still need your answer about Tue 14 Apr. If we don't hear from you by Fri 17 Apr 08:00, your supervisor will review it using the records.",
+        sent_at: '2026-04-16T16:00:00',
+      },
+      status_note: 'Your supervisor is now reviewing this. You can still answer.',
+    }] })
+    render(<WorkerInbox />)
+    const reminder = await screen.findByRole('note')
+    expect(reminder).toHaveTextContent('Reminder: we still need your answer about Tue 14 Apr.')
+    expect(reminder).toHaveTextContent('your supervisor will review it using the records.')
+    expect(screen.getByText('Your supervisor is now reviewing this. You can still answer.')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Yes' })).toBeEnabled()
+  })
+
+  it('shows plain notices for cases decided without a reply or sent to payroll', async () => {
+    vi.mocked(getWorkerInbox).mockResolvedValue({ items: [], notices: [
+      {
+        exception_id: 'P1-E001-2026-04-14', date: '2026-04-14', kind: 'decided_without_reply',
+        title: 'Decided without your reply', text: 'Set clock-out to 18:00.',
+        reason: 'Worker unreachable; the gate log shows 18:00.', at: '2026-04-17T09:00:00',
+      },
+      {
+        exception_id: 'P1-E004-2026-04-15', date: '2026-04-15', kind: 'with_payroll',
+        title: 'With payroll', text: 'Payroll is handling this now. Please speak to your supervisor.',
+      },
+    ] })
+    render(<WorkerInbox />)
+    const decided = await screen.findByRole('article', { name: 'Decided without your reply' })
+    expect(decided).toHaveTextContent('Set clock-out to 18:00.')
+    expect(decided).toHaveTextContent('Reason: Worker unreachable; the gate log shows 18:00.')
+    expect(screen.getByRole('article', { name: 'With payroll' }))
+      .toHaveTextContent('Payroll is handling this now.')
+    expect(screen.getByText('No open questions')).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Yes' })).not.toBeInTheDocument()
   })
 })

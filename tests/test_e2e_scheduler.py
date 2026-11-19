@@ -132,3 +132,62 @@ def test_data_safety_with_all_three_writers(demo_client, write_log, monkeypatch)
     assert punch.status_code == 201, punch.text
     assert {e["writer"] for e in write_log} == {"seed", "apply", "ingest"}
     assert_writes_audited(demo_client, write_log)
+
+
+# ---------------------------------------------------------------- Phase 13: no reply
+
+
+def _clock(client, hours: float) -> dict:
+    r = client.post("/api/admin/demo/clock", json={"hours": hours}, headers=PRIYA)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _cycle(client) -> dict:
+    r = client.post("/api/admin/scheduler/run-now", headers=PRIYA)
+    assert r.status_code == 200, r.text
+    assert r.json()["errors"] == []
+    return r.json()["no_reply"]
+
+
+def test_silence_climbs_the_ladder_without_changing_data(demo_client, write_log):  # noqa: F811
+    """Neha clocks in and never answers: reminder, then Ravi, then Priya. Templates only
+    (no LLM key), the scheduler timer off, only HTTP. Silence writes no source data."""
+    c = demo_client
+    assert c.post("/api/seed").status_code == 200
+    assert c.post("/api/admin/demo/reset", headers=PRIYA).status_code == 200
+    assert c.post("/api/admin/demo/punch", json=NEHA_IN, headers=PRIYA).status_code == 201
+    first = c.post("/api/admin/scheduler/run-now", headers=PRIYA).json()
+    assert first["messages_sent"] == [NEHA_P1]
+    writes_before = len(write_log)
+
+    hint = _clock(c, 8)["hint"]
+    assert hint == "Run the scheduler (or wait for the next cycle) to apply."
+    assert _cycle(c)["reminded"] == [NEHA_P1]
+    [message] = c.get("/api/worker/messages", headers=NEHA).json()["items"]
+    assert message["reminder"]["text"].startswith(
+        "Reminder: we still need your answer about Wed 15 Apr."
+    )
+
+    _clock(c, 16)
+    assert _cycle(c)["to_supervisor"] == [NEHA_P1]
+    queue = c.get("/api/supervisor/queue", headers={"X-Actor-Id": "E101"}).json()["items"]
+    [item] = [i for i in queue if i["exception_id"] == NEHA_P1]
+    assert item["no_reply"]["note"] == "Neha Gupta has not replied for 24 h."
+
+    _clock(c, 24)
+    assert _cycle(c)["to_admin"] == [NEHA_P1]
+    [item] = overview(c, no_reply="payroll_admin")["items"]
+    assert (item["exception_id"], item["status"], item["assigned_to"]) == (
+        NEHA_P1,
+        "escalated",
+        "E201",
+    )
+    assert counters(c)["stuck"] == 1
+    trail = [a["action"] for a in detail(c, NEHA_P1)["audit_trail"]]
+    assert trail[-3:] == ["no_reply_reminder", "no_reply_to_supervisor", "no_reply_to_admin"]
+
+    # Amit's planted P1 was never touched; the ladder wrote no source data at all.
+    assert [a["action"] for a in detail(c, AMIT_P1)["audit_trail"]] == ["detected"]
+    assert write_log[writes_before:] == []
+    assert_writes_audited(c, write_log)

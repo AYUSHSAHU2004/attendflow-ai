@@ -1,4 +1,4 @@
-# Prototype demo walkthrough (Phase 10)
+# Demo walkthrough (Phases 10-13)
 
 The exact clicks for the prototype demo: Priya's list, Amit's missed clock-out from
 detection to approval, and the reject path. About 6 minutes.
@@ -131,6 +131,52 @@ below come from the Phase 12 live check.
    `/admin` shows **0 of 18**, "P2: 0 auto-resolved, 1 undone · P7: 0 auto-resolved,
    1 undone".
 6. Amit's P1 is untouched: still open with Ravi, only the `detected` audit row.
+
+## 8. No reply: reminder, supervisor, payroll (Phase 13)
+
+Run on a fresh reset with `ATTENDFLOW_DEMO_MODE=true` (no LLM key needed; the scheduler
+timer can stay off). The numbers come from the Phase 13 live check (separate database
+`attendflow_phase13`, API :8013, Vite :5185).
+
+1. Demo reset as E201. The scheduler panel on `/admin` shows **Clock: Thu 16 Apr 08:00**,
+   "data as of Thu 16 Apr 08:00", and the limits (reminder 8 h, supervisor 24 h, payroll
+   +24 h).
+2. Simulate punch: Neha Gupta (E004), Clock in, 15-04-2026, **08:58**, Send. Then **Run
+   scheduler now**: "1 investigated, 1 message sent". Neha's inbox (`/?as=E004`) has the
+   question. Do not answer.
+3. Click **+8 h**. The panel says "Demo clock is now Thu 16 Apr 16:00. Run the scheduler
+   (or wait for the next cycle) to apply." **Run scheduler now**: "1 reminder sent".
+   Neha's inbox shows **Reminder: we still need your answer about Wed 15 Apr. If we don't
+   hear from you by Fri 17 Apr 08:00, your supervisor will review it using the records.**
+4. Click **+8 h** twice (Fri 17 Apr 08:00), **Run scheduler now**: "1 sent to the
+   supervisor (no reply)". On `/supervisor` Ravi's queue shows Neha with **NO REPLY ·
+   24 H**; the card says "Neha Gupta has not replied for 24 h." with **Decide on the
+   evidence without Neha's reply** and **Send to payroll**. Leave it.
+5. Click **+1 day**, **Run scheduler now**: "1 sent to payroll (no reply)". `/admin`
+   shows **Stuck (no reply): 1**; click it. Neha's row: **Escalated · Needs your decision
+   · Sent to payroll · no reply · 48 h**. The detail lists each step with its time
+   (waiting since 16 Apr 08:00, reminder 16:00, supervisor 17 Apr 08:00, payroll
+   18 Apr 08:00), and every audit summary says "Nothing was changed". Neha's inbox now
+   says "With payroll. Payroll is handling this now. Please speak to your supervisor."
+6. Priya: **Open the decision card**, tick **Decide on the evidence without Neha's
+   reply**, type a reason (10+ characters), tick **I'm confirming this time without the
+   worker's reply**, **Approve without reply**. The 18:00 clock-out is written by
+   `fixes/apply.py`; detection then opens Neha's P3 and P4 (08:58 to 18:00 is just over
+   9 h). Neha's inbox shows **Decided without your reply: Set clock-out to 18:00.** with
+   the reason.
+7. Late reply: reset and repeat steps 2 to 4, then answer **Yes** in Neha's inbox (the
+   question is still there, marked "Your supervisor is now reviewing this. You can still
+   answer."). The case stays with Ravi, marked **Replied late**; moving the clock further
+   sends nothing to payroll. Answering **No** instead sends it back to Neha for the
+   actual time (normal Phase 8), with a fresh 8 h reminder clock.
+8. Amit's P1 is untouched throughout: open with Ravi, only the `detected` audit row.
+
+**Demo note: one step per cycle.** The ladder takes at most one step per case per cycle,
+so the worker always gets the reminder before anyone else is brought in. If you jump the
+clock straight to +1 day (or more) after the question, press **Run scheduler now** twice
+(or wait two cycles): the first run sends the reminder, the second brings in the
+supervisor. The steps above move the clock in smaller jumps, so one run per jump is
+enough there.
 
 ## Also worth showing
 

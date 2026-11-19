@@ -129,6 +129,16 @@ class ExceptionOut(ApiModel):
         default=None, description="Set when a person undid the auto-resolve (Phase 12)"
     )
     auto_resolve_undone_by: str | None = None
+    no_reply_stage: int = Field(
+        default=0,
+        description="No-reply ladder (Phase 13): 0 none, 1 reminder sent, 2 supervisor "
+        "brought in, 3 sent to payroll",
+    )
+    no_reply_wait_since: datetime | None = None
+    no_reply_reminded_at: datetime | None = None
+    no_reply_supervisor_at: datetime | None = None
+    no_reply_admin_at: datetime | None = None
+    no_reply_late_reply_at: datetime | None = None
     details: dict[str, Any]
     evidence: list[dict[str, Any]]
     fix_options: list[FixOptionOut]
@@ -214,6 +224,17 @@ class ToolCallListOut(ApiModel):
 class ApproveIn(RequestModel):
     option_id: str = Field(min_length=1, examples=["set_clock_out_to_scheduled_end"])
     reason: str | None = Field(default=None, max_length=1000)
+    without_worker: bool = Field(
+        default=False,
+        description="Decide on the evidence without the worker's reply (Phase 13). Only "
+        "after the no-reply ladder brought the case to you (stage 2 or 3); needs a reason of "
+        "at least 10 characters",
+    )
+    confirm_time_without_worker: bool = Field(
+        default=False,
+        description="Required with without_worker for an option that sets a punch time: "
+        "\"I'm confirming this time without the worker's reply\"",
+    )
 
 
 class EditIn(RequestModel):
@@ -224,6 +245,17 @@ class EditIn(RequestModel):
         examples=[{"timestamp": "2026-04-14T17:30"}],
     )
     reason: str = Field(min_length=3, max_length=1000, examples=["Amit left at 17:30"])
+    without_worker: bool = Field(
+        default=False,
+        description="Decide on the evidence without the worker's reply (Phase 13). Only "
+        "after the no-reply ladder brought the case to you (stage 2 or 3); needs a reason of "
+        "at least 10 characters",
+    )
+    confirm_time_without_worker: bool = Field(
+        default=False,
+        description="Required with without_worker for an option that sets a punch time: "
+        "\"I'm confirming this time without the worker's reply\"",
+    )
 
 
 class RejectIn(RequestModel):
@@ -232,6 +264,15 @@ class RejectIn(RequestModel):
         max_length=1000,
         description="Why the fix is rejected (at least 10 characters, saved in the audit log)",
         examples=["The worker was on site all day"],
+    )
+
+
+class EscalateIn(RequestModel):
+    reason: str = Field(
+        min_length=10,
+        max_length=1000,
+        description="Why the case goes to payroll (at least 10 characters, saved in the audit)",
+        examples=["The worker is on leave and I cannot verify the time"],
     )
 
 
@@ -264,6 +305,11 @@ class WorkerTimeIn(RequestModel):
     actual_date: date | None = None
 
 
+class WorkerReminderOut(ApiModel):
+    text: str = Field(description="Deterministic template, never the LLM")
+    sent_at: datetime
+
+
 class WorkerMessageOut(ApiModel):
     exception_id: str
     date: date
@@ -271,6 +317,20 @@ class WorkerMessageOut(ApiModel):
     reply_prompt: str
     needs_actual_time: bool
     time_review: WorkerTimeReviewOut | None = None
+    reminder: WorkerReminderOut | None = None
+    status_note: str | None = Field(
+        default=None, description="Set when the supervisor now reviews it (still answerable)"
+    )
+
+
+class WorkerNoticeOut(ApiModel):
+    exception_id: str
+    date: date
+    kind: Literal["decided_without_reply", "with_payroll"]
+    title: str
+    text: str
+    reason: str | None = None
+    at: datetime | None = None
 
 
 class WorkerReplyOut(ApiModel):
@@ -282,6 +342,9 @@ class WorkerReplyOut(ApiModel):
 
 class WorkerInboxOut(ApiModel):
     items: list[WorkerMessageOut]
+    notices: list[WorkerNoticeOut] = Field(
+        default_factory=list, description="Plain notes about cases the worker can no longer answer"
+    )
 
 
 # ---------------------------------------------------------------- supervisor
@@ -300,6 +363,26 @@ class ApproveOut(ExceptionDetailOut):
     detection: PostFixDetectionOut
 
 
+NoReplyKey = Literal["reminded", "supervisor", "payroll_admin"]
+NoReplyFilter = Literal["any", "reminded", "supervisor", "payroll_admin"]
+
+
+class NoReplyOut(ApiModel):
+    """The no-reply ladder on one case (Phase 13). Built by code from stored times."""
+
+    stage: int = Field(description="0 none (replied late), 1 reminder, 2 supervisor, 3 payroll")
+    stage_key: NoReplyKey | None
+    label: str
+    note: str = Field(examples=["Neha Joshi has not replied for 26 h."])
+    hours_without_reply: str | None
+    wait_since: datetime | None
+    reminded_at: datetime | None
+    supervisor_at: datetime | None
+    admin_at: datetime | None
+    late_reply_at: datetime | None
+    can_decide_without_worker: bool
+
+
 class SupervisorQueueItemOut(ApiModel):
     exception_id: str
     employee_id: str
@@ -314,6 +397,9 @@ class SupervisorQueueItemOut(ApiModel):
     waiting_since: datetime | None
     auto_resolve_undone: bool = Field(
         default=False, description="A person undid its auto-resolve; decide it by hand"
+    )
+    no_reply: NoReplyOut | None = Field(
+        default=None, description="Set when the worker did not reply in time (Phase 13)"
     )
 
 
@@ -423,6 +509,7 @@ class SupervisorCaseOut(ApiModel):
     options: list[CardOptionOut]
     applied_fix: dict[str, Any] | None
     min_note_length: int
+    no_reply: NoReplyOut | None = None
 
 
 # ---------------------------------------------------------------- payroll admin
@@ -440,6 +527,10 @@ class AdminCountersOut(ApiModel):
     resolved: int
     rejected: int
     auto_resolved: int = Field(description="Resolved by policy without a human (P2, P7 grace)")
+    stuck: int = Field(
+        default=0,
+        description="Not final and the no-reply ladder took at least one step (Phase 13)",
+    )
 
 
 class AdminListItemOut(ApiModel):
@@ -467,6 +558,7 @@ class AdminListItemOut(ApiModel):
     )
     needs_your_decision: bool = Field(description="Escalated and assigned to the caller")
     updated_at: datetime
+    no_reply: NoReplyOut | None = None
 
 
 class AdminEmployeeOptionOut(ApiModel):
@@ -481,6 +573,9 @@ class AdminFilterOptionsOut(ApiModel):
     teams: list[str]
     employees: list[AdminEmployeeOptionOut]
     severities: list[Severity]
+    no_reply: list[NoReplyFilter] = Field(
+        default_factory=lambda: ["any", "reminded", "supervisor", "payroll_admin"]
+    )
 
 
 class AdminOverviewOut(ApiModel):
@@ -527,6 +622,8 @@ class AdminWorkerMessageOut(ApiModel):
     replied_at: datetime | None
     needs_actual_time: bool
     time_review: dict[str, Any] | None
+    reminded_at: datetime | None = None
+    reminder_text: str | None = None
 
 
 class AdminJobOut(ApiModel):
@@ -592,6 +689,7 @@ class AdminCaseOut(ApiModel):
     applied_fix: dict[str, Any] | None
     audit_trail: list[AdminAuditEntryOut] = Field(description="Oldest first")
     tool_calls: list[AdminToolCallOut]
+    no_reply: NoReplyOut | None = None
 
 
 # ---------------------------------------------------------------- device punches (Phase 11)
@@ -690,6 +788,13 @@ class CycleErrorOut(ApiModel):
     error: str
 
 
+class CycleNoReplyOut(ApiModel):
+    enabled: bool = True
+    reminded: list[str] = Field(default_factory=list)
+    to_supervisor: list[str] = Field(default_factory=list)
+    to_admin: list[str] = Field(default_factory=list)
+
+
 class SchedulerCycleOut(ApiModel):
     cycle_id: int
     trigger: Literal["schedule", "run_now"]
@@ -716,6 +821,9 @@ class SchedulerCycleOut(ApiModel):
         default=0,
         description="Cases whose auto-resolve a person undid: never handled automatically",
     )
+    no_reply: CycleNoReplyOut = Field(
+        default_factory=CycleNoReplyOut, description="No-reply ladder steps (Phase 13)"
+    )
     errors: list[CycleErrorOut]
 
 
@@ -731,6 +839,28 @@ class DemoWorkerOut(ApiModel):
     team: str
 
 
+class DemoClockOut(ApiModel):
+    now: datetime = Field(description="The clock's 'now': stamps rows and drives timeouts")
+    data_as_of: datetime = Field(
+        description="The data cut-off (ATTENDFLOW_AS_OF); moving the demo clock never moves it"
+    )
+    offset_hours: float
+    max_offset_hours: float
+    movable: bool = Field(description="True only in demo mode")
+    hint: str | None = None
+
+
+class DemoClockIn(RequestModel):
+    hours: float = Field(gt=0, le=336, description="Move the demo clock forward this much")
+
+
+class NoReplySettingsOut(ApiModel):
+    enabled: bool
+    reminder_hours: float
+    supervisor_hours: float
+    admin_hours: float
+
+
 class SchedulerStatusOut(ApiModel):
     enabled_setting: bool = Field(description="SCHEDULER_ENABLED at startup")
     running: bool = Field(description="The timer thread is running now")
@@ -743,7 +873,9 @@ class SchedulerStatusOut(ApiModel):
     overlaps_skipped: int
     watermark: WatermarkOut | None
     last_cycle: SchedulerCycleOut | None
-    as_of: datetime = Field(description="The demo clock's 'now'; punches after it are refused")
+    as_of: datetime = Field(description="The demo clock's 'now'")
+    clock: DemoClockOut
+    no_reply: NoReplySettingsOut
     demo_mode: bool
     workers: list[DemoWorkerOut] = Field(
         description="Workers a simulated punch can be sent for (demo mode only, else empty)"
@@ -754,6 +886,7 @@ class DemoResetOut(ApiModel):
     seed: SeedOut
     detection: DetectionRunOut
     watermark_audit_id: int
+    clock: DemoClockOut
 
 
 # ---------------------------------------------------------------- auto-resolve (Phase 12)

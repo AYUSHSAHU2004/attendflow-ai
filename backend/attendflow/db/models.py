@@ -26,6 +26,7 @@ from sqlalchemy import (
     Index,
     Integer,
     MetaData,
+    SmallInteger,
     String,
     Text,
     Time,
@@ -167,6 +168,7 @@ class ExceptionRow(Base):
         CheckConstraint(_in("status", EXCEPTION_STATUSES), "status"),
         CheckConstraint(_in("severity", ("low", "medium", "high")), "severity"),
         CheckConstraint(_in("kind", ("breach", "risk")), "kind"),
+        CheckConstraint("no_reply_stage BETWEEN 0 AND 3", "no_reply_stage"),
         Index("ix_exceptions_status", "status"),
         Index("ix_exceptions_employee", "employee_id"),
         Index("ix_exceptions_policy", "policy_id"),
@@ -196,6 +198,17 @@ class ExceptionRow(Base):
     # auto-resolved again and the scheduler leaves it to people.
     auto_resolve_undone_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
     auto_resolve_undone_by: Mapped[str | None] = mapped_column(String(8))
+    # Phase 13: the no-reply ladder (cases/no_reply.py). Stage 0 none, 1 reminder sent,
+    # 2 the supervisor was brought in, 3 the payroll admin was brought in. Each *_at is set
+    # once per worker wait; a new wait (ask again, or a No that still needs the time) or
+    # any worker reply resets the ladder. `no_reply_wait_since` is when the current wait
+    # for the worker began (the question's sent_at, or the No reply's replied_at).
+    no_reply_stage: Mapped[int] = mapped_column(SmallInteger, default=0, server_default="0")
+    no_reply_wait_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
+    no_reply_reminded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
+    no_reply_supervisor_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
+    no_reply_admin_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
+    no_reply_late_reply_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
     assigned_to: Mapped[str | None] = mapped_column(ForeignKey("employees.employee_id"))
     waiting_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
     last_detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=False))
@@ -225,6 +238,9 @@ class WorkerMessageRow(Base):
     needs_actual_time: Mapped[bool] = mapped_column(Boolean, default=False)
     asked_fix: Mapped[dict[str, Any] | None]
     time_review: Mapped[dict[str, Any] | None]
+    # Phase 13: the one reminder for this question (deterministic template, no LLM).
+    reminded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
+    reminder_text: Mapped[str | None] = mapped_column(Text)
 
 
 class AuditLogRow(Base):

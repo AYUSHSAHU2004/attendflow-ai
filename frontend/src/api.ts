@@ -4,6 +4,8 @@ import { adminActor, supervisorActor, workerActor } from './actors'
 type Schemas = components['schemas']
 type ReplyInput = paths['/api/exceptions/{exception_id}/worker-reply']['post']['requestBody']['content']['application/json']
 export type WorkerMessage = Schemas['WorkerMessageOut']
+export type WorkerNotice = Schemas['WorkerNoticeOut']
+export type WorkerInboxData = { items: WorkerMessage[]; notices: WorkerNotice[] }
 export type WorkerReceipt = Schemas['WorkerReplyOut']
 export type InvestigationJob = Schemas['InvestigationJobOut']
 export type InvestigationCase = Schemas['InvestigationCase']
@@ -18,6 +20,11 @@ export type AdminOverview = Schemas['AdminOverviewOut']
 export type AdminItem = Schemas['AdminListItemOut']
 export type AdminCase = Schemas['AdminCaseOut']
 export type AdminCounters = Schemas['AdminCountersOut']
+export type NoReply = Schemas['NoReplyOut']
+type WithoutWorker = 'without_worker' | 'confirm_time_without_worker'
+// The two Phase 13 flags default to false on the server, so callers may leave them out.
+export type ApproveInput = Omit<Schemas['ApproveIn'], WithoutWorker> & Partial<Pick<Schemas['ApproveIn'], WithoutWorker>>
+export type EditInput = Omit<Schemas['EditIn'], WithoutWorker> & Partial<Pick<Schemas['EditIn'], WithoutWorker>>
 export type AdminFilters = NonNullable<paths['/api/admin/exceptions']['get']['parameters']['query']>
 
 const base = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '')
@@ -62,10 +69,11 @@ function casePath(id: string): string {
   return '/api/exceptions/' + encodeURIComponent(id)
 }
 
-export async function getWorkerMessages(signal?: AbortSignal) {
-  return (await request<Schemas['WorkerInboxOut']>(
+export async function getWorkerInbox(signal?: AbortSignal): Promise<WorkerInboxData> {
+  const body = (await request<Schemas['WorkerInboxOut']>(
     '/api/worker/messages', workerActor.id, { signal },
-  )).body.items
+  )).body
+  return { items: body.items, notices: body.notices ?? [] }
 }
 
 export async function sendReply(id: string, reply: ReplyInput) {
@@ -129,14 +137,20 @@ export async function getCase(id: string, signal?: AbortSignal, actor = supervis
   )).body
 }
 
-export async function approveCase(id: string, body: Schemas['ApproveIn'], actor = supervisorActor.id) {
+export async function approveCase(id: string, body: ApproveInput, actor = supervisorActor.id) {
   return (await request<ApproveResult>(`${casePath(id)}/approve`, actor, {
     method: 'POST', body: JSON.stringify(body),
   })).body
 }
 
-export async function editCase(id: string, body: Schemas['EditIn'], actor = supervisorActor.id) {
+export async function editCase(id: string, body: EditInput, actor = supervisorActor.id) {
   return (await request<ApproveResult>(`${casePath(id)}/edit`, actor, {
+    method: 'POST', body: JSON.stringify(body),
+  })).body
+}
+
+export async function escalateCase(id: string, body: Schemas['EscalateIn'], actor = supervisorActor.id) {
+  return (await request<DecisionResult>(`${casePath(id)}/escalate`, actor, {
     method: 'POST', body: JSON.stringify(body),
   })).body
 }
@@ -178,6 +192,15 @@ export async function getSchedulerStatus(signal?: AbortSignal) {
 export async function runSchedulerNow() {
   return (await request<SchedulerCycle>('/api/admin/scheduler/run-now', adminActor.id, {
     method: 'POST',
+  })).body
+}
+
+// DEMO_MODE only (Phase 13): move the demo clock forward. 404 when demo mode is off.
+export type DemoClock = Schemas['DemoClockOut']
+
+export async function moveDemoClock(hours: number) {
+  return (await request<DemoClock>('/api/admin/demo/clock', adminActor.id, {
+    method: 'POST', body: JSON.stringify({ hours }),
   })).body
 }
 

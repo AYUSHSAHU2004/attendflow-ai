@@ -179,6 +179,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/exceptions/{exception_id}/escalate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send the case to the payroll admin without rejecting the fix
+         * @description Only the assignee (a supervisor); workers get 403 supervisor_only. The case becomes escalated and assigned to the payroll admin, with the reason in the audit log. No data changes. Used after the no-reply ladder brought the supervisor in (Phase 13), or whenever the supervisor cannot decide.
+         */
+        post: operations["escalate_api_exceptions__exception_id__escalate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/exceptions/{exception_id}/undo": {
         parameters: {
             query?: never;
@@ -293,7 +313,7 @@ export interface paths {
         };
         /**
          * Cases waiting for the caller's decision
-         * @description A supervisor sees their own team's cases assigned to them that are awaiting_supervisor, or open with an investigation routed to the supervisor, plus escalated cases assigned to them. The payroll admin sees escalated cases assigned to them. Cases still waiting for the worker's actual time never appear. Workers get 403. Sorted by severity (high first), then date, then ID.
+         * @description A supervisor sees their own team's cases assigned to them that are awaiting_supervisor, or open with an investigation routed to the supervisor, plus escalated cases assigned to them. The payroll admin sees escalated cases assigned to them. Cases still waiting for the worker's actual time never appear, unless the no-reply ladder brought the supervisor in (then `no_reply` says how long the worker has been silent). Workers get 403. Sorted by severity (high first), then date, then ID.
          */
         get: operations["supervisor_queue_api_supervisor_queue_get"];
         put?: never;
@@ -572,6 +592,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/demo/clock": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Demo only: the demo clock (now, the data cut-off, the offset)
+         * @description Exists only when ATTENDFLOW_DEMO_MODE=true. Payroll admin only.
+         */
+        get: operations["demo_clock_get_api_admin_demo_clock_get"];
+        put?: never;
+        /**
+         * Demo only: move the demo clock forward (shows the no-reply timeouts)
+         * @description Exists only when ATTENDFLOW_DEMO_MODE=true. Payroll admin only. Forward only, at most 14 days past the as-of time (422 clock_limit), audited as demo_clock_moved. Moves `now` (row stamps, timeouts) but never the data cut-off, so detection is unchanged. It runs nothing: the next scheduler cycle (or Run scheduler now) applies the timeouts. A demo reset puts it back to the as-of time.
+         */
+        post: operations["demo_clock_move_api_admin_demo_clock_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -687,6 +731,7 @@ export interface components {
             audit_trail: components["schemas"]["AdminAuditEntryOut"][];
             /** Tool Calls */
             tool_calls: components["schemas"]["AdminToolCallOut"][];
+            no_reply?: components["schemas"]["NoReplyOut"] | null;
         };
         /** AdminCountersOut */
         AdminCountersOut: {
@@ -709,6 +754,12 @@ export interface components {
              * @description Resolved by policy without a human (P2, P7 grace)
              */
             auto_resolved: number;
+            /**
+             * Stuck
+             * @description Not final and the no-reply ladder took at least one step (Phase 13)
+             * @default 0
+             */
+            stuck: number;
         };
         /** AdminEmployeeOptionOut */
         AdminEmployeeOptionOut: {
@@ -731,6 +782,8 @@ export interface components {
             employees: components["schemas"]["AdminEmployeeOptionOut"][];
             /** Severities */
             severities: ("low" | "medium" | "high")[];
+            /** No Reply */
+            no_reply?: ("any" | "reminded" | "supervisor" | "payroll_admin")[];
         };
         /** AdminJobOut */
         AdminJobOut: {
@@ -814,6 +867,7 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+            no_reply?: components["schemas"]["NoReplyOut"] | null;
         };
         /** AdminOverviewOut */
         AdminOverviewOut: {
@@ -889,6 +943,10 @@ export interface components {
             time_review: {
                 [key: string]: unknown;
             } | null;
+            /** Reminded At */
+            reminded_at?: string | null;
+            /** Reminder Text */
+            reminder_text?: string | null;
         };
         /** ApproveIn */
         ApproveIn: {
@@ -899,6 +957,18 @@ export interface components {
             option_id: string;
             /** Reason */
             reason?: string | null;
+            /**
+             * Without Worker
+             * @description Decide on the evidence without the worker's reply (Phase 13). Only after the no-reply ladder brought the case to you (stage 2 or 3); needs a reason of at least 10 characters
+             * @default false
+             */
+            without_worker: boolean;
+            /**
+             * Confirm Time Without Worker
+             * @description Required with without_worker for an option that sets a punch time: "I'm confirming this time without the worker's reply"
+             * @default false
+             */
+            confirm_time_without_worker: boolean;
         };
         /** ApproveOut */
         ApproveOut: {
@@ -944,6 +1014,22 @@ export interface components {
             auto_resolve_undone_at?: string | null;
             /** Auto Resolve Undone By */
             auto_resolve_undone_by?: string | null;
+            /**
+             * No Reply Stage
+             * @description No-reply ladder (Phase 13): 0 none, 1 reminder sent, 2 supervisor brought in, 3 sent to payroll
+             * @default 0
+             */
+            no_reply_stage: number;
+            /** No Reply Wait Since */
+            no_reply_wait_since?: string | null;
+            /** No Reply Reminded At */
+            no_reply_reminded_at?: string | null;
+            /** No Reply Supervisor At */
+            no_reply_supervisor_at?: string | null;
+            /** No Reply Admin At */
+            no_reply_admin_at?: string | null;
+            /** No Reply Late Reply At */
+            no_reply_late_reply_at?: string | null;
             /** Details */
             details: {
                 [key: string]: unknown;
@@ -1326,6 +1412,54 @@ export interface components {
             /** Duration Ms */
             duration_ms: number | null;
         };
+        /** CycleNoReplyOut */
+        CycleNoReplyOut: {
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+            /** Reminded */
+            reminded?: string[];
+            /** To Supervisor */
+            to_supervisor?: string[];
+            /** To Admin */
+            to_admin?: string[];
+        };
+        /** DemoClockIn */
+        DemoClockIn: {
+            /**
+             * Hours
+             * @description Move the demo clock forward this much
+             */
+            hours: number;
+        };
+        /** DemoClockOut */
+        DemoClockOut: {
+            /**
+             * Now
+             * Format: date-time
+             * @description The clock's 'now': stamps rows and drives timeouts
+             */
+            now: string;
+            /**
+             * Data As Of
+             * Format: date-time
+             * @description The data cut-off (ATTENDFLOW_AS_OF); moving the demo clock never moves it
+             */
+            data_as_of: string;
+            /** Offset Hours */
+            offset_hours: number;
+            /** Max Offset Hours */
+            max_offset_hours: number;
+            /**
+             * Movable
+             * @description True only in demo mode
+             */
+            movable: boolean;
+            /** Hint */
+            hint?: string | null;
+        };
         /**
          * DemoPunchIn
          * @description A simulated device punch from the /admin demo panel (DEMO_MODE only).
@@ -1370,6 +1504,7 @@ export interface components {
             detection: components["schemas"]["DetectionRunOut"];
             /** Watermark Audit Id */
             watermark_audit_id: number;
+            clock: components["schemas"]["DemoClockOut"];
         };
         /** DemoWorkerOut */
         DemoWorkerOut: {
@@ -1464,6 +1599,18 @@ export interface components {
              * @example Amit left at 17:30
              */
             reason: string;
+            /**
+             * Without Worker
+             * @description Decide on the evidence without the worker's reply (Phase 13). Only after the no-reply ladder brought the case to you (stage 2 or 3); needs a reason of at least 10 characters
+             * @default false
+             */
+            without_worker: boolean;
+            /**
+             * Confirm Time Without Worker
+             * @description Required with without_worker for an option that sets a punch time: "I'm confirming this time without the worker's reply"
+             * @default false
+             */
+            confirm_time_without_worker: boolean;
         };
         /** ErrorBody */
         ErrorBody: {
@@ -1483,6 +1630,15 @@ export interface components {
         /** ErrorResponse */
         ErrorResponse: {
             error: components["schemas"]["ErrorBody"];
+        };
+        /** EscalateIn */
+        EscalateIn: {
+            /**
+             * Reason
+             * @description Why the case goes to payroll (at least 10 characters, saved in the audit)
+             * @example The worker is on leave and I cannot verify the time
+             */
+            reason: string;
         };
         /** EvidenceFact */
         EvidenceFact: {
@@ -1535,6 +1691,22 @@ export interface components {
             auto_resolve_undone_at?: string | null;
             /** Auto Resolve Undone By */
             auto_resolve_undone_by?: string | null;
+            /**
+             * No Reply Stage
+             * @description No-reply ladder (Phase 13): 0 none, 1 reminder sent, 2 supervisor brought in, 3 sent to payroll
+             * @default 0
+             */
+            no_reply_stage: number;
+            /** No Reply Wait Since */
+            no_reply_wait_since?: string | null;
+            /** No Reply Reminded At */
+            no_reply_reminded_at?: string | null;
+            /** No Reply Supervisor At */
+            no_reply_supervisor_at?: string | null;
+            /** No Reply Admin At */
+            no_reply_admin_at?: string | null;
+            /** No Reply Late Reply At */
+            no_reply_late_reply_at?: string | null;
             /** Details */
             details: {
                 [key: string]: unknown;
@@ -1631,6 +1803,22 @@ export interface components {
             auto_resolve_undone_at?: string | null;
             /** Auto Resolve Undone By */
             auto_resolve_undone_by?: string | null;
+            /**
+             * No Reply Stage
+             * @description No-reply ladder (Phase 13): 0 none, 1 reminder sent, 2 supervisor brought in, 3 sent to payroll
+             * @default 0
+             */
+            no_reply_stage: number;
+            /** No Reply Wait Since */
+            no_reply_wait_since?: string | null;
+            /** No Reply Reminded At */
+            no_reply_reminded_at?: string | null;
+            /** No Reply Supervisor At */
+            no_reply_supervisor_at?: string | null;
+            /** No Reply Admin At */
+            no_reply_admin_at?: string | null;
+            /** No Reply Late Reply At */
+            no_reply_late_reply_at?: string | null;
             /** Details */
             details: {
                 [key: string]: unknown;
@@ -1827,6 +2015,51 @@ export interface components {
             undone: number;
             /** Closed By Data Change */
             closed_by_data_change: number;
+        };
+        /**
+         * NoReplyOut
+         * @description The no-reply ladder on one case (Phase 13). Built by code from stored times.
+         */
+        NoReplyOut: {
+            /**
+             * Stage
+             * @description 0 none (replied late), 1 reminder, 2 supervisor, 3 payroll
+             */
+            stage: number;
+            /** Stage Key */
+            stage_key: ("reminded" | "supervisor" | "payroll_admin") | null;
+            /** Label */
+            label: string;
+            /**
+             * Note
+             * @example Neha Joshi has not replied for 26 h.
+             */
+            note: string;
+            /** Hours Without Reply */
+            hours_without_reply: string | null;
+            /** Wait Since */
+            wait_since: string | null;
+            /** Reminded At */
+            reminded_at: string | null;
+            /** Supervisor At */
+            supervisor_at: string | null;
+            /** Admin At */
+            admin_at: string | null;
+            /** Late Reply At */
+            late_reply_at: string | null;
+            /** Can Decide Without Worker */
+            can_decide_without_worker: boolean;
+        };
+        /** NoReplySettingsOut */
+        NoReplySettingsOut: {
+            /** Enabled */
+            enabled: boolean;
+            /** Reminder Hours */
+            reminder_hours: number;
+            /** Supervisor Hours */
+            supervisor_hours: number;
+            /** Admin Hours */
+            admin_hours: number;
         };
         /** PostFixDetectionOut */
         PostFixDetectionOut: {
@@ -2037,6 +2270,8 @@ export interface components {
              * @default 0
              */
             skipped_undone: number;
+            /** @description No-reply ladder steps (Phase 13) */
+            no_reply?: components["schemas"]["CycleNoReplyOut"];
             /** Errors */
             errors: components["schemas"]["CycleErrorOut"][];
         };
@@ -2071,9 +2306,11 @@ export interface components {
             /**
              * As Of
              * Format: date-time
-             * @description The demo clock's 'now'; punches after it are refused
+             * @description The demo clock's 'now'
              */
             as_of: string;
+            clock: components["schemas"]["DemoClockOut"];
+            no_reply: components["schemas"]["NoReplySettingsOut"];
             /** Demo Mode */
             demo_mode: boolean;
             /**
@@ -2147,6 +2384,7 @@ export interface components {
             } | null;
             /** Min Note Length */
             min_note_length: number;
+            no_reply?: components["schemas"]["NoReplyOut"] | null;
         };
         /** SupervisorQueueItemOut */
         SupervisorQueueItemOut: {
@@ -2190,6 +2428,8 @@ export interface components {
              * @default false
              */
             auto_resolve_undone: boolean;
+            /** @description Set when the worker did not reply in time (Phase 13) */
+            no_reply?: components["schemas"]["NoReplyOut"] | null;
         };
         /** SupervisorQueueOut */
         SupervisorQueueOut: {
@@ -2323,6 +2563,22 @@ export interface components {
             auto_resolve_undone_at?: string | null;
             /** Auto Resolve Undone By */
             auto_resolve_undone_by?: string | null;
+            /**
+             * No Reply Stage
+             * @description No-reply ladder (Phase 13): 0 none, 1 reminder sent, 2 supervisor brought in, 3 sent to payroll
+             * @default 0
+             */
+            no_reply_stage: number;
+            /** No Reply Wait Since */
+            no_reply_wait_since?: string | null;
+            /** No Reply Reminded At */
+            no_reply_reminded_at?: string | null;
+            /** No Reply Supervisor At */
+            no_reply_supervisor_at?: string | null;
+            /** No Reply Admin At */
+            no_reply_admin_at?: string | null;
+            /** No Reply Late Reply At */
+            no_reply_late_reply_at?: string | null;
             /** Details */
             details: {
                 [key: string]: unknown;
@@ -2405,6 +2661,11 @@ export interface components {
         WorkerInboxOut: {
             /** Items */
             items: components["schemas"]["WorkerMessageOut"][];
+            /**
+             * Notices
+             * @description Plain notes about cases the worker can no longer answer
+             */
+            notices?: components["schemas"]["WorkerNoticeOut"][];
         };
         /** WorkerMessageOut */
         WorkerMessageOut: {
@@ -2422,6 +2683,35 @@ export interface components {
             /** Needs Actual Time */
             needs_actual_time: boolean;
             time_review?: components["schemas"]["WorkerTimeReviewOut"] | null;
+            reminder?: components["schemas"]["WorkerReminderOut"] | null;
+            /**
+             * Status Note
+             * @description Set when the supervisor now reviews it (still answerable)
+             */
+            status_note?: string | null;
+        };
+        /** WorkerNoticeOut */
+        WorkerNoticeOut: {
+            /** Exception Id */
+            exception_id: string;
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "decided_without_reply" | "with_payroll";
+            /** Title */
+            title: string;
+            /** Text */
+            text: string;
+            /** Reason */
+            reason?: string | null;
+            /** At */
+            at?: string | null;
         };
         /** WorkerRecheckOut */
         WorkerRecheckOut: {
@@ -2445,6 +2735,19 @@ export interface components {
              * @default false
              */
             approximate: boolean;
+        };
+        /** WorkerReminderOut */
+        WorkerReminderOut: {
+            /**
+             * Text
+             * @description Deterministic template, never the LLM
+             */
+            text: string;
+            /**
+             * Sent At
+             * Format: date-time
+             */
+            sent_at: string;
         };
         /** WorkerReplyIn */
         WorkerReplyIn: {
@@ -2913,6 +3216,71 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["RejectIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExceptionDetailOut"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    escalate_api_exceptions__exception_id__escalate_post: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
+                "X-Actor-Id": string;
+            };
+            path: {
+                exception_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EscalateIn"];
             };
         };
         responses: {
@@ -3512,6 +3880,8 @@ export interface operations {
                 employee_id?: string | null;
                 severity?: ("low" | "medium" | "high") | null;
                 q?: string | null;
+                /** @description Cases the no-reply ladder touched (any) or at one stage */
+                no_reply?: ("any" | "reminded" | "supervisor" | "payroll_admin") | null;
                 sort?: "severity" | "date" | "employee" | "updated";
                 limit?: number;
                 offset?: number;
@@ -3980,6 +4350,101 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PunchAcceptedOut"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    demo_clock_get_api_admin_demo_clock_get: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
+                "X-Actor-Id": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DemoClockOut"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    demo_clock_move_api_admin_demo_clock_post: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
+                "X-Actor-Id": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DemoClockIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DemoClockOut"];
                 };
             };
             /** @description Forbidden */

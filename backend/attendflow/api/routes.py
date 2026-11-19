@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
-from attendflow import __version__
+from attendflow import __version__, demo_clock
 from attendflow.api.schemas import (
     EMPLOYEE_ID,
     POLICY_ID,
@@ -26,16 +26,20 @@ from attendflow.api.schemas import (
     AuditEntryOut,
     AuditListOut,
     AutoResolveMetricOut,
+    DemoClockIn,
+    DemoClockOut,
     DemoPunchIn,
     DemoResetOut,
     DetectionRunOut,
     EditIn,
     ErrorResponse,
+    EscalateIn,
     ExceptionDetailOut,
     ExceptionListOut,
     ExceptionOut,
     HealthOut,
     InvestigationJobOut,
+    NoReplyFilter,
     PunchAcceptedOut,
     PunchIn,
     RejectIn,
@@ -328,6 +332,8 @@ def approve(
         actor_id=actor_id,
         option_id=body.option_id,
         reason=body.reason,
+        without_worker=body.without_worker,
+        confirm_time_without_worker=body.confirm_time_without_worker,
     )
     return _approved(session, policy, clock, row, settings)
 
@@ -357,6 +363,8 @@ def edit(
         option_id=body.option_id,
         reason=body.reason,
         params=body.params,
+        without_worker=body.without_worker,
+        confirm_time_without_worker=body.confirm_time_without_worker,
     )
     return _approved(session, policy, clock, row, settings)
 
@@ -373,6 +381,26 @@ def reject(
     exception_id: str, body: RejectIn, actor_id: ActorId, session: SessionDep, clock: ClockDep
 ):
     row = service.reject(
+        session, clock, exception_id=exception_id, actor_id=actor_id, reason=body.reason
+    )
+    return _detail(session, row)
+
+
+@router.post(
+    "/exceptions/{exception_id}/escalate",
+    response_model=ExceptionDetailOut,
+    tags=["decisions"],
+    summary="Send the case to the payroll admin without rejecting the fix",
+    description="Only the assignee (a supervisor); workers get 403 supervisor_only. The case "
+    "becomes escalated and assigned to the payroll admin, with the reason in the audit log. "
+    "No data changes. Used after the no-reply ladder brought the supervisor in (Phase 13), "
+    "or whenever the supervisor cannot decide.",
+    responses=_DECISION_ERRORS,
+)
+def escalate(
+    exception_id: str, body: EscalateIn, actor_id: ActorId, session: SessionDep, clock: ClockDep
+):
+    row = service.escalate(
         session, clock, exception_id=exception_id, actor_id=actor_id, reason=body.reason
     )
     return _detail(session, row)
@@ -520,8 +548,9 @@ def worker_manual_time(
     summary="Questions and pending follow-ups for the worker",
     responses=_errors(403, 422),
 )
-def worker_messages(actor_id: ActorId, session: SessionDep):
-    return {"items": service.worker_inbox(session, actor_id)}
+def worker_messages(actor_id: ActorId, session: SessionDep, clock: ClockDep):
+    with session.begin():
+        return service.worker_inbox(session, actor_id, clock)
 
 
 # ---------------------------------------------------------------- supervisor
@@ -535,13 +564,15 @@ def worker_messages(actor_id: ActorId, session: SessionDep):
     description="A supervisor sees their own team's cases assigned to them that are "
     "awaiting_supervisor, or open with an investigation routed to the supervisor, plus "
     "escalated cases assigned to them. The payroll admin sees escalated cases assigned to "
-    "them. Cases still waiting for the worker's actual time never appear. Workers get 403. "
+    "them. Cases still waiting for the worker's actual time never appear, unless the "
+    "no-reply ladder brought the supervisor in (then `no_reply` says how long the worker "
+    "has been silent). Workers get 403. "
     "Sorted by severity (high first), then date, then ID.",
     responses=_errors(403, 422),
 )
-def supervisor_queue(actor_id: ActorId, session: SessionDep):
+def supervisor_queue(actor_id: ActorId, session: SessionDep, clock: ClockDep):
     with session.begin():
-        items = supervisor.queue(session, actor_id)
+        items = supervisor.queue(session, actor_id, clock.now())
     return SupervisorQueueOut(count=len(items), items=items)
 
 
@@ -560,12 +591,18 @@ def supervisor_case(
     actor_id: ActorId,
     session: SessionDep,
     policy: PolicyDep,
+    clock: ClockDep,
     settings: Annotated[Settings, Depends(get_settings_dep)],
 ):
     sections = load_policy_text(settings.data_dir / "policy.md")
     with session.begin():
         return supervisor.case_card(
-            session, policy, sections, exception_id=exception_id, actor_id=actor_id
+            session,
+            policy,
+            sections,
+            exception_id=exception_id,
+            actor_id=actor_id,
+            now=clock.now(),
         )
 
 
@@ -637,12 +674,17 @@ def auto_resolve_metric(
 def admin_exceptions(
     actor_id: ActorId,
     session: SessionDep,
+    clock: ClockDep,
     status: Status | None = None,
     policy_id: Annotated[str | None, Query(pattern=POLICY_ID)] = None,
     team: Annotated[str | None, Query(min_length=1, max_length=40)] = None,
     employee_id: Annotated[str | None, Query(pattern=EMPLOYEE_ID)] = None,
     severity: Severity | None = None,
     q: Annotated[str | None, Query(max_length=60)] = None,
+    no_reply: Annotated[
+        NoReplyFilter | None,
+        Query(description="Cases the no-reply ladder touched (any) or at one stage"),
+    ] = None,
     sort: AdminSort = "severity",
     limit: Annotated[int, Query(ge=1, le=admin.MAX_LIMIT)] = admin.DEFAULT_LIMIT,
     offset: Annotated[int, Query(ge=0)] = 0,
@@ -657,9 +699,11 @@ def admin_exceptions(
             employee_id=employee_id,
             severity=severity,
             q=q,
+            no_reply=no_reply,
             sort=sort,
             limit=limit,
             offset=offset,
+            now=clock.now(),
         )
 
 
@@ -679,11 +723,19 @@ def admin_exception(
     actor_id: ActorId,
     session: SessionDep,
     policy: PolicyDep,
+    clock: ClockDep,
     settings: Annotated[Settings, Depends(get_settings_dep)],
 ):
     sections = load_policy_text(settings.data_dir / "policy.md")
     with session.begin():
-        return admin.detail(session, policy, sections, exception_id=exception_id, actor_id=actor_id)
+        return admin.detail(
+            session,
+            policy,
+            sections,
+            exception_id=exception_id,
+            actor_id=actor_id,
+            now=clock.now(),
+        )
 
 
 # ---------------------------------------------------------------- logs
@@ -823,9 +875,17 @@ def _status(request: Request, session: Session) -> SchedulerStatusOut:
                     .order_by(EmployeeRow.employee_id)
                 )
             ]
+    clock = request.app.state.clock
     return SchedulerStatusOut(
         **_scheduler(request).status(),
-        as_of=request.app.state.clock.now(),
+        as_of=clock.now(),
+        clock=demo_clock.describe(clock, settings.demo_mode),
+        no_reply={
+            "enabled": settings.no_reply_escalation_enabled,
+            "reminder_hours": settings.no_reply_reminder_hours,
+            "supervisor_hours": settings.no_reply_supervisor_hours,
+            "admin_hours": settings.no_reply_admin_hours,
+        },
         demo_mode=settings.demo_mode,
         workers=workers,
     )
@@ -906,6 +966,7 @@ def demo_reset(actor_id: ActorId, request: Request, session: SessionDep):
     try:
         with session.begin():
             counts = seed_from_csv(session, state.settings.data_dir)
+            demo_clock.reset(session, state.clock)  # back to the as-of time (Phase 13)
     except DataValidationError as exc:
         raise AppError(
             "the demo CSVs are invalid; nothing was changed",
@@ -921,6 +982,7 @@ def demo_reset(actor_id: ActorId, request: Request, session: SessionDep):
         seed=SeedOut(message="Demo data loaded and detection run.", counts=counts),
         detection=DetectionRunOut(**detection.__dict__),
         watermark_audit_id=watermark,
+        clock=demo_clock.describe(state.clock, True),
     )
 
 
@@ -937,3 +999,33 @@ def demo_reset(actor_id: ActorId, request: Request, session: SessionDep):
 def demo_punch(body: DemoPunchIn, actor_id: ActorId, request: Request, session: SessionDep):
     _require_admin(session, actor_id)
     return _receive_punch(request, session, body, via="demo_simulator", requested_by=actor_id)
+
+
+@demo_router.get(
+    "/clock",
+    response_model=DemoClockOut,
+    summary="Demo only: the demo clock (now, the data cut-off, the offset)",
+    description="Exists only when ATTENDFLOW_DEMO_MODE=true. Payroll admin only.",
+    responses=_errors(403, 422),
+)
+def demo_clock_get(actor_id: ActorId, request: Request, session: SessionDep):
+    _require_admin(session, actor_id)
+    return demo_clock.describe(request.app.state.clock, True)
+
+
+@demo_router.post(
+    "/clock",
+    response_model=DemoClockOut,
+    summary="Demo only: move the demo clock forward (shows the no-reply timeouts)",
+    description="Exists only when ATTENDFLOW_DEMO_MODE=true. Payroll admin only. Forward "
+    "only, at most 14 days past the as-of time (422 clock_limit), audited as "
+    "demo_clock_moved. Moves `now` (row stamps, timeouts) but never the data cut-off, so "
+    "detection is unchanged. It runs nothing: the next scheduler cycle (or Run scheduler "
+    "now) applies the timeouts. A demo reset puts it back to the as-of time.",
+    responses=_errors(403, 409, 422),
+)
+def demo_clock_move(body: DemoClockIn, actor_id: ActorId, request: Request, session: SessionDep):
+    _require_admin(session, actor_id)
+    clock = request.app.state.clock
+    demo_clock.move(session, clock, body.hours, actor_id)
+    return demo_clock.describe(clock, True, hint=demo_clock.HINT)

@@ -64,7 +64,7 @@ and CI, 10-minute demo video, 5 slides.
 Done: 0 Setup + data + policy + LLM test; 1 Rule engine P1-P7, P15; 2 Rules P8-P14, P16, P17;
 3 Backend + DB + API; 4 Read-only tools + fix options for P3/P4/P6/P7; 5 LLM client + agent loop; 6 structured investigations and jobs; 7 worker messages and inbox; 8 worker clock-out extraction and re-check; 9 supervisor approval screen; 10 Priya's list +
 end-to-end tests (**prototype complete**); 11 mock punch API + scheduler; 12 auto-resolve + undo +
-"resolved without a human" metric.
+"resolved without a human" metric; 13 no-reply escalation ladder + demo clock.
 
 **Prototype (3-10)**
 3. Backend + DB + API
@@ -92,18 +92,17 @@ end-to-end tests (**prototype complete**); 11 mock punch API + scheduler; 12 aut
 23. Tests + evaluation
 24. Delivery
 
-**Next: Phase 13.**
+**Next: Phase 14.**
 
 **Carry-over notes**
 - Phase 5 Groq bug: `run_checks` advertised Pydantic's RFC 3339 `date-time` format for
   timezone-free local timestamps. Groq rejected minute-precision values with HTTP 400.
   The schema now advertises the app's local time patterns; the registry tests check
   every tool schema recursively for unsupported formats and schema references.
-- Phase 13 (no-reply escalation): approving needs the worker's confirmation for P1,
-  P3 `correct_clock_out`, P4 `record_break` and every P9/P13 option. A no-reply
-  escalation needs a supervisor path that does not require it (e.g. an explicit,
-  audited "decide without the worker" action). It must also clear `needs_actual_time`
-  on escalation, or the supervisor queue keeps hiding the case.
+- Phase 14 (Activity Center): show the Phase 13 ladder steps (`no_reply_reminder`,
+  `no_reply_to_supervisor`, `no_reply_to_admin`, `no_reply_ladder_stopped`,
+  `decided_without_worker`, `escalate_to_admin`, `demo_clock_moved`) in the feed; the
+  plain summaries already exist in `cases/admin.py audit_summary`.
 - Phase 15 (role switcher): replace `frontend/src/actors.ts` (the only place that names
   the acting user, including the dev-only `?as=` override).
 - **Phase 22 checklist (deployment):**
@@ -131,6 +130,15 @@ end-to-end tests (**prototype complete**); 11 mock punch API + scheduler; 12 aut
     `"auto_resolve": true` in `policy.json` (code allows only P2 and P7) before deploy.
   - Phase 12: review the metric definition (X = auto-resolved and not undone; Y = all
     minus `closed_by_data_change`) before showing it to real users.
+  - Phase 13: with demo mode off the clock stays fixed at `ATTENDFLOW_AS_OF` and **no
+    no-reply timeout ever fires**. Decide whether the deployed app runs in demo mode or
+    gets a real wall clock (a new `Clock` with `now()` = local time and its own data
+    cut-off rule). `/api/admin/demo/clock` must not exist on a real server.
+  - Phase 13: review the N/M/K defaults (`NO_REPLY_REMINDER_HOURS` 8,
+    `NO_REPLY_SUPERVISOR_HOURS` 24, `NO_REPLY_ADMIN_HOURS` 24; calendar hours, not shift
+    hours) and the `NO_REPLY_ESCALATION_ENABLED` switch before deploy.
+  - Phase 13: the worker inbox shows the supervisor's reason for a decision made without
+    the worker's reply. Tell supervisors and payroll that this text is shown to the worker.
 
 ## Decisions so far (do not re-ask)
 
@@ -513,6 +521,55 @@ end-to-end tests (**prototype complete**); 11 mock punch API + scheduler; 12 aut
 - Detection already auto-resolves P2 and P7 within grace (Phase 3 behaviour), including
   after a device punch. Phase 12 added the guard, snapshot, undo and metric.
 
+**No-reply escalation (Phase 13)**
+- Clock split (`clock.py`): `clock.now()` stamps rows and drives timeouts;
+  `data_as_of(clock)` is the data cut-off for detection, fixes, worker time checks and
+  device punches, and never moves. The app uses `DemoClock(as_of)` (offset 0 = the old
+  fixed clock). Demo mode only: `GET/POST /api/admin/demo/clock` (payroll admin; forward
+  only, max +14 days, 422 `clock_limit`; audited `demo_clock_moved`; runs nothing). The
+  offset is stored in `settings` (`demo_clock`), restored at startup, zeroed by demo reset.
+- Ladder (`cases/no_reply.py` rules, `cases/ladder.py` runner): step 4 of every scheduler
+  cycle (timer or run-now, timer off is fine). Stage 0 -> 1 reminder at N h, 1 -> 2 the
+  team supervisor at M h (awaiting_worker -> awaiting_supervisor), 2 -> 3 payroll admin K h
+  after stage 2 if the case is still awaiting_supervisor (-> escalated, E201). N and M
+  count from `no_reply_wait_since` (question sent, or a No that still needs the time); K
+  from `no_reply_supervisor_at`. Fires at the limit, never before; one step per case per
+  check, never skipping (a clock jump still gets the reminder first). Row lock + stage
+  check = each step once per wait. Covers EVERY awaiting_worker case, hand-asked and
+  backlog included (user decision: the watermark does not apply); undone cases skipped.
+  Kill switch `NO_REPLY_ESCALATION_ENABLED`. Audit (actor system, `due_at` + `fired_at`):
+  `no_reply_reminder`, `no_reply_to_supervisor`, `no_reply_to_admin`. Migration `0008`
+  (exceptions `no_reply_stage` + 5 timestamps; worker_messages `reminded_at`,
+  `reminder_text`; backfills the wait start of waiting cases).
+- Reminder text is a fixed template (user wording): "Reminder: we still need your answer
+  about {date}. If we don't hear from you by {deadline}, your supervisor will review it
+  using the records." Stored on the question it reminds about.
+- Replies: any worker reply stops the ladder (`no_reply_ladder_stopped`, written after the
+  reply row). At stage 2 the question stays answerable: Yes runs the Phase 8 re-check and
+  stays with the supervisor ("Replied late", `no_reply_late_reply_at`); No goes back to the
+  worker for the time (awaiting_supervisor -> awaiting_worker) and starts a new wait.
+  At stage 3 (or after a manual escalate) it is closed: 409 `handled_by_payroll`. Asking
+  again starts a new wait. `needs_actual_time` is kept (so a late time still works); the
+  queue shows stage 2+ cases even with it set.
+- Decide without the worker: approve/edit with `without_worker: true`, only at stage 2+
+  for the assignee (else 409 `no_reply_not_escalated`), reason >= 10 chars (422
+  `reason_required`), and for any punch-time option (set_clock_in/out, correct_clock_out;
+  the user asked for P1, applied to all time options) `confirm_time_without_worker`
+  (422 `time_confirmation_required`). Phase 8 time validation still runs; `apply.py` still
+  writes. `applied_fix.without_worker` = reason, stage, hours, time, `time_source`
+  prefilled/edited; extra audit row `decided_without_worker`. Silence never counts as Yes.
+- `POST /api/exceptions/{id}/escalate` (reason >= 10): the assignee supervisor sends any
+  non-final case to payroll without rejecting; audit `escalate_to_admin`.
+- Worker inbox now returns `{items, notices}`: items carry `reminder` and `status_note`;
+  notices are "Decided without your reply" (with the reason) and "With payroll".
+- Views: queue/card `no_reply` (`NoReplyOut`: stage, label, note "X has not replied for
+  N h", times, `can_decide_without_worker`); admin list item + detail `no_reply`, counter
+  `stuck` (stage > 0 and not final), filter `no_reply=any|reminded|supervisor|payroll_admin`.
+- policy.md (user-approved): P1, P3, P4, P9, P13 "Allowed fixes" end with "If the worker
+  does not reply in time, the supervisor may decide on the evidence."
+- Live check: `attendflow_phase13` DB, API :8013, Vite :5185 (`.claude/launch.json`
+  configs `api-phase13` / `web-phase13`).
+
 **Auto-resolve + undo (Phase 12)**
 - Only P2 and P7 (within grace) may close without a person: `AUTO_RESOLVABLE` in
   `policy/models.py`; `policy.json` with `auto_resolve: true` on any other policy fails to
@@ -575,9 +632,12 @@ backend/attendflow/
   llm/client.py          OpenAI-compatible chat()/chat_once()/list_models(); bounded retry
   agent/loop.py          Native tool calls over one stored exception, returns AgentRun
   agent/journal.py       Separate write sessions for tool call and audit rows
-  clock.py               FixedClock: the only source of "now" (ATTENDFLOW_AS_OF)
+  clock.py               Clock: now() (row stamps, timeouts) + data_as_of() (fixed data cut-off);
+                         FixedClock, DemoClock (as-of + a demo-only forward offset)
+  demo_clock.py          demo clock offset: describe, load at startup, move (audited), reset
   ingest/punches.py      the ONLY other writer: new device punches (INSERT + audit row)
-  scheduler/cycle.py     one cycle: detect, investigate new cases, message workers, summary
+  scheduler/cycle.py     one cycle: detect, investigate new cases, message workers, no-reply ladder,
+                         summary
   scheduler/runner.py    Scheduler thread, non-overlap lock, start/stop/status
   errors.py              AppError family -> HTTP status + error code
   db/models.py           SQLAlchemy tables (6 source tables + exceptions, audit_log, tool_calls,
@@ -596,6 +656,8 @@ backend/attendflow/
   cases/supervisor.py    supervisor queue, case card, consequence note, reviewer permission
   cases/admin.py         payroll admin overview, counters, read-only case detail, audit summaries
   cases/auto_fix.py      auto-resolve info per case, supervisor team list, "without a human" metric
+  cases/no_reply.py      no-reply ladder rules (due_step), wait state, reminder text, NoReply view
+  cases/ladder.py        runs one ladder step per due case (scheduler step 4); no data writes
   tools/models.py        tool inputs/outputs (Pydantic), ok/error envelope, ProposedChange
   tools/read_tools.py    get_schedule, get_leave, get_leave_balance, get_punches, get_policy
   tools/run_checks.py    run_checks: simulate a change, re-run the engine, diff the week
@@ -609,8 +671,10 @@ backend/attendflow/
 data/                    6 CSVs + policy.json (limits) + policy.md (plain-language, cited by agent)
 docs/                    PROGRESS.md, PLANTED_CASES.md, LLM_LICENCE.md, DEMO_WALKTHROUGH.md
 tests/                   pytest suite
-frontend/                Vite React: worker inbox (/), supervisor (/supervisor, with TeamAutoFixes),
-                         admin (/admin, with SchedulerPanel + metric line + AutoFixPanel), dev (/dev)
+frontend/                Vite React: worker inbox (/, reminders + notices), supervisor (/supervisor,
+                         no-reply badge, decide without worker, send to payroll, TeamAutoFixes),
+                         admin (/admin, SchedulerPanel with demo clock, stuck counter + filter,
+                         metric line, AutoFixPanel), dev (/dev)
 docker-compose.yml       PostgreSQL 16 (host port 5433); docker/initdb creates the test DB
 .github/workflows/ci.yml lint + validate + tests (with a Postgres service) on Python 3.12
 ```
@@ -632,5 +696,8 @@ python -m uv run attendflow-agent-smoke P1-E001-2026-04-14
 python -m uv run pytest                    # tests (API tests need the db container)
 # Device punch (needs DEVICE_API_KEY in .env and the API running):
 curl -X POST localhost:8000/api/punches -H "X-Device-Key: $DEVICE_API_KEY" -H "Content-Type: application/json" -d '{"employee_id":"E004","timestamp":"2026-04-15T08:58","type":"in"}'
+# Demo clock (ATTENDFLOW_DEMO_MODE=true), then run a cycle to apply the no-reply steps:
+curl -X POST localhost:8000/api/admin/demo/clock -H "X-Actor-Id: E201" -H "Content-Type: application/json" -d '{"hours":8}'
+curl -X POST localhost:8000/api/admin/scheduler/run-now -H "X-Actor-Id: E201"
 python -m uv run ruff check . && python -m uv run ruff format --check .
 ```

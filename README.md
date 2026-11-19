@@ -104,7 +104,8 @@ or a local Ollama model is a `.env` change. Licence notes: [docs/LLM_LICENCE.md]
 ## Status
 
 **Prototype complete (Phase 10); Phase 11 adds a mock attendance device and a scheduler;
-Phase 12 adds auto-resolve with undo and the "resolved without a human" metric.**
+Phase 12 adds auto-resolve with undo and the "resolved without a human" metric;
+Phase 13 adds the no-reply escalation ladder.**
 See [docs/PROGRESS.md](docs/PROGRESS.md), and
 [docs/DEMO_WALKTHROUGH.md](docs/DEMO_WALKTHROUGH.md) for the click-by-click demo.
 
@@ -173,6 +174,31 @@ decision card for cases escalated to her. The admin API (`GET /api/admin/excepti
   that needed handling (cases closed because the data changed are listed apart in a
   footnote). The case detail explains each auto-resolve and has the **Undo** button;
   `/supervisor` lists **Auto-resolved for my team** with the same panel.
+
+## No-reply escalation (Phase 13)
+
+A case never waits forever for a worker. Every scheduler cycle (also **Run scheduler
+now**, with the timer off) checks each case waiting for a worker:
+
+1. After `NO_REPLY_REMINDER_HOURS` (8): one reminder in the worker's inbox (a fixed
+   template, no LLM).
+2. After `NO_REPLY_SUPERVISOR_HOURS` (24): the case goes to the team supervisor with
+   "worker has not replied for 24 h". The supervisor can ask again, decide on the evidence
+   (an explicit **Decide without the worker** choice with a reason, plus a tick for any
+   punch time), or **Send to payroll**.
+3. After `NO_REPLY_ADMIN_HOURS` (24) more without a supervisor decision: the case goes to
+   Priya (escalated), with the full history.
+
+Silence is never a Yes: no step applies a fix or touches a timecard (`fixes/apply.py`
+stays the only writer after approval). A reply stops the ladder; a late reply resumes the
+normal Phase 8 flow. Each step fires once per wait and is audited with its time.
+`/admin` shows the stage per case, a **Stuck (no reply)** counter and filter.
+
+The demo clock is fixed at `ATTENDFLOW_AS_OF`. With `ATTENDFLOW_DEMO_MODE=true`, Priya can
+move it forward on `/admin` (+1 h, +8 h, +1 day; `POST /api/admin/demo/clock`); a demo
+reset puts it back. Moving it changes "now" for timestamps and timeouts only, never the
+data cut-off, so detection results stay the same. Walkthrough: section 8 of
+[docs/DEMO_WALKTHROUGH.md](docs/DEMO_WALKTHROUGH.md).
 
 From `frontend/`, run `npm test`, `npm run typecheck`, and `npm run build`.
 Run `npm run api:generate` after backend API changes to refresh the generated

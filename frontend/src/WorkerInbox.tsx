@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import {
   confirmWorkerTime,
-  getWorkerMessages,
+  getWorkerInbox,
   sendReply,
   submitManualTime,
   type WorkerMessage,
+  type WorkerNotice,
   type WorkerReceipt,
 } from './api'
 
@@ -57,6 +58,10 @@ function QuestionCard({
   return (
     <article className="question-card">
       <time dateTime={item.date}>{displayDate(item.date)}</time>
+      {item.reminder && (
+        <p className="reminder" role="note"><strong>Reminder:</strong> {item.reminder.text.replace(/^Reminder: /, '')}</p>
+      )}
+      {item.status_note && <p className="status-note">{item.status_note}</p>}
       <p className="question-text">{item.message}</p>
       {item.needs_actual_time ? (
         review?.stage === 'candidate' && !editing ? (
@@ -129,16 +134,34 @@ function QuestionCard({
   )
 }
 
+// Phase 13: cases the worker can no longer answer (decided without them, or with payroll).
+function NoticeCard({ notice }: { notice: WorkerNotice }) {
+  return (
+    <article className="question-card notice-card" aria-label={notice.title}>
+      <time dateTime={notice.date}>{displayDate(notice.date)}</time>
+      <h2>{notice.title}</h2>
+      <p>{notice.text}</p>
+      {notice.reason && <p><strong>Reason:</strong> {notice.reason}</p>}
+    </article>
+  )
+}
+
 export function WorkerInbox() {
   const [items, setItems] = useState<WorkerMessage[] | null>(null)
+  const [notices, setNotices] = useState<WorkerNotice[]>([])
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [request, setRequest] = useState(0)
 
   useEffect(() => {
     const controller = new AbortController()
-    getWorkerMessages(controller.signal)
-      .then((messages) => { if (!controller.signal.aborted) setItems(messages) })
+    getWorkerInbox(controller.signal)
+      .then((inbox) => {
+        if (!controller.signal.aborted) {
+          setItems(inbox.items)
+          setNotices(inbox.notices)
+        }
+      })
       .catch((failure: unknown) => {
         if (!controller.signal.aborted) {
           setError(failure instanceof Error ? failure.message : 'The inbox could not be loaded.')
@@ -159,7 +182,7 @@ export function WorkerInbox() {
       ) : items === null ? (
         <p role="status" className="panel">Loading your questions…</p>
       ) : items.length === 0 ? (
-        <p className="panel">Nothing needs your attention</p>
+        <p className="panel">{notices.length ? 'No open questions' : 'Nothing needs your attention'}</p>
       ) : items.map((item) => (
         <QuestionCard key={item.exception_id} item={item} onResult={(result) => {
           setItems((current) => current?.flatMap((question) => {
@@ -177,6 +200,11 @@ export function WorkerInbox() {
           }
         }} />
       ))}
+      {items !== null && !error && notices.length > 0 && (
+        <section aria-label="Updates">
+          {notices.map((notice) => <NoticeCard key={notice.exception_id + notice.kind} notice={notice} />)}
+        </section>
+      )}
     </main>
   )
 }

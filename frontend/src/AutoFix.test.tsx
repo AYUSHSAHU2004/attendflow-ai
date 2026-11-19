@@ -37,7 +37,7 @@ function overview(): AdminOverview {
   return {
     counters: {
       total: 17, open: 16, awaiting_worker: 0, awaiting_supervisor: 0, escalated: 0,
-      resolved: 1, rejected: 0, auto_resolved: 1,
+      resolved: 1, rejected: 0, auto_resolved: 1, stuck: 0,
     },
     matched: 2,
     limit: 200,

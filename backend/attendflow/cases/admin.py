@@ -8,11 +8,13 @@ the decision endpoints (Phase 9); investigating reuses the investigate job (Phas
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session
 
+from attendflow.cases import no_reply as ladder
 from attendflow.cases.auto_fix import auto_fix_info
 from attendflow.cases.supervisor import (
     SEVERITY_RANK,
@@ -40,6 +42,9 @@ STATUSES = (
     "rejected",
 )
 SORTS = ("severity", "date", "employee", "updated")
+FINAL = ("resolved", "rejected")
+# Phase 13: "stuck" = not final and the no-reply ladder took at least one step.
+NO_REPLY_STAGES = {"reminded": 1, "supervisor": 2, "payroll_admin": 3}
 DEFAULT_LIMIT = 200
 MAX_LIMIT = 500
 
@@ -73,9 +78,15 @@ def counters(session: Session) -> dict[str, int]:
     auto = session.scalar(
         select(func.count()).select_from(ExceptionRow).where(ExceptionRow.auto_resolved)
     )
+    stuck = session.scalar(
+        select(func.count())
+        .select_from(ExceptionRow)
+        .where(ExceptionRow.no_reply_stage > 0, ExceptionRow.status.not_in(FINAL))
+    )
     out = {"total": sum(by_status.values())}
     out.update({status: by_status.get(status, 0) for status in STATUSES})
     out["auto_resolved"] = auto or 0
+    out["stuck"] = stuck or 0
     return out
 
 
@@ -112,9 +123,11 @@ def overview(
     employee_id: str | None = None,
     severity: str | None = None,
     q: str | None = None,
+    no_reply: str | None = None,
     sort: str = "severity",
     limit: int = DEFAULT_LIMIT,
     offset: int = 0,
+    now: datetime | None = None,
 ) -> dict[str, Any]:
     actor = require_admin(session, actor_id)
     employees = {e.employee_id: e for e in session.scalars(select(EmployeeRow))}
@@ -132,6 +145,10 @@ def overview(
         stmt = stmt.where(ExceptionRow.employee_id == employee_id)
     if severity:
         stmt = stmt.where(ExceptionRow.severity == severity)
+    if no_reply == "any":
+        stmt = stmt.where(ExceptionRow.no_reply_stage > 0, ExceptionRow.status.not_in(FINAL))
+    elif no_reply in NO_REPLY_STAGES:
+        stmt = stmt.where(ExceptionRow.no_reply_stage == NO_REPLY_STAGES[no_reply])
     if q and q.strip():
         pattern = _like(q.strip())
         stmt = stmt.where(
@@ -170,6 +187,7 @@ def overview(
                 "investigation_fallback": bool(inv.get("fallback")) if inv else None,
                 "needs_your_decision": _needs_decision(row, actor),
                 "updated_at": row.updated_at,
+                "no_reply": ladder.info(row, now or row.updated_at, worker.name),
             }
         )
     return {
@@ -202,6 +220,7 @@ def _filter_options(session: Session, employees: dict[str, EmployeeRow]) -> dict
             for eid in sorted(employee_ids, key=lambda e: employees[e].name)
         ],
         "severities": list(SEVERITY_RANK),
+        "no_reply": list(ladder.FILTERS),
     }
 
 
@@ -321,6 +340,32 @@ def audit_summary(entry: AuditLogRow, employees: dict[str, EmployeeRow]) -> str:
         return f"Rejected and sent to {_name(employees, after.get('assigned_to'))}."
     if action == "reject":
         return "Rejected (final). No data changed."
+    if action == "no_reply_reminder":
+        return "No reply yet: the system sent one reminder (template)."
+    if action == "no_reply_to_supervisor":
+        hours = after.get("hours_without_reply")
+        to = _name(employees, after.get("assigned_to"))
+        return f"No reply for {hours}: brought in {to}. Nothing was changed."
+    if action == "no_reply_to_admin":
+        to = _name(employees, after.get("assigned_to"))
+        return f"The supervisor did not act in time: sent to {to}. Nothing was changed."
+    if action == "no_reply_ladder_stopped":
+        when = (
+            "late, after the supervisor was brought in"
+            if after.get("late")
+            else "after the reminder"
+        )
+        return f"The worker replied ({when}); the no-reply steps stopped."
+    if action == "decided_without_worker":
+        how = {"prefilled": ", time as prefilled", "edited": ", time edited"}.get(
+            after.get("time_source") or "", ""
+        )
+        who = _name(employees, entry.actor_id)
+        return f"{who} decided without the worker's reply{how}."
+    if action == "escalate_to_admin":
+        return f"Escalated to {_name(employees, after.get('assigned_to'))} (no decision made)."
+    if action == "demo_clock_moved":
+        return f"Demo clock moved forward {after.get('hours')} h."
     return action.replace("_", " ").capitalize() + "."
 
 
@@ -369,6 +414,8 @@ def _message(m: WorkerMessageRow) -> dict[str, Any]:
         "replied_at": m.replied_at,
         "needs_actual_time": m.needs_actual_time,
         "time_review": m.time_review,
+        "reminded_at": m.reminded_at,
+        "reminder_text": m.reminder_text,
     }
 
 
@@ -379,6 +426,7 @@ def detail(
     *,
     exception_id: str,
     actor_id: str,
+    now: datetime | None = None,
 ) -> dict[str, Any]:
     actor = require_admin(session, actor_id)
     row = session.get(ExceptionRow, exception_id)
@@ -438,4 +486,5 @@ def detail(
         "applied_fix": row.applied_fix,
         "audit_trail": [_audit_entry(a, employees) for a in audit],
         "tool_calls": [_tool_call(c) for c in calls],
+        "no_reply": ladder.info(row, now or row.updated_at, worker.name),
     }

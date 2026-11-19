@@ -23,6 +23,7 @@ export function cycle(overrides: Partial<SchedulerCycle> = {}): SchedulerCycle {
     skipped_message_budget: [],
     skipped_backlog: 16,
     skipped_undone: 0,
+    no_reply: { enabled: true, reminded: [], to_supervisor: [], to_admin: [] },
     errors: [],
     ...overrides,
   }
@@ -42,6 +43,15 @@ export function schedulerStatus(overrides: Partial<SchedulerStatus> = {}): Sched
     watermark: null,
     last_cycle: null,
     as_of: '2026-04-16T08:00:00',
+    clock: {
+      now: '2026-04-16T08:00:00',
+      data_as_of: '2026-04-16T08:00:00',
+      offset_hours: 0,
+      max_offset_hours: 336,
+      movable: false,
+      hint: null,
+    },
+    no_reply: { enabled: true, reminder_hours: 8, supervisor_hours: 24, admin_hours: 24 },
     demo_mode: false,
     workers: [],
     ...overrides,

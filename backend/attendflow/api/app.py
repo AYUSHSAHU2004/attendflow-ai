@@ -19,11 +19,11 @@ from sqlalchemy import Engine
 from sqlalchemy.exc import OperationalError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from attendflow import __version__
+from attendflow import __version__, demo_clock
 from attendflow.agent.jobs import InvestigationJobs
 from attendflow.api.logging_setup import configure_logging, request_id_var
 from attendflow.api.routes import demo_router, router
-from attendflow.clock import Clock, FixedClock
+from attendflow.clock import Clock, DemoClock
 from attendflow.config import Settings, get_settings
 from attendflow.db.session import make_engine, make_session_factory
 from attendflow.errors import AppError
@@ -92,7 +92,8 @@ def create_app(
     engine = engine or make_engine(settings.database_url)
 
     sessions = make_session_factory(engine)
-    clock = clock or FixedClock(settings.as_of)
+    # Fixed at the as-of time unless demo mode moves it (Phase 13, demo_clock.py).
+    clock = clock or DemoClock(settings.as_of)
     jobs = InvestigationJobs(sessions, settings, clock)
     policy = load_policy(settings.data_dir / "policy.json")
     scheduler = Scheduler(CycleDeps(sessions, settings, policy, clock, jobs))
@@ -110,6 +111,8 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
+        if settings.demo_mode:
+            await asyncio.to_thread(demo_clock.load, sessions, clock)
         await recover_jobs(startup=True)
         watcher = asyncio.create_task(watch_jobs())
         if settings.scheduler_enabled:

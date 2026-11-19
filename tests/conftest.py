@@ -117,6 +117,11 @@ def api_settings(db_engine):
         scheduler_enabled=False,
         scheduler_backlog=False,
         auto_resolve_enabled=True,  # Phase 12 kill switch: on unless a test turns it off
+        # Phase 13: the no-reply ladder with its documented defaults.
+        no_reply_escalation_enabled=True,
+        no_reply_reminder_hours=8,
+        no_reply_supervisor_hours=24,
+        no_reply_admin_hours=24,
     )
 
 

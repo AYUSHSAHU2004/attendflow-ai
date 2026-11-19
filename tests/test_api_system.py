@@ -54,6 +54,8 @@ EXPECTED_PATHS = {
     ("post", "/api/admin/scheduler/run-now"),
     ("post", "/api/admin/scheduler/start"),
     ("post", "/api/admin/scheduler/stop"),
+    # Phase 13. /api/admin/demo/clock is demo-only too.
+    ("post", "/api/exceptions/{exception_id}/escalate"),
 }
 
 

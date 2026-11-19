@@ -8,7 +8,11 @@ A cycle:
    time, so a rate-limited provider is never flooded;
 3. sends the worker message for open cases whose stored investigation routes to the
    worker, at most `scheduler_messages_per_cycle`, acting as "system";
-4. stores a summary (scheduler_runs + one `scheduler_cycle` audit row).
+4. runs the no-reply ladder (Phase 13, cases/ladder.py): reminder, then the supervisor,
+   then payroll, for cases still waiting for a reply. It covers EVERY case waiting for a
+   worker, also hand-asked and backlog ones (the watermark below does not apply to it),
+   and skips undone cases. No LLM, no data changes;
+5. stores a summary (scheduler_runs + one `scheduler_cycle` audit row).
 
 Backlog rule: by default only cases first detected AFTER the watermark are touched. The
 watermark is the audit-log ID at the moment the scheduler started (or a demo reset, or
@@ -34,7 +38,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from attendflow.agent.jobs import InvestigationJobs
-from attendflow.cases import service
+from attendflow.cases import ladder, service
 from attendflow.cases.facts import facts_hash
 from attendflow.clock import Clock
 from attendflow.config import Settings
@@ -234,6 +238,12 @@ def _new_summary(cycle_id: int, trigger: Trigger, deps: CycleDeps, started, wate
         "skipped_message_budget": [],
         "skipped_backlog": 0,
         "skipped_undone": 0,
+        "no_reply": {
+            "enabled": deps.settings.no_reply_escalation_enabled,
+            "reminded": [],
+            "to_supervisor": [],
+            "to_admin": [],
+        },
         "errors": [],
     }
 
@@ -248,6 +258,9 @@ def counts(summary: dict[str, Any]) -> dict[str, int]:
         "skipped_message_budget": len(summary["skipped_message_budget"]),
         "skipped_backlog": summary["skipped_backlog"],
         "skipped_undone": summary["skipped_undone"],
+        "reminded": len(summary["no_reply"]["reminded"]),
+        "to_supervisor": len(summary["no_reply"]["to_supervisor"]),
+        "to_admin": len(summary["no_reply"]["to_admin"]),
         "errors": len(summary["errors"]),
     }
 
@@ -339,7 +352,16 @@ def run_cycle(deps: CycleDeps, trigger: Trigger) -> dict[str, Any]:
             )
             summary["errors"].append(_error(c.exception_id, "ask_worker", exc))
 
-    # 4. Summary: scheduler_runs row + one audit row Priya can read.
+    # 4. The no-reply ladder (every case waiting for a worker; no LLM, no data changes).
+    try:
+        steps = ladder.run_ladder(deps.sessions, settings, deps.clock)
+        summary["errors"].extend(steps.pop("errors"))
+        summary["no_reply"] = steps
+    except Exception as exc:  # noqa: BLE001 - e.g. the database is down; next cycle retries
+        log.exception("no-reply ladder failed", extra={"event": "no_reply_ladder_failed"})
+        summary["errors"].append(_error(None, "no_reply", exc))
+
+    # 5. Summary: scheduler_runs row + one audit row Priya can read.
     finished = datetime.now(UTC)
     summary["finished_at"] = finished.isoformat(timespec="seconds")
     summary["duration_ms"] = round((time.monotonic() - t0) * 1000, 1)
@@ -364,6 +386,7 @@ def run_cycle(deps: CycleDeps, trigger: Trigger) -> dict[str, Any]:
                     "new_exception_ids": summary["new_exception_ids"],
                     "investigated_ids": [i["exception_id"] for i in summary["investigated"]],
                     "messages_sent": summary["messages_sent"],
+                    "no_reply": summary["no_reply"],
                     "duration_ms": summary["duration_ms"],
                 },
                 created_at=deps.clock.now(),

@@ -96,7 +96,7 @@ def test_template_delivery_and_private_reply_receipt(demo, monkeypatch):
     assert set(message) == {"exception_id", "date", "message", "reply_prompt", "needs_actual_time"}
     assert message["date"] == detail["date"] and message["exception_id"] == AMIT_P1
     assert "Did you leave" in message["message"]
-    assert demo.get("/api/worker/messages", headers=MEENA).json() == {"items": []}
+    assert demo.get("/api/worker/messages", headers=MEENA).json() == {"items": [], "notices": []}
     assert_error(demo.get("/api/worker/messages", headers=RAVI), 403, "worker_inbox_only")
     assert_error(
         post(demo, AMIT_P1, "worker-reply", {"confirmed": True}, MEENA), 403, "not_the_worker"
@@ -112,7 +112,7 @@ def test_template_delivery_and_private_reply_receipt(demo, monkeypatch):
         "confirmed": True,
         "needs_actual_time": False,
     }
-    assert demo.get("/api/worker/messages", headers=AMIT).json() == {"items": []}
+    assert demo.get("/api/worker/messages", headers=AMIT).json() == {"items": [], "notices": []}
     row = get(demo, AMIT_P1)
     assert (row["status"], row["assigned_to"]) == ("awaiting_supervisor", "E101")
 

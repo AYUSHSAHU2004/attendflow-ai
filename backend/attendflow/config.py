@@ -53,8 +53,24 @@ class Settings:
     cors_origins: tuple[str, ...] = ("http://localhost:5173", "http://127.0.0.1:5173")
     # Phase 12: kill switch. Off = detection stores P2/P7 cases open for a person.
     auto_resolve_enabled: bool = True
+    # Phase 13: no-reply ladder. Hours, measured on the clock's now() (fixed unless the demo
+    # clock moves). Reminder and supervisor count from the start of the worker's wait; the
+    # payroll admin step counts from the moment the supervisor was brought in.
+    no_reply_escalation_enabled: bool = True
+    no_reply_reminder_hours: float = 8
+    no_reply_supervisor_hours: float = 24
+    no_reply_admin_hours: float = 24
 
     def __post_init__(self) -> None:
+        ladder = (
+            self.no_reply_reminder_hours,
+            self.no_reply_supervisor_hours,
+            self.no_reply_admin_hours,
+        )
+        if not all(isfinite(h) and h > 0 for h in ladder):
+            raise ValueError("NO_REPLY_*_HOURS must be positive numbers")
+        if self.no_reply_reminder_hours >= self.no_reply_supervisor_hours:
+            raise ValueError("NO_REPLY_REMINDER_HOURS must be less than NO_REPLY_SUPERVISOR_HOURS")
         interval = self.scheduler_interval_seconds
         if not isfinite(interval) or interval < 1:
             raise ValueError("SCHEDULER_INTERVAL_SECONDS must be at least 1")
@@ -106,6 +122,10 @@ def get_settings(env_file: Path | None = REPO_ROOT / ".env") -> Settings:
         cors_origins=_env_list("ATTENDFLOW_CORS_ORIGINS")
         or ("http://localhost:5173", "http://127.0.0.1:5173"),
         auto_resolve_enabled=_env_bool("AUTO_RESOLVE_ENABLED", default=True),
+        no_reply_escalation_enabled=_env_bool("NO_REPLY_ESCALATION_ENABLED", default=True),
+        no_reply_reminder_hours=float(os.getenv("NO_REPLY_REMINDER_HOURS") or 8),
+        no_reply_supervisor_hours=float(os.getenv("NO_REPLY_SUPERVISOR_HOURS") or 24),
+        no_reply_admin_hours=float(os.getenv("NO_REPLY_ADMIN_HOURS") or 24),
     )
 
 

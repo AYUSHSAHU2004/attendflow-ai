@@ -4,11 +4,13 @@ import {
   ApiError,
   approveCase,
   editCase,
+  escalateCase,
   getCase,
   getQueue,
   rejectCase,
   type ApproveResult,
   type CaseOption,
+  type NoReply,
   type QueueItem,
   type SupervisorCase,
 } from './api'
@@ -18,8 +20,10 @@ import { TeamAutoFixes } from './AutoFix'
 const TIME_ACTIONS = new Set(['set_clock_out', 'set_clock_in', 'correct_clock_out'])
 const MIN_REJECT = 10
 const MIN_EDIT_REASON = 3
+const MIN_WITHOUT_REASON = 10
+const MIN_ESCALATE = 10
 
-type Mode = 'idle' | 'confirm' | 'edit' | 'reject'
+type Mode = 'idle' | 'confirm' | 'edit' | 'reject' | 'escalate'
 type Finding = SupervisorCase['options'][number]['consequence']['new_violations'][number]
 
 function firstName(name: string) {
@@ -73,9 +77,22 @@ export function plainError(error: unknown, workerName = 'The worker', timeOption
       return 'This case has no fix options. It can only be rejected.'
     case 'exception_not_found':
       return 'This case no longer exists.'
+    case 'no_reply_not_escalated':
+      return `You can decide without ${who} only after they missed the reply deadline.`
+    case 'reason_required':
+      return `Give a reason of at least ${MIN_WITHOUT_REASON} characters for deciding without ${who}.`
+    case 'time_confirmation_required':
+      return `Tick "I'm confirming this time without the worker's reply" first.`
     default:
       return error.message
   }
+}
+
+/** Phase 13: "worker has not replied" badge text for the queue and the admin list. */
+export function noReplyBadge(noReply: NoReply | null | undefined): string {
+  if (!noReply) return ''
+  if (noReply.stage === 0) return 'replied late'
+  return noReply.hours_without_reply ? `no reply · ${noReply.hours_without_reply}` : 'no reply'
 }
 
 function findingText(item: Finding) {
@@ -214,6 +231,18 @@ function EditForm({
 
 // ---------------------------------------------------------------- case card
 
+function NoReplyNote({ noReply }: { noReply: NoReply }) {
+  return (
+    <section aria-label="No reply" className={noReply.stage ? 'no-reply warn-box' : 'no-reply'}>
+      <h3>{noReply.label}</h3>
+      <p>{noReply.note}</p>
+      {noReply.can_decide_without_worker && (
+        <p className="hint">Ask again, decide on the evidence, or send it to payroll.</p>
+      )}
+    </section>
+  )
+}
+
 /** The decision card. Also used by the payroll admin page for cases escalated to her. */
 export function CaseCard({
   id,
@@ -235,6 +264,10 @@ export function CaseCard({
   const [mode, setMode] = useState<Mode>('idle')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [withoutWorker, setWithoutWorker] = useState(false)
+  const [withoutReason, setWithoutReason] = useState('')
+  const [timeTicked, setTimeTicked] = useState(false)
+  const [escalateReason, setEscalateReason] = useState('')
 
   useEffect(() => {
     const controller = new AbortController()
@@ -258,6 +291,16 @@ export function CaseCard({
   const decided = data.status === 'resolved' || data.status === 'rejected'
   const noteTooShort = Boolean(option?.note_field) && note.trim().length < data.min_note_length
   const canEdit = Boolean(option && (option.fields.some((field) => field.editable) || option.punches?.length))
+  // Phase 13: deciding without the worker is an explicit, separate choice with its own reason.
+  const canDecideWithout = Boolean(data.no_reply?.can_decide_without_worker)
+  const without = canDecideWithout && withoutWorker
+  const timeOption = Boolean(option && TIME_ACTIONS.has(option.action))
+  const withoutBlocked = without && (
+    withoutReason.trim().length < MIN_WITHOUT_REASON || (timeOption && !timeTicked)
+  )
+  const withoutFields = without
+    ? { without_worker: true, confirm_time_without_worker: timeOption && timeTicked }
+    : {}
 
   async function act(run: () => Promise<string>, closeCard: boolean) {
     setBusy(true)
@@ -289,13 +332,26 @@ export function CaseCard({
     if (!option) return
     void act(async () => approvedMessage(await approveCase(data!.exception_id, {
       option_id: option.option_id,
-      reason: option.note_field ? note.trim() : undefined,
+      reason: without ? withoutReason.trim() : option.note_field ? note.trim() : undefined,
+      ...withoutFields,
     }, actor)), false)
   }
 
   function startApprove() {
     if (option?.consequence.creates_violations) setMode('confirm')
     else approve()
+  }
+
+  function submitEscalate(event: FormEvent) {
+    event.preventDefault()
+    if (escalateReason.trim().length < MIN_ESCALATE) {
+      setError(`Give a reason of at least ${MIN_ESCALATE} characters.`)
+      return
+    }
+    void act(async () => {
+      const result = await escalateCase(data!.exception_id, { reason: escalateReason.trim() }, actor)
+      return `Sent to the payroll admin (${result.assigned_to}) with your reason. Nothing was changed.`
+    }, true)
   }
 
   function submitReject(event: FormEvent) {
@@ -326,6 +382,8 @@ export function CaseCard({
         <h3>The issue</h3>
         <p>{data.summary}</p>
       </section>
+
+      {data.no_reply && <NoReplyNote noReply={data.no_reply} />}
 
       <section aria-label="Policy">
         <h3>Policy {data.policy.policy_id}: {data.policy.title}</h3>
@@ -397,13 +455,42 @@ export function CaseCard({
                   <span className={item.consequence.creates_violations ? 'consequence warn' : 'consequence'}>
                     {item.consequence.note}
                   </span>
-                  {item.requires_worker_confirmation && !item.worker_confirmed && (
+                  {item.requires_worker_confirmation && !item.worker_confirmed && !without && (
                     <span className="hint">Needs {firstName(worker)}'s confirmation first.</span>
                   )}
                 </span>
               </label>
             ))}
           </div>
+
+          {canDecideWithout && (
+            <fieldset className="without-worker" aria-label="Decide without the worker">
+              <label className="check">
+                <input type="checkbox" checked={withoutWorker} disabled={busy}
+                  onChange={(event) => { setWithoutWorker(event.target.checked); setError('') }} />
+                Decide on the evidence without {firstName(worker)}'s reply
+              </label>
+              {withoutWorker && (
+                <>
+                  <p className="hint">
+                    Silence is not a Yes. Your reason is saved in the audit log and shown to {firstName(worker)}.
+                  </p>
+                  <label htmlFor={`without-${data.exception_id}`}>
+                    Reason (required, at least {MIN_WITHOUT_REASON} characters)
+                  </label>
+                  <textarea id={`without-${data.exception_id}`} rows={2} value={withoutReason}
+                    disabled={busy} onChange={(event) => setWithoutReason(event.target.value)} />
+                  {timeOption && (
+                    <label className="check">
+                      <input type="checkbox" checked={timeTicked} disabled={busy}
+                        onChange={(event) => setTimeTicked(event.target.checked)} />
+                      I'm confirming this time without the worker's reply
+                    </label>
+                  )}
+                </>
+              )}
+            </fieldset>
+          )}
 
           {option?.note_field && (
             <div className="field">
@@ -442,9 +529,29 @@ export function CaseCard({
               busy={busy}
               onCancel={() => setMode('idle')}
               onSubmit={(params, why) => void act(async () => approvedMessage(
-                await editCase(data.exception_id, { option_id: option.option_id, params, reason: why }, actor),
+                await editCase(data.exception_id, {
+                  option_id: option.option_id,
+                  params,
+                  reason: without ? withoutReason.trim() || why : why,
+                  ...withoutFields,
+                }, actor),
               ), false)}
             />
+          )}
+
+          {mode === 'escalate' && (
+            <form className="reject-form" onSubmit={submitEscalate} noValidate>
+              <label htmlFor={`escalate-${data.exception_id}`}>
+                Why should payroll decide? (required, at least {MIN_ESCALATE} characters)
+              </label>
+              <textarea id={`escalate-${data.exception_id}`} rows={2} value={escalateReason}
+                disabled={busy} onChange={(event) => setEscalateReason(event.target.value)} />
+              <p className="hint">The case goes to the payroll admin. No decision, no timecard changes.</p>
+              <div className="actions">
+                <button type="submit" disabled={busy}>{busy ? 'Sending…' : 'Send to payroll'}</button>
+                <button type="button" className="secondary" disabled={busy} onClick={() => setMode('idle')}>Cancel</button>
+              </div>
+            </form>
           )}
 
           {mode === 'reject' && (
@@ -473,14 +580,19 @@ export function CaseCard({
 
           {mode === 'idle' && (
             <div className="actions">
-              <button disabled={busy || !option || noteTooShort} onClick={startApprove}>
-                {busy ? 'Working…' : 'Approve'}
+              <button disabled={busy || !option || (noteTooShort && !without) || withoutBlocked}
+                onClick={startApprove}>
+                {busy ? 'Working…' : without ? 'Approve without reply' : 'Approve'}
               </button>
               <button className="secondary" disabled={busy || !canEdit}
                 title={canEdit ? undefined : 'This option has nothing to edit'}
                 onClick={() => { setError(''); setMode('edit') }}>Edit</button>
               <button className="secondary danger" disabled={busy}
                 onClick={() => { setError(''); setMode('reject') }}>Reject</button>
+              {canDecideWithout && data.status !== 'escalated' && (
+                <button className="secondary" disabled={busy}
+                  onClick={() => { setError(''); setMode('escalate') }}>Send to payroll</button>
+              )}
             </div>
           )}
         </section>
@@ -542,6 +654,10 @@ export function SupervisorPage() {
                       {item.policy_id} · {displayDate(item.date)}{item.status === 'escalated' ? ' · escalated' : ''}
                       {item.auto_resolve_undone ? ' · auto-resolve undone' : ''}
                     </span>
+                    {item.no_reply && (
+                      <span className={`badge ${item.no_reply.stage ? 'warn' : 'info'} no-reply-badge`}
+                        title={item.no_reply.note}>{noReplyBadge(item.no_reply)}</span>
+                    )}
                     <span className="row-summary">{item.summary}</span>
                   </button>
                 </li>

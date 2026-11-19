@@ -69,7 +69,7 @@ function overview(items: AdminItem[] = [item(), meena]): AdminOverview {
   return {
     counters: {
       total: 17, open: 14, awaiting_worker: 0, awaiting_supervisor: 0, escalated: 1,
-      resolved: 2, rejected: 0, auto_resolved: 2,
+      resolved: 2, rejected: 0, auto_resolved: 2, stuck: 0,
     },
     matched: items.length,
     limit: 200,

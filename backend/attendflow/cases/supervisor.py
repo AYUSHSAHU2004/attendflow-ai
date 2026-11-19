@@ -5,7 +5,9 @@ Who sees what (X-Actor-Id):
   decision: `awaiting_supervisor`, or `open` with a stored investigation that routes the
   case to the supervisor. Plus any `escalated` case assigned to them.
 - The payroll admin sees only `escalated` cases assigned to them (full list: Phase 10).
-- A case still waiting for the worker's actual time (`needs_actual_time`) never appears.
+- A case still waiting for the worker's actual time (`needs_actual_time`) never appears,
+  unless the no-reply ladder brought the supervisor in (Phase 13): then it appears with
+  a "worker has not replied" badge (`no_reply`).
 - An open case whose auto-resolve a person undid (Phase 12) appears for the team supervisor.
 - Workers get 403.
 """
@@ -19,6 +21,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from attendflow.cases import no_reply
 from attendflow.cases.time_review import TIME_ACTIONS
 from attendflow.db.models import EmployeeRow, ExceptionRow, WorkerMessageRow
 from attendflow.engine.models import ACTION_INFO
@@ -87,7 +90,7 @@ def in_queue(row: ExceptionRow, actor: EmployeeRow, team: dict[str, str | None])
     return (row.investigation_case or {}).get("who_to_ask") == "supervisor"
 
 
-def queue(session: Session, actor_id: str) -> list[dict[str, Any]]:
+def queue(session: Session, actor_id: str, now: datetime) -> list[dict[str, Any]]:
     actor = require_reviewer(session, actor_id)
     employees = {e.employee_id: e for e in session.scalars(select(EmployeeRow))}
     team = {eid: e.supervisor_id for eid, e in employees.items()}
@@ -99,7 +102,12 @@ def queue(session: Session, actor_id: str) -> list[dict[str, Any]]:
     ).all()
     picked = [r for r in rows if in_queue(r, actor, team)]
     waiting = _pending_worker_time(session, [r.id for r in picked])
-    picked = [r for r in picked if r.id not in waiting]
+    # Brought in by the no-reply ladder: shown even if the worker said No without a time.
+    picked = [
+        r
+        for r in picked
+        if r.id not in waiting or (r.no_reply_stage or 0) >= no_reply.WITH_SUPERVISOR
+    ]
     picked.sort(key=lambda r: (SEVERITY_RANK.get(r.severity, 9), r.date, r.id))
     items = []
     for row in picked:
@@ -118,6 +126,7 @@ def queue(session: Session, actor_id: str) -> list[dict[str, Any]]:
                 "status": row.status,
                 "waiting_since": row.waiting_since,
                 "auto_resolve_undone": row.auto_resolve_undone_at is not None,
+                "no_reply": no_reply.info(row, now, employees[row.employee_id].name),
             }
         )
     return items
@@ -392,6 +401,7 @@ def case_card(
     *,
     exception_id: str,
     actor_id: str,
+    now: datetime,
 ) -> dict[str, Any]:
     actor = require_reviewer(session, actor_id)
     row = session.get(ExceptionRow, exception_id)
@@ -474,5 +484,6 @@ def case_card(
         "options": card_options(row, policy, reply, worker.name),
         "applied_fix": row.applied_fix,
         "min_note_length": MIN_NOTE,
+        "no_reply": no_reply.info(row, now, worker.name),
     }
     return card

@@ -61,6 +61,12 @@ def db_counts(client) -> dict[str, int]:
         counts["auto_resolved"] = s.execute(
             text("SELECT count(*) FROM exceptions WHERE auto_resolved")
         ).scalar_one()
+        counts["stuck"] = s.execute(
+            text(
+                "SELECT count(*) FROM exceptions WHERE no_reply_stage > 0 "
+                "AND status NOT IN ('resolved', 'rejected')"
+            )
+        ).scalar_one()
     return counts
 
 

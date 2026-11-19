@@ -20,7 +20,7 @@ from typing import Any, Literal
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
-from attendflow.clock import Clock
+from attendflow.clock import Clock, data_as_of
 from attendflow.config import Settings
 from attendflow.db.models import PUNCH_ID_LOCK, AuditLogRow, EmployeeRow, PunchRow
 from attendflow.errors import ConflictError, InvalidInputError
@@ -80,7 +80,7 @@ def _check(
             f"{punch.employee_id} is not a worker; only worker punches are recorded",
             code="not_a_worker",
         )
-    now = clock.now()
+    now = data_as_of(clock)  # the data cut-off; the demo clock never moves it
     if punch.timestamp > now:
         raise InvalidInputError(
             f"{punch.timestamp:%a %d %b %H:%M} is after now ({now:%a %d %b %H:%M})",

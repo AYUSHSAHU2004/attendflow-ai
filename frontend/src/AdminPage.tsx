@@ -12,10 +12,17 @@ import {
 } from './api'
 import { AutoFixPanel, AutoResolveMetricLine } from './AutoFix'
 import { SchedulerPanel } from './SchedulerPanel'
-import { CaseCard, plainError } from './SupervisorPage'
+import { CaseCard, noReplyBadge, plainError } from './SupervisorPage'
 import { displayDate } from './WorkerInbox'
 
-type Filters = Pick<AdminFilters, 'status' | 'policy_id' | 'team' | 'employee_id' | 'q'>
+type Filters = Pick<AdminFilters, 'status' | 'policy_id' | 'team' | 'employee_id' | 'q' | 'no_reply'>
+
+const NO_REPLY_LABELS: Record<string, string> = {
+  any: 'Any step',
+  reminded: 'Reminder sent',
+  supervisor: 'With supervisor',
+  payroll_admin: 'Sent to payroll',
+}
 
 const COUNTERS: { key: keyof AdminCounters; label: string; status?: AdminFilters['status'] }[] = [
   { key: 'total', label: 'All' },
@@ -26,6 +33,7 @@ const COUNTERS: { key: keyof AdminCounters; label: string; status?: AdminFilters
   { key: 'resolved', label: 'Resolved', status: 'resolved' },
   { key: 'rejected', label: 'Rejected', status: 'rejected' },
   { key: 'auto_resolved', label: 'Auto-resolved' },
+  { key: 'stuck', label: 'Stuck (no reply)' },
 ]
 
 export function statusLabel(status: string) {
@@ -149,9 +157,26 @@ export function AdminDetail({
         />
       )}
 
+      {data.no_reply && (
+        <section aria-label="No reply" className={data.no_reply.stage ? 'no-reply warn-box' : 'no-reply'}>
+          <h3>{data.no_reply.label}</h3>
+          <p>{data.no_reply.note}</p>
+          <ul className="facts">
+            {data.no_reply.wait_since && <li>Waiting since {data.no_reply.wait_since.slice(0, 16).replace('T', ' ')}</li>}
+            {data.no_reply.reminded_at && <li>Reminder sent {data.no_reply.reminded_at.slice(0, 16).replace('T', ' ')}</li>}
+            {data.no_reply.supervisor_at && <li>Supervisor brought in {data.no_reply.supervisor_at.slice(0, 16).replace('T', ' ')}</li>}
+            {data.no_reply.admin_at && <li>Sent to payroll {data.no_reply.admin_at.slice(0, 16).replace('T', ' ')}</li>}
+            {data.no_reply.late_reply_at && <li>Worker replied {data.no_reply.late_reply_at.slice(0, 16).replace('T', ' ')}</li>}
+          </ul>
+        </section>
+      )}
+
       {data.needs_your_decision && (
         <div className="decision-callout" role="note">
-          <strong>Needs your decision.</strong> A supervisor rejected the fix and sent it to you.
+          <strong>Needs your decision.</strong>{' '}
+          {data.no_reply?.stage === 3
+            ? 'The worker did not reply and the supervisor did not act in time.'
+            : 'A supervisor sent it to you.'}
           {!deciding && (
             <button className="small" onClick={() => setDeciding(true)}>Open the decision card</button>
           )}
@@ -235,6 +260,7 @@ export function AdminDetail({
             <div key={m.id} className="message-block">
               <p className="hint">Sent ({m.source === 'llm' ? 'written by the LLM, validated' : 'template'})</p>
               <blockquote>{m.message}</blockquote>
+              {m.reminded_at && <p className="hint">Reminder sent {m.reminded_at.slice(0, 16).replace('T', ' ')}: {m.reminder_text}</p>}
               {m.replied_at ? (
                 <p>
                   Reply: <strong>{m.confirmed ? 'Yes' : 'No'}</strong>
@@ -340,7 +366,7 @@ export function AdminPage() {
   }
 
   const options = data?.filter_options
-  const filtered = Boolean(filters.status || filters.policy_id || filters.team || filters.employee_id || filters.q)
+  const filtered = Boolean(filters.status || filters.policy_id || filters.team || filters.employee_id || filters.q || filters.no_reply)
 
   return (
     <main className="page wide admin" id="main">
@@ -356,9 +382,11 @@ export function AdminPage() {
           {COUNTERS.map((c) => (
             <button
               key={c.key}
-              className={`counter ${c.status && filters.status === c.status ? 'active' : ''}`}
-              disabled={!c.status && c.key !== 'total'}
-              onClick={() => setFilter('status', c.status ?? '')}
+              className={`counter ${(c.status && filters.status === c.status) || (c.key === 'stuck' && filters.no_reply) ? 'active' : ''}`}
+              disabled={!c.status && c.key !== 'total' && c.key !== 'stuck'}
+              onClick={() => (c.key === 'stuck'
+                ? setFilters((current) => ({ ...current, status: undefined, no_reply: 'any' }))
+                : setFilter('status', c.status ?? ''))}
               aria-label={`${c.label}: ${data.counters[c.key]}`}
             >
               <span className="count">{data.counters[c.key]}</span>
@@ -404,6 +432,13 @@ export function AdminPage() {
           <select value={filters.employee_id ?? ''} onChange={(event) => setFilter('employee_id', event.target.value)}>
             <option value="">Anyone</option>
             {(options?.employees ?? []).map((e) => <option key={e.employee_id} value={e.employee_id}>{e.name}</option>)}
+          </select>
+        </label>
+        <label>
+          No reply
+          <select value={filters.no_reply ?? ''} onChange={(event) => setFilter('no_reply', event.target.value as Filters['no_reply'])}>
+            <option value="">Any case</option>
+            {(options?.no_reply ?? []).map((value) => <option key={value} value={value}>{NO_REPLY_LABELS[value] ?? value}</option>)}
           </select>
         </label>
         <button
@@ -471,6 +506,11 @@ export function AdminPage() {
                         {item.auto_resolved && <span className="badge auto">auto</span>}
                         {item.auto_resolve_undone && <span className="badge warn">undone</span>}
                         {item.needs_your_decision && <span className="badge decide">Needs your decision</span>}
+                        {item.no_reply && (
+                          <span className={`badge ${item.no_reply.stage ? 'warn' : 'info'}`} title={item.no_reply.note}>
+                            {item.no_reply.stage ? `${item.no_reply.label} · ${noReplyBadge(item.no_reply)}` : noReplyBadge(item.no_reply)}
+                          </span>
+                        )}
                       </td>
                       <td>
                         {item.assigned_to_name ?? '–'}

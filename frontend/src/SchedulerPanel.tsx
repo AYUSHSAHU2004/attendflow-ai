@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   ApiError,
   getSchedulerStatus,
+  moveDemoClock,
   runSchedulerNow,
   sendDemoPunch,
   type PunchInput,
@@ -36,6 +37,8 @@ function panelError(error: unknown) {
         return error.message.charAt(0).toUpperCase() + error.message.slice(1) + '.'
       case 'not_found':
         return 'The demo helpers are switched off on this server (ATTENDFLOW_DEMO_MODE).'
+      case 'clock_limit':
+        return 'The demo clock cannot move more than 14 days past the start. Reset the demo to start again.'
     }
   }
   return plainError(error)
@@ -55,8 +58,26 @@ export function cycleLine(cycle: SchedulerCycle) {
   ]
   if (cycle.skipped_budget.length) parts.push(`${cycle.skipped_budget.length} left for the next cycle`)
   if (cycle.skipped_backlog) parts.push(`${cycle.skipped_backlog} older case${cycle.skipped_backlog === 1 ? '' : 's'} left alone`)
+  const ladder = cycle.no_reply
+  if (ladder?.reminded?.length) parts.push(`${ladder.reminded?.length} reminder${ladder.reminded?.length === 1 ? '' : 's'} sent`)
+  if (ladder?.to_supervisor?.length) parts.push(`${ladder.to_supervisor?.length} sent to the supervisor (no reply)`)
+  if (ladder?.to_admin?.length) parts.push(`${ladder.to_admin?.length} sent to payroll (no reply)`)
   if (cycle.errors.length) parts.push(`${cycle.errors.length} error${cycle.errors.length === 1 ? '' : 's'}`)
   return parts.join(', ')
+}
+
+export const CLOCK_STEPS: { hours: number; label: string }[] = [
+  { hours: 1, label: '+1 h' },
+  { hours: 8, label: '+8 h' },
+  { hours: 24, label: '+1 day' },
+]
+
+/** "Thu 16 Apr 08:00" from a plain local timestamp (no timezone maths). */
+export function demoTime(iso: string) {
+  const day = new Date(iso.slice(0, 10) + 'T00:00:00Z')
+  const weekday = day.toLocaleDateString('en-GB', { weekday: 'short', timeZone: 'UTC' })
+  const month = day.toLocaleDateString('en-GB', { month: 'short', timeZone: 'UTC' })
+  return `${weekday} ${day.getUTCDate()} ${month} ${iso.slice(11, 16)}`
 }
 
 function StatusLine({ status }: { status: SchedulerStatus }) {
@@ -83,6 +104,7 @@ export function SchedulerPanel({ onChanged, pollMs = POLL_MS }: { onChanged: () 
   const [sending, setSending] = useState(false)
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
+  const [moving, setMoving] = useState(false)
   const [form, setForm] = useState({ employee_id: '', type: 'in' as PunchInput['type'], date: '', time: '' })
   const changed = useRef(onChanged)
   changed.current = onChanged
@@ -97,8 +119,8 @@ export function SchedulerPanel({ onChanged, pollMs = POLL_MS }: { onChanged: () 
       setForm((current) => current.employee_id ? current : {
         ...current,
         employee_id: body.workers[0]?.employee_id ?? '',
-        date: body.as_of.slice(0, 10),
-        time: body.as_of.slice(11, 16),
+        date: body.clock.data_as_of.slice(0, 10),
+        time: body.clock.data_as_of.slice(11, 16),
       })
     } catch (failure) {
       if (!signal?.aborted) setLoadError(failure)
@@ -135,6 +157,21 @@ export function SchedulerPanel({ onChanged, pollMs = POLL_MS }: { onChanged: () 
       setRunning(false)
       void load()
       changed.current()
+    }
+  }
+
+  async function moveClock(hours: number) {
+    setMoving(true)
+    setNotice('')
+    setError('')
+    try {
+      const clock = await moveDemoClock(hours)
+      setNotice(`Demo clock is now ${demoTime(clock.now)}. ${clock.hint ?? ''}`.trim())
+    } catch (failure) {
+      setError(panelError(failure))
+    } finally {
+      setMoving(false)
+      void load()
     }
   }
 
@@ -197,7 +234,27 @@ export function SchedulerPanel({ onChanged, pollMs = POLL_MS }: { onChanged: () 
           )}
         </div>
       </div>
-      {running && <p className="hint">Detecting, investigating new cases and messaging workers…</p>}
+      {running && <p className="hint">Detecting, investigating new cases, messaging workers and checking for no replies…</p>}
+
+      <div className="demo-clock" aria-label="Demo clock">
+        <p className="hint">
+          Clock: <strong data-testid="demo-now">{demoTime(status.clock.now)}</strong>
+          {status.clock.offset_hours > 0 && ` (+${status.clock.offset_hours} h)`}
+          {' · '}data as of {demoTime(status.clock.data_as_of)}
+          {status.no_reply.enabled
+            ? ` · no reply: reminder ${status.no_reply.reminder_hours} h, supervisor ${status.no_reply.supervisor_hours} h, payroll +${status.no_reply.admin_hours} h`
+            : ' · no-reply steps off'}
+        </p>
+        {status.clock.movable && (
+          <div className="scheduler-buttons" role="group" aria-label="Move the demo clock">
+            {CLOCK_STEPS.map((step) => (
+              <button key={step.hours} className="secondary small" disabled={moving}
+                onClick={() => void moveClock(step.hours)}
+                aria-label={`Move the demo clock ${step.label}`}>{step.label}</button>
+            ))}
+          </div>
+        )}
+      </div>
 
       {demo && open && (
         <form className="filters punch-form" aria-label="Simulate punch" onSubmit={(event) => void send(event)}>
@@ -225,7 +282,7 @@ export function SchedulerPanel({ onChanged, pollMs = POLL_MS }: { onChanged: () 
           </label>
           <button type="submit" disabled={sending}>{sending ? 'Sending…' : 'Send'}</button>
           <p className="hint block">
-            Demo only. Now is {status.as_of.slice(0, 16).replace('T', ' ')} on the demo clock; later punches are refused.
+            Demo only. Punches after {status.clock.data_as_of.slice(0, 16).replace('T', ' ')} (the data cut-off) are refused.
             The list refreshes every {Math.round(pollMs / 1000)} s while this panel is open.
           </p>
         </form>

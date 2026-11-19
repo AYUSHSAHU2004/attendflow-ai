@@ -46,7 +46,7 @@ const accepted: PunchAccepted = {
 const emptyOverview: AdminOverview = {
   counters: {
     total: 0, open: 0, awaiting_worker: 0, awaiting_supervisor: 0, escalated: 0,
-    resolved: 0, rejected: 0, auto_resolved: 0,
+    resolved: 0, rejected: 0, auto_resolved: 0, stuck: 0,
   },
   matched: 0, limit: 200, offset: 0, items: [],
   filter_options: { statuses: [], policy_ids: [], teams: [], employees: [], severities: [] },
@@ -130,7 +130,7 @@ describe('SchedulerPanel', () => {
     const form = await screen.findByRole('form', { name: 'Simulate punch' })
     expect(within(form).getByLabelText('Date')).toHaveValue('2026-04-16')
     expect(within(form).getByLabelText('Time')).toHaveValue('08:00')
-    expect(form).toHaveTextContent('Now is 2026-04-16 08:00 on the demo clock')
+    expect(form).toHaveTextContent('Punches after 2026-04-16 08:00 (the data cut-off) are refused.')
   })
 
   it('explains a refused punch and does not refresh', async () => {

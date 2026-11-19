@@ -865,3 +865,102 @@ policies have `auto_resolve: true` in `policy.json`; review the metric's definit
 [DEMO_WALKTHROUGH.md](DEMO_WALKTHROUGH.md).
 
 **Next: Phase 13** (no-reply escalation).
+
+## Phase 13: No-reply escalation ladder and the demo clock (2026-11-20)
+
+**What existed before** (built on, not duplicated): `awaiting_worker` cases had
+`waiting_since` and a `worker_messages` row, but nothing watched the time. The clock was a
+`FixedClock` at the as-of time, so no time ever passed. The scheduler (Phase 11), the
+status flow, `ask_worker`, the Phase 8 reply flow, the supervisor queue and Priya's views
+were all reused.
+
+**Built**
+- Clock split (`clock.py`): `now()` stamps rows and drives timeouts; `data_as_of()` is the
+  fixed data cut-off for detection, fixes, worker time checks and device punches. Moving
+  the demo clock therefore never changes detection (tested: same findings before and
+  after). `DemoClock` = as-of + a forward-only offset, demo mode only
+  (`GET/POST /api/admin/demo/clock`, payroll admin, max +14 days, audited, stored in
+  `settings`, restored after a restart, zeroed by demo reset; 404 with demo mode off).
+- The ladder (`cases/no_reply.py` rules, `cases/ladder.py` runner), step 4 of every
+  scheduler cycle and of **Run scheduler now** (timer off is fine): reminder at 8 h,
+  team supervisor at 24 h (`awaiting_supervisor`, "Neha Gupta has not replied for 24 h."),
+  payroll admin 24 h later if the supervisor has not acted (`escalated`). One step per case
+  per check, each once per wait, at the limit and never before, row-locked, with `due_at`
+  and `fired_at` in the audit. No step calls the LLM, applies a fix or writes source data.
+- Migration `0008_no_reply_ladder`: `exceptions.no_reply_stage` + wait/reminder/
+  supervisor/admin/late-reply times; `worker_messages.reminded_at`/`reminder_text`.
+  Backfills the wait start of cases already waiting.
+- Replies: any reply stops the ladder. At stage 2 the worker can still answer: Yes runs
+  the Phase 8 re-check and the case stays with the supervisor ("Replied late"); No sends
+  it back to the worker for the actual time with a new wait. At stage 3 the question is
+  closed (409 `handled_by_payroll`, inbox note "Payroll is handling this now. Please speak
+  to your supervisor."). Asking again starts a new wait.
+- Decide without the worker: approve/edit `without_worker` (stage 2+, assignee only,
+  reason of 10+ characters, explicit `confirm_time_without_worker` tick for any punch
+  time). Phase 8 time checks still run; `fixes/apply.py` still writes. Recorded in
+  `applied_fix.without_worker` (reason, stage, hours, time, prefilled/edited) and a
+  `decided_without_worker` audit row. The worker's inbox shows "Decided without your
+  reply" with the reason.
+- `POST /api/exceptions/{id}/escalate` (reason 10+): the supervisor sends a case to
+  payroll without rejecting it.
+- Visibility: inbox reminder and notices; queue badge "no reply · 24 h" / "replied late";
+  card note with the three choices; `/admin` stage badge, **Stuck (no reply)** counter and
+  filter, step times in the detail, plain audit summaries for every step; demo clock line
+  and +1 h / +8 h / +1 day buttons with the hint "Run the scheduler (or wait for the next
+  cycle) to apply."
+
+**Decisions** (15 defaults accepted, with your changes)
+- **Your change (Q11):** the ladder covers every case waiting for a worker, hand-asked and
+  backlog cases included; the Phase 11 watermark does not apply. Undone cases are skipped.
+  Seeded cases never fire by themselves because none waits for a worker after a reset.
+- **Your change (Q8):** deciding without the worker needs an explicit tick for the time;
+  the audit records prefilled or edited. **Small extension:** the tick applies to every
+  option that sets a punch time (P1 set_clock_in/out and P3 correct_clock_out), not only
+  P1, so no time is ever set silently.
+- **Your wording (Q12)** for the reminder template.
+- One step per check, never skipping: after a long clock jump the reminder still comes
+  first, the supervisor on the next cycle.
+- `needs_actual_time` is kept at escalation (so a late time still works); the queue shows
+  stage 2+ cases anyway (instead of clearing the flag, as the carry-over note suggested).
+- **Policy text change (user-approved):** policy.md P1, P3, P4, P9 and P13 "Allowed fixes"
+  end with "If the worker does not reply in time, the supervisor may decide on the
+  evidence."
+
+**Checks**
+- Backend with `REQUIRE_DB=1`: 660 passed, 2 skipped (opt-in real-LLM). 39 new:
+  `test_no_reply.py` (38: boundaries just before/at each limit, each stage once, clock
+  jumps, nothing for open/resolved/rejected/escalated/undone, kill switch, seeded cases
+  never fire, a hand-asked seeded case escalates, late Yes/No/time, ask again, decide
+  without the worker with every refusal, permissions per stage, escalate, stuck counter
+  and filter, demo clock 404/403/422/restart/reset, write log: silence writes nothing)
+  and `test_e2e_scheduler.py` (1: Neha's silent path over HTTP only, with the SQL
+  write-hook data-safety check). The static writer test is unchanged and passes.
+- Frontend: 75 tests (13 new: reminders and notices, queue badge, decide-without-worker
+  flow, send to payroll, demo clock control, stuck tile and filter). Type-check, build,
+  OpenAPI drift check pass; the bundle has no `URLSearchParams` and no `Neha`.
+- Ruff, `attendflow-validate`, migration 0008 down and up (also with a waiting case:
+  backfill restored its wait start).
+
+**Live check** (own database `attendflow_phase13`, API :8013, Vite :5185, demo mode, no
+LLM key, timer off)
+- Silent path: reset (17 found), Neha 08:58 punch, run: template investigation and
+  question. +8 h, run: reminder in Neha's inbox. +16 h, run: Ravi's queue "NO REPLY · 24
+  H". +24 h, run: escalated to Priya, Stuck 1, "Sent to payroll · no reply · 48 h", every
+  step "Nothing was changed". Neha's inbox: "With payroll". Priya decided without the reply
+  (reason + tick): 18:00 clock-out via `apply.py`, Neha's P3 and P4 opened (9.03 h), inbox
+  "Decided without your reply" with the reason.
+- Late Yes at stage 2: stays with Ravi, "Replied late", +72 h fires nothing. Late No: back
+  to Neha for the time, a new reminder 8 h later, her typed 17:45 returns it to Ravi.
+- The API restart restored the clock offset (+96 h). Amit's P1: open with Ravi, only
+  `detected`, no messages.
+- Found and fixed during the check: checkbox layout on the card; the "ladder stopped" audit
+  row now comes after the reply row; summary wording "after the reminder".
+
+**Phase 22 checklist (added)**: with demo mode off the clock stays fixed and no timeout
+fires, so decide demo mode vs a real clock; review the N/M/K defaults; the inbox shows the
+supervisor's reason to the worker.
+
+**Verify:** `alembic upgrade head`; set `ATTENDFLOW_DEMO_MODE=true` in `.env`; start the
+API and Vite; follow section 8 of [DEMO_WALKTHROUGH.md](DEMO_WALKTHROUGH.md).
+
+**Next: Phase 14** (Activity Center + autonomy table).
