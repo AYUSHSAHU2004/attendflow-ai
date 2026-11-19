@@ -17,6 +17,7 @@ from pydantic import (
     ConfigDict,
     Field,
     PlainSerializer,
+    WithJsonSchema,
     model_validator,
 )
 
@@ -71,11 +72,15 @@ LocalDate = Annotated[date, BeforeValidator(_parse_date)]
 LocalTime = Annotated[
     time,
     BeforeValidator(_parse_time),
+    WithJsonSchema({"type": "string", "pattern": _TIME_RE.pattern, "examples": ["09:00"]}),
     PlainSerializer(lambda t: t.strftime("%H:%M"), return_type=str, when_used="json"),
 ]
 LocalTimestamp = Annotated[
     datetime,
     BeforeValidator(_parse_timestamp),
+    WithJsonSchema(
+        {"type": "string", "pattern": _TS_RE.pattern, "examples": ["2026-04-13T09:00:00"]}
+    ),
     PlainSerializer(lambda ts: ts.isoformat(timespec="seconds"), return_type=str, when_used="json"),
 ]
 YesNo = Annotated[

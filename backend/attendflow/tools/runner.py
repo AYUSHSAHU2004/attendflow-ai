@@ -88,10 +88,21 @@ class ToolRunner:
 
         return cls(load, policy, policy_text, as_of, on_call)
 
-    def run(self, name: str, arguments: str | dict[str, Any]) -> dict[str, Any]:
+    def run(
+        self,
+        name: str,
+        arguments: str | dict[str, Any],
+        *,
+        require_callback: bool = False,
+        blocked: ToolError | None = None,
+    ) -> dict[str, Any]:
         started = time.perf_counter()
         args: dict[str, Any] | str = arguments
-        output = self._run(name, arguments)
+        output = (
+            ToolErrorResult(error=blocked).model_dump(exclude_none=True)
+            if blocked is not None
+            else self._run(name, arguments)
+        )
         if isinstance(arguments, str):
             try:
                 args = json.loads(arguments)
@@ -108,7 +119,11 @@ class ToolRunner:
             "tool call",
             extra={"event": "tool_call", "tool": name, "ok": event.ok, "ms": event.duration_ms},
         )
-        if self.on_call is not None:
+        if require_callback:
+            if self.on_call is None:
+                raise RuntimeError("a tool call callback is required")
+            self.on_call(event)
+        elif self.on_call is not None:
             try:
                 self.on_call(event)
             except Exception:  # noqa: BLE001 - logging must never break the agent loop

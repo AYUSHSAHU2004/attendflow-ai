@@ -22,6 +22,7 @@ attendflow-llm-test = "attendflow.scripts.llm_smoke_test:main"
 attendflow-detect = "attendflow.scripts.detect:main"
 attendflow-api = "attendflow.api.app:main"
 attendflow-tools = "attendflow.scripts.tools_cli:main"
+attendflow-agent-smoke = "attendflow.scripts.agent_smoke:main"
 
 [dependency-groups]
 dev = [

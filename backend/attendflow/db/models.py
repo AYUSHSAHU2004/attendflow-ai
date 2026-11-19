@@ -211,12 +211,19 @@ class ToolCallRow(Base):
     """One tool call made by the agent while investigating (written from Phase 5)."""
 
     __tablename__ = "tool_calls"
-    __table_args__ = (UniqueConstraint("exception_id", "step_no"),)
+    __table_args__ = (
+        UniqueConstraint("run_id", "step_no", "call_no"),
+        Index("ix_tool_calls_exception_id", "exception_id"),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     exception_id: Mapped[str] = mapped_column(ForeignKey("exceptions.id"))
     step_no: Mapped[int] = mapped_column(Integer)
-    tool_name: Mapped[str] = mapped_column(String(60))
+    run_id: Mapped[str | None] = mapped_column(String(32))
+    call_no: Mapped[int | None] = mapped_column(Integer)
+    tool_name: Mapped[str] = mapped_column(Text)
+    ok: Mapped[bool | None] = mapped_column(Boolean)
+    duration_ms: Mapped[float | None] = mapped_column(Float)
     input: Mapped[dict[str, Any]]
     output: Mapped[dict[str, Any] | None]
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False))

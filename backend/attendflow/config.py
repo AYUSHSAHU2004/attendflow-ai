@@ -35,6 +35,14 @@ class Settings:
     enable_seed: bool = True  # POST /api/seed: must be off or protected when deployed
     log_format: str = "json"  # json | text
     log_level: str = "INFO"
+    llm_reasoning_effort: str = "low"
+    agent_max_steps: int = 5
+
+    def __post_init__(self) -> None:
+        if self.agent_max_steps < 1:
+            raise ValueError("AGENT_MAX_STEPS must be positive")
+        if self.llm_reasoning_effort not in {"off", "low", "medium", "high"}:
+            raise ValueError("LLM_REASONING_EFFORT must be off, low, medium or high")
 
 
 def get_settings(env_file: Path | None = REPO_ROOT / ".env") -> Settings:
@@ -52,6 +60,8 @@ def get_settings(env_file: Path | None = REPO_ROOT / ".env") -> Settings:
         enable_seed=_env_bool("ATTENDFLOW_ENABLE_SEED", default=True),
         log_format=(os.getenv("LOG_FORMAT") or "json").lower(),
         log_level=(os.getenv("LOG_LEVEL") or "INFO").upper(),
+        llm_reasoning_effort=(os.getenv("LLM_REASONING_EFFORT") or "low").lower(),
+        agent_max_steps=int(os.getenv("AGENT_MAX_STEPS") or 5),
     )
 
 

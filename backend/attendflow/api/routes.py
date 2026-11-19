@@ -362,6 +362,6 @@ def tool_calls(
     if exception_id:
         stmt = stmt.where(ToolCallRow.exception_id == exception_id)
     rows = session.scalars(
-        stmt.order_by(ToolCallRow.exception_id, ToolCallRow.step_no).limit(limit)
+        stmt.order_by(ToolCallRow.exception_id, ToolCallRow.id).limit(limit)
     ).all()
     return ToolCallListOut(count=len(rows), items=[ToolCallOut.model_validate(r) for r in rows])

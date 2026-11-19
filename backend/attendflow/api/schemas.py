@@ -154,6 +154,10 @@ class ToolCallOut(ApiModel):
     id: int
     exception_id: str
     step_no: int
+    run_id: str | None
+    call_no: int | None
+    ok: bool | None
+    duration_ms: float | None
     tool_name: str
     input: dict[str, Any]
     output: dict[str, Any] | None

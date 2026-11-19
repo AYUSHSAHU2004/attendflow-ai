@@ -362,3 +362,54 @@ P7 show their options. P6 options are tested on synthetic fixtures (no demo case
 
 **Next: Phase 5**
 - LLM client + agent loop: call the tools, log each call, validate the output.
+
+## Phase 5: LLM client and investigation loop (2026-11-19)
+
+- Added native tool calling to the OpenAI-compatible client. It validates assistant
+  messages and retries 429/5xx twice with exponential backoff and bounded `Retry-After`.
+  Groq GPT-OSS defaults to low reasoning effort with reasoning hidden from replies.
+- The investigation reads a stored exception and runs up to five model steps by default.
+  It feeds successful and failed tool results back to the model and returns an `AgentRun`
+  with a plain final answer or a stop reason.
+- Each tool call commits through a separate journal session. Migration
+  `0002_agent_tool_calls` adds run and call identifiers, success and duration, and
+  supports multiple calls per step. Start and end audit rows identify the run.
+- Verified 409 tests on PostgreSQL, including migration-to-model parity, scripted
+  tool calling, failed tool calls, early stops, retry delays and source-data invariance.
+  Ruff lint, format and demo data validation passed.
+- The first live smoke returned HTTP 400. A diagnostic run completed two native
+  tools before Groq rejected the `run_checks` call. The tool schema advertised
+  RFC 3339 `date-time` where the app accepts a timezone-free local timestamp.
+  The single-tool `run_checks` probe reproduced the 400. Omitting reasoning
+  effort, using a minimal tool, sending the full tool list, and sending a tool
+  result back all worked in isolation.
+- Local timestamp and time schemas now use the existing validation patterns.
+  The client reports the provider's error message with key and prompt redaction.
+- The post-fix smoke for Amit's P1 finished in two steps (run
+  `fcfee5a3d21a4f699341dde2cbf3ca19`). `run_checks` simulated an 18:00 clock-out
+  and reported that it resolves P1 with no new violations. The model then gave
+  its final answer. All six source tables matched their before-run snapshots.
+  This run skipped the separate evidence reads requested in the system prompt.
+
+**Next: Phase 6** adds the structured investigation case, fallback and `/investigate`.
+
+### Phase 5 evidence gate
+
+- The system prompt and first user message require `get_schedule`, `get_punches`,
+  `get_leave`, and `get_policy` for the case before `run_checks` or a final answer.
+  The loop selects the next required read in the native request. It credits only
+  successful reads for the case employee, date, and cited policy.
+- Premature simulations return a logged `required_tools_missing` tool error.
+  `AgentRun.missing_required_tools` and the closing audit row identify missing
+  evidence even if a model returns a final answer. The smoke CLI reports it and
+  exits unsuccessfully on incomplete evidence.
+- Registry tests recursively check every tool schema for unsupported formats,
+  including `date-time` and `time`, as well as `$ref`, `$defs`, and
+  `discriminator`. The tests specifically cover the timezone-free formats that
+  replaced the schema responsible for the Groq `run_checks` rejection.
+- All 415 tests passed against PostgreSQL. Ruff lint and format checks passed.
+- The single live rerun for Amit's P1 (run `3d1c6be859e640dc862afa34c8d621a0`)
+  completed all four reads in order, simulated the 18:00 clock-out, and stopped
+  at `final` with no missing tools. All six source tables were unchanged. The
+  model's final text incorrectly said no human intervention was needed even
+  though P1 calls for worker confirmation and supervisor approval.

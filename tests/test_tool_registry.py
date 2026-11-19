@@ -52,7 +52,10 @@ def test_schema_matches_the_pydantic_model(name):
 def test_schema_is_flat_and_self_describing(name):
     params = TOOLS[name].parameters()
     for node in _walk(params):
-        assert "$ref" not in node and "$defs" not in node and "discriminator" not in node
+        assert not ({"$ref", "$defs", "discriminator"} & node.keys()), name
+        # A bare date works on Groq. RFC 3339 time and date-time formats misdescribe
+        # AttendFlow's timezone-free values. Require review before advertising another format.
+        assert node.get("format") in {None, "date"}, (name, node.get("format"))
     for prop, schema in params["properties"].items():
         assert schema.get("description"), f"{name}.{prop} needs a description for the model"
 
@@ -108,3 +111,23 @@ def test_tools_never_call_write_methods():
         src = path.read_text(encoding="utf-8")
         for call in FORBIDDEN_CALLS:
             assert call not in src, f"{path.name} contains {call!r}"
+
+
+@pytest.mark.parametrize(
+    ("action", "field", "accepted", "rejected"),
+    [
+        ("set_clock_out", "timestamp", "2026-04-14T18:00", "2026-04-14T18:00:00Z"),
+        ("correct_clock_out", "timestamp", "2026-04-14T18:00:00", "2026-04-14T18:00:00+05:30"),
+        ("move_shift", "new_start", "09:00", "09:00:00Z"),
+    ],
+)
+def test_run_checks_schema_advertises_local_times(action, field, accepted, rejected):
+    import re
+
+    variants = TOOLS["run_checks"].parameters()["properties"]["proposed_change"]["oneOf"]
+    variant = next(item for item in variants if item["properties"]["action"]["const"] == action)
+    schema = variant["properties"]["params"]["properties"][field]
+    assert schema["type"] == "string"
+    assert "format" not in schema
+    assert re.fullmatch(schema["pattern"], accepted)
+    assert not re.fullmatch(schema["pattern"], rejected)

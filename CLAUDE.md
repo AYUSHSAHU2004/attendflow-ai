@@ -62,7 +62,7 @@ and CI, 10-minute demo video, 5 slides.
 ## Phase plan
 
 Done: 0 Setup + data + policy + LLM test; 1 Rule engine P1-P7, P15; 2 Rules P8-P14, P16, P17;
-3 Backend + DB + API; 4 Read-only tools + fix options for P3/P4/P6/P7.
+3 Backend + DB + API; 4 Read-only tools + fix options for P3/P4/P6/P7; 5 LLM client + agent loop.
 
 **Prototype (3-10)**
 3. Backend + DB + API
@@ -90,11 +90,13 @@ Done: 0 Setup + data + policy + LLM test; 1 Rule engine P1-P7, P15; 2 Rules P8-P
 23. Tests + evaluation
 24. Delivery
 
-**Next: Phase 5.**
+**Next: Phase 6.**
 
 **Carry-over notes**
-- Phase 5: pass `openai_tools()` as `tools=` and run calls through `ToolRunner.for_database`;
-  write `tool_calls` rows from its `on_call` hook in a separate write session.
+- Phase 5 Groq bug: `run_checks` advertised Pydantic's RFC 3339 `date-time` format for
+  timezone-free local timestamps. Groq rejected minute-precision values with HTTP 400.
+  The schema now advertises the app's local time patterns; the registry tests check
+  every tool schema recursively for unsupported formats and schema references.
 - Phase 9: P1, P9, P10 and P13 also say "the worker is asked first" in policy.md but are not
   flagged `requires_worker_confirmation` yet (kept so the Phase 3 demo approve still works).
   Decide then whether to flag them.
@@ -257,6 +259,22 @@ Done: 0 Setup + data + policy + LLM test; 1 Rule engine P1-P7, P15; 2 Rules P8-P
   and results are filtered to that worker's Mon-Sun week: `new_violations`, `resolved`,
   `still_open`, day and week hours. A parity test checks it against the real writer.
 
+**Investigation loop (Phase 5)**
+- `agent/loop.py` reads a stored exception in a read-only transaction, calls the model
+  with `openai_tools()`, and sends each ToolRunner result back with its tool call ID.
+  `AGENT_MAX_STEPS` defaults to 5, with one model turn and its tool calls per step.
+- The client validates native assistant messages and retries HTTP 429/5xx twice with
+  1 s and 2 s backoff, honoring `Retry-After` up to 60 s. `LLM_REASONING_EFFORT`
+  defaults to `low`; use `off` to omit the parameter.
+- `AgentRun` contains the steps, final text, total duration, run ID, and stop reason
+  (`final`, `max_steps`, or `llm_error`). `missing_required_tools` lists evidence reads
+  still needed for this employee/date and policy. The loop selects each required read
+  in turn and blocks `run_checks` until all four have succeeded. Phase 6 can reject an
+  incomplete run even if the model returned a final answer. The journal commits each call in a
+  separate session and records start and end audit events as actor `agent`.
+  Migration `0002_agent_tool_calls` adds run ID, per-step call index, outcome and timing.
+  The investigation leaves source data and case state untouched.
+
 ## Repo map
 
 ```
@@ -273,7 +291,9 @@ backend/attendflow/
   engine/rules_review.py P17 possible punch conflict
   engine/checks.py       ordered CHECKS registry + the check-order note
   engine/engine.py       build_context() + run_engine(dataset, policy, as_of) -> EngineResult
-  llm/client.py          OpenAI-compatible chat_once()/list_models(); failures -> LLMError
+  llm/client.py          OpenAI-compatible chat()/chat_once()/list_models(); bounded retry
+  agent/loop.py          Native tool calls over one stored exception, returns AgentRun
+  agent/journal.py       Separate write sessions for tool call and audit rows
   clock.py               FixedClock: the only source of "now" (ATTENDFLOW_AS_OF)
   errors.py              AppError family -> HTTP status + error code
   db/models.py           SQLAlchemy tables (6 source tables + exceptions, audit_log, tool_calls, settings)
@@ -314,6 +334,8 @@ docker compose up -d db                    # PostgreSQL (port 5433)
 python -m uv run alembic upgrade head      # create/upgrade tables
 python -m uv run attendflow-api            # API on http://localhost:8000/docs
 python -m uv run attendflow-tools list     # agent tools (get_punches employee_id=E001 date=2026-04-14; --csv)
+# Set AGENT_MAX_STEPS=6 in your shell for this sequential Groq smoke.
+python -m uv run attendflow-agent-smoke P1-E001-2026-04-14
 python -m uv run pytest                    # tests (API tests need the db container)
 python -m uv run ruff check . && python -m uv run ruff format --check .
 ```
