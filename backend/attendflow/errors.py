@@ -44,3 +44,20 @@ class InvalidFixError(AppError):
 
     status_code = 422
     code = "invalid_fix"
+
+
+class InvalidInputError(AppError):
+    """Well-formed input that the business rules refuse (unknown worker, future time...)."""
+
+    status_code = 422
+    code = "invalid_input"
+
+
+class UnauthorizedError(AppError):
+    status_code = 401
+    code = "unauthorized"
+
+
+class ServiceUnavailableError(AppError):
+    status_code = 503
+    code = "service_unavailable"

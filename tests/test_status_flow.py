@@ -150,17 +150,43 @@ def _imported_names(path: Path) -> set[str]:
     return names
 
 
+# Phase 11: the device ingest module is the one other writer. It may use PunchRow only
+# (never schedule or leave), and only to INSERT new punches (checked below and by the SQL
+# write hook in test_e2e_prototype.py).
+INGEST_MODULE = "ingest/punches.py"
+
+
 def test_only_apply_and_seed_touch_source_tables():
-    """Nothing but fixes/apply.py (and the demo seed) may modify timecards and leave."""
+    """Nothing but fixes/apply.py, the demo seed and the punch ingest module may modify
+    timecards and leave."""
     offenders = []
     for path in BACKEND.rglob("*.py"):
         rel = path.relative_to(BACKEND).as_posix()
         if rel in ALLOWED_MODULES or rel.startswith("db/migrations/"):
             continue
         used = _imported_names(path) & PROTECTED
+        if rel == INGEST_MODULE:
+            used -= {"PunchRow"}
         if used:
             offenders.append(f"{rel}: {sorted(used)}")
-    assert not offenders, "source tables used outside fixes/apply.py: " + "; ".join(offenders)
+    assert not offenders, "source tables used outside the allowed writers: " + "; ".join(offenders)
+
+
+def test_ingest_module_only_inserts_punches():
+    """The ingest module adds punches; it never updates, voids or deletes one."""
+    src = (BACKEND / INGEST_MODULE).read_text(encoding="utf-8")
+    for call in (".delete(", "update(", ".merge(", "voided=True", ".voided =", "TRUNCATE"):
+        assert call not in src, f"{INGEST_MODULE} must only insert punches, found {call!r}"
+    tree = ast.parse(src)
+    assigned = {
+        target.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Attribute)
+    }
+    assert not assigned, f"{INGEST_MODULE} must not change existing rows: {sorted(assigned)}"
+    assert src.count("session.add(") == 2  # the new punch and its audit row
 
 
 def test_dataset_reader_never_writes():

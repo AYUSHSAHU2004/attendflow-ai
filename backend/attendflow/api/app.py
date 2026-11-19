@@ -22,12 +22,14 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from attendflow import __version__
 from attendflow.agent.jobs import InvestigationJobs
 from attendflow.api.logging_setup import configure_logging, request_id_var
-from attendflow.api.routes import router
+from attendflow.api.routes import demo_router, router
 from attendflow.clock import Clock, FixedClock
 from attendflow.config import Settings, get_settings
 from attendflow.db.session import make_engine, make_session_factory
 from attendflow.errors import AppError
 from attendflow.policy.models import load_policy
+from attendflow.scheduler.cycle import CycleDeps
+from attendflow.scheduler.runner import Scheduler
 
 log = logging.getLogger("attendflow.api")
 
@@ -92,6 +94,8 @@ def create_app(
     sessions = make_session_factory(engine)
     clock = clock or FixedClock(settings.as_of)
     jobs = InvestigationJobs(sessions, settings, clock)
+    policy = load_policy(settings.data_dir / "policy.json")
+    scheduler = Scheduler(CycleDeps(sessions, settings, policy, clock, jobs))
 
     async def recover_jobs(*, startup: bool = False) -> None:
         try:
@@ -108,9 +112,16 @@ def create_app(
     async def lifespan(_: FastAPI):
         await recover_jobs(startup=True)
         watcher = asyncio.create_task(watch_jobs())
+        if settings.scheduler_enabled:
+            try:
+                await asyncio.to_thread(scheduler.recover_interrupted)
+                await asyncio.to_thread(scheduler.start)
+            except OperationalError:
+                log.warning("scheduler not started: the database is unreachable")
         try:
             yield
         finally:
+            await asyncio.to_thread(scheduler.stop)
             watcher.cancel()
             with suppress(asyncio.CancelledError):
                 await watcher
@@ -132,11 +143,15 @@ def create_app(
             {"name": "exceptions", "description": "Read exceptions"},
             {"name": "decisions", "description": "Human decisions (status flow)"},
             {"name": "logs", "description": "Audit log and agent tool calls"},
+            {"name": "device", "description": "Mock attendance device (X-Device-Key)"},
+            {"name": "scheduler", "description": "Automatic detection, investigation, messages"},
+            {"name": "demo", "description": "Demo-only helpers (ATTENDFLOW_DEMO_MODE=true)"},
+            {"name": "admin", "description": "Payroll admin views"},
         ],
     )
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+        allow_origins=list(settings.cors_origins),
         allow_methods=["GET", "POST"],
         allow_headers=["X-Actor-Id", "Content-Type"],
         expose_headers=["Location"],
@@ -145,7 +160,8 @@ def create_app(
     app.state.engine = engine
     app.state.session_factory = sessions
     app.state.investigation_jobs = jobs
-    app.state.policy = load_policy(settings.data_dir / "policy.json")
+    app.state.policy = policy
+    app.state.scheduler = scheduler
     app.state.clock = clock
     app.state.logger = log
 
@@ -176,12 +192,17 @@ def create_app(
 
     _install_error_handlers(app)
     app.include_router(router)
+    if settings.demo_mode:
+        app.include_router(demo_router)
     log.info(
         "app started",
         extra={
             "event": "startup",
             "as_of": settings.as_of.isoformat(),
             "seed_enabled": settings.enable_seed,
+            "demo_mode": settings.demo_mode,
+            "scheduler_enabled": settings.scheduler_enabled,
+            "device_api": bool(settings.device_api_key),
         },
     )
     return app

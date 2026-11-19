@@ -163,3 +163,27 @@ export async function getAdminCase(id: string, signal?: AbortSignal) {
     '/api/admin/exceptions/' + encodeURIComponent(id), adminActor.id, { signal },
   )).body
 }
+
+// ---------------------------------------------------------------- scheduler and demo (Phase 11)
+
+export type SchedulerStatus = Schemas['SchedulerStatusOut']
+export type SchedulerCycle = Schemas['SchedulerCycleOut']
+export type PunchInput = Schemas['DemoPunchIn']
+export type PunchAccepted = Schemas['PunchAcceptedOut']
+
+export async function getSchedulerStatus(signal?: AbortSignal) {
+  return (await request<SchedulerStatus>('/api/admin/scheduler', adminActor.id, { signal })).body
+}
+
+export async function runSchedulerNow() {
+  return (await request<SchedulerCycle>('/api/admin/scheduler/run-now', adminActor.id, {
+    method: 'POST',
+  })).body
+}
+
+// DEMO_MODE only: the server has no such route otherwise (404).
+export async function sendDemoPunch(body: PunchInput) {
+  return (await request<PunchAccepted>('/api/admin/demo/punch', adminActor.id, {
+    method: 'POST', body: JSON.stringify(body),
+  })).body
+}

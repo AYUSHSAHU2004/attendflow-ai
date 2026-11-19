@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { reviewerFor } from './actors'
+import { reviewerFor, workerFor } from './actors'
 
 describe('reviewer identity', () => {
   afterEach(() => {
@@ -47,5 +47,21 @@ describe('reviewer identity', () => {
     window.history.replaceState({}, '', '/admin')
     vi.resetModules()
     expect((await import('./actors')).adminActor).toEqual({ id: 'E201', name: 'Priya Sharma' })
+  })
+
+  it('acts as Amit in the inbox; ?as=E004 (Neha) only in a dev build', async () => {
+    expect(workerFor('', true).id).toBe('E001')
+    expect(workerFor('?as=e004', true)).toEqual({ id: 'E004', name: 'Neha Gupta' })
+    expect(workerFor('?as=E101', true).id).toBe('E001') // reviewers are not workers
+    expect(workerFor('?as=E004', false).id).toBe('E001')
+
+    window.history.replaceState({}, '', '/?as=E004')
+    vi.stubEnv('DEV', false)
+    vi.resetModules()
+    expect((await import('./actors')).workerActor.id).toBe('E001')
+
+    vi.stubEnv('DEV', true)
+    vi.resetModules()
+    expect((await import('./actors')).workerActor.id).toBe('E004')
   })
 })

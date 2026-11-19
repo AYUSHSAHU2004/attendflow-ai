@@ -5,7 +5,8 @@
 2. The reject path: Ravi rejects Meena's P5, Priya's reject is final.
 3. The failure paths: the LLM is down, or returns invalid output, at every step. The
    flow still completes with the template and the manual time field.
-4. Data safety: every write to timecards, schedule or leave came from fixes/apply.py (or
+4. Data safety: every write to timecards, schedule or leave came from fixes/apply.py,
+   the punch ingest module (Phase 11, INSERT only, each with a punch_ingested audit row) (or
    the seed), and every fix write has a matching audit row.
 
 Numbers (hours, counts) are read from the engine's stored results and the database,
@@ -14,6 +15,7 @@ never hard-coded.
 
 from __future__ import annotations
 
+import csv
 import json
 import re
 import sys
@@ -52,6 +54,7 @@ WRITE = re.compile(
 )
 APPLY_FILE = str(Path("attendflow", "fixes", "apply.py"))
 SEED_FILE = str(Path("attendflow", "db", "seed.py"))
+INGEST_FILE = str(Path("attendflow", "ingest", "punches.py"))
 FIX_ACTIONS = ("approve", "edit_and_approve", "auto_resolve")
 
 # An investigation job journals its start and end, then stores the case.
@@ -152,6 +155,9 @@ def write_log(client):
             if filename.endswith(SEED_FILE):
                 entry["writer"] = "seed"
                 break
+            if filename.endswith(INGEST_FILE):
+                entry["writer"] = "ingest"
+                break
             frame = frame.f_back
         else:
             entry["writer"] = None
@@ -164,9 +170,38 @@ def write_log(client):
 
 
 def assert_writes_audited(client, log: list[dict]) -> None:
-    """Only fixes/apply.py and the seed wrote source data; every fix write is audited."""
+    """Only fixes/apply.py, the seed and the ingest module wrote source data; every fix
+    write and every ingested punch is audited."""
     unknown = [entry for entry in log if entry["writer"] is None]
     assert not unknown, unknown
+    ingest = [e for e in log if e["writer"] == "ingest"]
+    # The ingest module only ever INSERTs into timecards, once per stored punch, and each
+    # stored device punch that is not in the seed has its own punch_ingested audit row.
+    assert {(e["table"], e["sql"]) for e in ingest} <= {("timecards", "INSERT")}, ingest
+    seeded = {
+        row["punch_id"]
+        for row in csv.DictReader(
+            (client.app.state.settings.data_dir / "timecards.csv").open(encoding="utf-8")
+        )
+    }
+    with session_for(client) as s:
+        ingested = s.scalars(
+            select(AuditLogRow)
+            .where(AuditLogRow.action == "punch_ingested")
+            .order_by(AuditLogRow.id)
+        ).all()
+        devices = {
+            p.punch_id: p
+            for p in s.scalars(select(PunchRow).where(PunchRow.source != "correction"))
+            if p.punch_id not in seeded
+        }
+    assert len(ingest) == len(ingested), (ingest, ingested)
+    assert {a.after["punch_id"] for a in ingested} == set(devices)
+    for audit in ingested:
+        punch = devices[audit.after["punch_id"]]
+        assert (audit.actor, audit.actor_id, audit.exception_id) == ("device", None, None)
+        assert audit.after["timestamp"] == punch.timestamp.isoformat(timespec="seconds")
+        assert (audit.after["employee_id"], audit.after["type"]) == (punch.employee_id, punch.type)
     written = {e["exception_id"] for e in log if e["writer"] == "apply"}
     with session_for(client) as s:
         audits = s.scalars(

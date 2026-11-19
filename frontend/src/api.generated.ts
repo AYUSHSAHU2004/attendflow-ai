@@ -378,6 +378,140 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/punches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mock attendance device: record one punch
+         * @description Authenticated by the `X-Device-Key` header (DEVICE_API_KEY), not by an actor. The timestamp is local time with no timezone and may not be after the as-of time. An exact duplicate is 409. The punch is written by the ingest module with a `punch_ingested` audit row; detection then runs for that worker's week. Uses no LLM.
+         */
+        post: operations["receive_punch_api_punches_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/scheduler": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Scheduler status and the last cycle's summary (payroll admin only) */
+        get: operations["scheduler_status_api_admin_scheduler_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/scheduler/run-now": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run one scheduler cycle now and return its summary (payroll admin only)
+         * @description Detection, then investigations of new cases and worker messages within the per-cycle limits. 409 scheduler_busy if a cycle is already running.
+         */
+        post: operations["scheduler_run_now_api_admin_scheduler_run_now_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/scheduler/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start the timer (runtime only; a restart goes back to SCHEDULER_ENABLED)
+         * @description Cases detected from now on count as new for the scheduler.
+         */
+        post: operations["scheduler_start_api_admin_scheduler_start_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/scheduler/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Stop the timer (a running cycle finishes first) */
+        post: operations["scheduler_stop_api_admin_scheduler_stop_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/demo/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Demo only: reseed, run detection, and reset the scheduler's 'new case' mark
+         * @description Exists only when ATTENDFLOW_DEMO_MODE=true. Payroll admin only. Destructive: wipes every table like POST /api/seed.
+         */
+        post: operations["demo_reset_api_admin_demo_reset_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/demo/punch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Demo only: send a simulated device punch
+         * @description Exists only when ATTENDFLOW_DEMO_MODE=true. Payroll admin only. Goes through the same ingest module and checks as POST /api/punches, so the device key never has to be in the browser. Audited with via=demo_simulator.
+         */
+        post: operations["demo_punch_api_admin_demo_punch_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -395,7 +529,7 @@ export interface components {
              * Actor
              * @enum {string}
              */
-            actor: "system" | "agent" | "worker" | "supervisor" | "admin";
+            actor: "system" | "agent" | "worker" | "supervisor" | "admin" | "device";
             /** Actor Id */
             actor_id: string | null;
             /** Actor Name */
@@ -796,7 +930,7 @@ export interface components {
              * Actor
              * @enum {string}
              */
-            actor: "system" | "agent" | "worker" | "supervisor" | "admin";
+            actor: "system" | "agent" | "worker" | "supervisor" | "admin" | "device";
             /** Actor Id */
             actor_id: string | null;
             /** Action */
@@ -975,6 +1109,95 @@ export interface components {
             /** Needs Actual Time */
             needs_actual_time: boolean;
         };
+        /** CycleErrorOut */
+        CycleErrorOut: {
+            /** Exception Id */
+            exception_id: string | null;
+            /**
+             * Step
+             * @enum {string}
+             */
+            step: "detection" | "investigate" | "ask_worker";
+            /** Error */
+            error: string;
+        };
+        /** CycleInvestigationOut */
+        CycleInvestigationOut: {
+            /** Exception Id */
+            exception_id: string;
+            /** Job Id */
+            job_id: string;
+            /**
+             * Job Status
+             * @enum {string}
+             */
+            job_status: "running" | "completed" | "failed";
+            /** Reason */
+            reason: string | null;
+            /**
+             * Fallback
+             * @description True when the engine template was stored
+             */
+            fallback: boolean;
+            /** Who To Ask */
+            who_to_ask: string | null;
+            /** Duration Ms */
+            duration_ms: number | null;
+        };
+        /**
+         * DemoPunchIn
+         * @description A simulated device punch from the /admin demo panel (DEMO_MODE only).
+         */
+        DemoPunchIn: {
+            /**
+             * Employee Id
+             * @example E004
+             */
+            employee_id: string;
+            /**
+             * Timestamp
+             * @description Local time, no timezone, e.g. 2026-04-15T09:02 (seconds optional)
+             * @example 2026-04-15T09:02
+             */
+            timestamp: string;
+            /**
+             * Type
+             * @enum {string}
+             */
+            type: "in" | "out" | "break_start" | "break_end";
+            /**
+             * Source
+             * @default device
+             * @constant
+             */
+            source: "device";
+            /**
+             * Device Id
+             * @description Defaults to the worker's usual device
+             */
+            device_id?: string | null;
+            /**
+             * Location
+             * @description One of the known locations; defaults to the worker's usual one
+             */
+            location?: string | null;
+        };
+        /** DemoResetOut */
+        DemoResetOut: {
+            seed: components["schemas"]["SeedOut"];
+            detection: components["schemas"]["DetectionRunOut"];
+            /** Watermark Audit Id */
+            watermark_audit_id: number;
+        };
+        /** DemoWorkerOut */
+        DemoWorkerOut: {
+            /** Employee Id */
+            employee_id: string;
+            /** Name */
+            name: string;
+            /** Team */
+            team: string;
+        };
         /** DetectionRunOut */
         DetectionRunOut: {
             /** As Of */
@@ -1015,6 +1238,21 @@ export interface components {
              * @description Exceptions this run stored for the first time
              */
             created_ids?: string[];
+        };
+        /** DetectionScopeOut */
+        DetectionScopeOut: {
+            /** Employee Id */
+            employee_id: string;
+            /**
+             * Start
+             * Format: date
+             */
+            start: string;
+            /**
+             * End
+             * Format: date
+             */
+            end: string;
         };
         /** EditIn */
         EditIn: {
@@ -1401,6 +1639,89 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /** PunchAcceptedOut */
+        PunchAcceptedOut: {
+            punch: components["schemas"]["PunchOut"];
+            detection: components["schemas"]["PunchDetectionOut"];
+        };
+        /** PunchDetectionOut */
+        PunchDetectionOut: {
+            /** Ran */
+            ran: boolean;
+            scope: components["schemas"]["DetectionScopeOut"];
+            /** New Exception Ids */
+            new_exception_ids: string[];
+            /** Closed Exception Ids */
+            closed_exception_ids: string[];
+            /** Updated */
+            updated: number;
+            /**
+             * Error
+             * @description Set when detection failed; the punch is kept
+             */
+            error: string | null;
+        };
+        /**
+         * PunchIn
+         * @description One punch from an attendance device. Times are plain local wall-clock times.
+         */
+        PunchIn: {
+            /**
+             * Employee Id
+             * @example E004
+             */
+            employee_id: string;
+            /**
+             * Timestamp
+             * @description Local time, no timezone, e.g. 2026-04-15T09:02 (seconds optional)
+             * @example 2026-04-15T09:02
+             */
+            timestamp: string;
+            /**
+             * Type
+             * @enum {string}
+             */
+            type: "in" | "out" | "break_start" | "break_end";
+            /**
+             * Source
+             * @default device
+             * @constant
+             */
+            source: "device";
+            /**
+             * Device Id
+             * @description Defaults to the worker's usual device
+             */
+            device_id?: string | null;
+            /**
+             * Location
+             * @description One of the known locations; defaults to the worker's usual one
+             */
+            location?: string | null;
+        };
+        /** PunchOut */
+        PunchOut: {
+            /** Punch Id */
+            punch_id: string;
+            /** Employee Id */
+            employee_id: string;
+            /** Timestamp */
+            timestamp: string;
+            /**
+             * Type
+             * @enum {string}
+             */
+            type: "in" | "out" | "break_start" | "break_end";
+            /**
+             * Source
+             * @constant
+             */
+            source: "device";
+            /** Device Id */
+            device_id: string;
+            /** Location */
+            location: string;
+        };
         /** RejectIn */
         RejectIn: {
             /**
@@ -1436,6 +1757,109 @@ export interface components {
             week_projected_hours: number;
             /** Weekly Limit Hours */
             weekly_limit_hours: number;
+        };
+        /** SchedulerCycleOut */
+        SchedulerCycleOut: {
+            /** Cycle Id */
+            cycle_id: number;
+            /**
+             * Trigger
+             * @enum {string}
+             */
+            trigger: "schedule" | "run_now";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "completed" | "failed";
+            /** As Of */
+            as_of: string;
+            /**
+             * Started At
+             * @description Real UTC time (operational)
+             */
+            started_at: string;
+            /** Finished At */
+            finished_at: string | null;
+            /** Duration Ms */
+            duration_ms: number | null;
+            /**
+             * Backlog
+             * @description Whether cases detected before the watermark were processed
+             */
+            backlog: boolean;
+            /** Watermark Audit Id */
+            watermark_audit_id: number;
+            /** Detection */
+            detection: ("ok" | "failed") | null;
+            /** Detected */
+            detected: number;
+            /** New */
+            new: number;
+            /** New Exception Ids */
+            new_exception_ids: string[];
+            /** Closed Exception Ids */
+            closed_exception_ids: string[];
+            /** Investigated */
+            investigated: components["schemas"]["CycleInvestigationOut"][];
+            /** Messages Sent */
+            messages_sent: string[];
+            /**
+             * Skipped Budget
+             * @description New cases left for the next cycle
+             */
+            skipped_budget: string[];
+            /** Skipped Message Budget */
+            skipped_message_budget: string[];
+            /**
+             * Skipped Backlog
+             * @description Cases detected before the scheduler started that it left alone
+             */
+            skipped_backlog: number;
+            /** Errors */
+            errors: components["schemas"]["CycleErrorOut"][];
+        };
+        /** SchedulerStatusOut */
+        SchedulerStatusOut: {
+            /**
+             * Enabled Setting
+             * @description SCHEDULER_ENABLED at startup
+             */
+            enabled_setting: boolean;
+            /**
+             * Running
+             * @description The timer thread is running now
+             */
+            running: boolean;
+            /** Cycle In Progress */
+            cycle_in_progress: boolean;
+            /** Interval Seconds */
+            interval_seconds: number;
+            /** Investigations Per Cycle */
+            investigations_per_cycle: number;
+            /** Messages Per Cycle */
+            messages_per_cycle: number;
+            /** Backlog */
+            backlog: boolean;
+            /** Next Run At */
+            next_run_at: string | null;
+            /** Overlaps Skipped */
+            overlaps_skipped: number;
+            watermark: components["schemas"]["WatermarkOut"] | null;
+            last_cycle: components["schemas"]["SchedulerCycleOut"] | null;
+            /**
+             * As Of
+             * Format: date-time
+             * @description The demo clock's 'now'; punches after it are refused
+             */
+            as_of: string;
+            /** Demo Mode */
+            demo_mode: boolean;
+            /**
+             * Workers
+             * @description Workers a simulated punch can be sent for (demo mode only, else empty)
+             */
+            workers: components["schemas"]["DemoWorkerOut"][];
         };
         /** SeedOut */
         SeedOut: {
@@ -1598,6 +2022,18 @@ export interface components {
             input?: unknown;
             /** Context */
             ctx?: Record<string, never>;
+        };
+        /** WatermarkOut */
+        WatermarkOut: {
+            /** Audit Id */
+            audit_id: number;
+            /**
+             * Set By
+             * @enum {string}
+             */
+            set_by: "scheduler_start" | "demo_reset" | "first_cycle";
+            /** Set At */
+            set_at: string;
         };
         /** WorkerInboxOut */
         WorkerInboxOut: {
@@ -2658,7 +3094,7 @@ export interface operations {
         parameters: {
             query?: {
                 exception_id?: string | null;
-                actor?: ("system" | "agent" | "worker" | "supervisor" | "admin") | null;
+                actor?: ("system" | "agent" | "worker" | "supervisor" | "admin" | "device") | null;
                 actor_id?: string | null;
                 limit?: number;
             };
@@ -2716,6 +3152,345 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    receive_punch_api_punches_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Device-Key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PunchIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PunchAcceptedOut"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    scheduler_status_api_admin_scheduler_get: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
+                "X-Actor-Id": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SchedulerStatusOut"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    scheduler_run_now_api_admin_scheduler_run_now_post: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
+                "X-Actor-Id": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SchedulerCycleOut"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    scheduler_start_api_admin_scheduler_start_post: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
+                "X-Actor-Id": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SchedulerStatusOut"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    scheduler_stop_api_admin_scheduler_stop_post: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
+                "X-Actor-Id": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SchedulerStatusOut"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    demo_reset_api_admin_demo_reset_post: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
+                "X-Actor-Id": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DemoResetOut"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    demo_punch_api_admin_demo_punch_post: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
+                "X-Actor-Id": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DemoPunchIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PunchAcceptedOut"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };

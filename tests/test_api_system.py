@@ -45,6 +45,12 @@ EXPECTED_PATHS = {
     ("get", "/api/supervisor/cases/{exception_id}"),
     ("get", "/api/admin/exceptions"),
     ("get", "/api/admin/exceptions/{exception_id}"),
+    # Phase 11. The /api/admin/demo/* helpers are absent: demo mode is off by default.
+    ("post", "/api/punches"),
+    ("get", "/api/admin/scheduler"),
+    ("post", "/api/admin/scheduler/run-now"),
+    ("post", "/api/admin/scheduler/start"),
+    ("post", "/api/admin/scheduler/stop"),
 }
 
 

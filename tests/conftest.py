@@ -111,6 +111,11 @@ def api_settings(db_engine):
         llm_api_key=None,
         log_format="text",
         log_level="WARNING",
+        # Phase 11: never pick these up from a developer's .env.
+        device_api_key="test-device-key",
+        demo_mode=False,
+        scheduler_enabled=False,
+        scheduler_backlog=False,
     )
 
 
@@ -136,3 +141,21 @@ def demo(client):
     assert client.post("/api/seed").status_code == 200
     assert client.post("/api/detection/run").status_code == 200
     return client
+
+
+@pytest.fixture
+def demo_client(db_engine, api_settings):
+    """An API client with ATTENDFLOW_DEMO_MODE on, on an empty test database."""
+    from dataclasses import replace
+
+    from fastapi.testclient import TestClient
+    from sqlalchemy.orm import Session
+
+    from attendflow.api.app import create_app
+    from attendflow.db.seed import truncate_all
+
+    with Session(db_engine) as s, s.begin():
+        truncate_all(s)
+    app = create_app(replace(api_settings, demo_mode=True), engine=db_engine)
+    with TestClient(app, raise_server_exceptions=False) as c:
+        yield c

@@ -16,13 +16,14 @@ from __future__ import annotations
 import logging
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from attendflow.cases import time_extraction, time_review
+from attendflow.cases.facts import CONTENT_FIELDS
 from attendflow.cases.supervisor import require_reviewer, time_label
 from attendflow.cases.transitions import WAITING, check_transition
 from attendflow.cases.worker_message import (
@@ -51,8 +52,6 @@ from attendflow.policy.models import PolicyConfig
 log = logging.getLogger("attendflow.cases")
 
 ROLE_TO_ACTOR = {"worker": "worker", "supervisor": "supervisor", "payroll_admin": "admin"}
-# Fields detection refreshes on an open exception.
-CONTENT_FIELDS = ("title", "summary", "severity", "kind", "details", "evidence", "fix_options")
 FINAL = ("resolved", "rejected")
 
 
@@ -156,6 +155,29 @@ class DetectionSummary:
     created_ids: list[str] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class DetectionScope:
+    """Limit a detection run's writes to one worker's dates (the engine still runs on all
+    data, which is cheap). Used after a device punch."""
+
+    employee_id: str
+    start: date
+    end: date
+
+    def covers(self, employee_id: str, day: date) -> bool:
+        return employee_id == self.employee_id and self.start <= day <= self.end
+
+
+def punch_scope(employee_id: str, stamp: datetime) -> DetectionScope:
+    """The Mon-Sun week of a punch. A punch after midnight can belong to the previous
+    day's night shift (P15), so the scope starts at the week of the day before."""
+    day = stamp.date()
+    start = day - timedelta(days=1)
+    start -= timedelta(days=start.weekday())
+    end = day + timedelta(days=6 - day.weekday())
+    return DetectionScope(employee_id, start, end)
+
+
 def _content(exc: TimecardException) -> dict[str, Any]:
     data = exc.model_dump(mode="json")
     return {k: data[k] for k in CONTENT_FIELDS}
@@ -181,8 +203,13 @@ def _new_row(exc: TimecardException, supervisor_id: str | None, clock: Clock) ->
     )
 
 
-def run_detection(session: Session, policy: PolicyConfig, clock: Clock) -> DetectionSummary:
+def run_detection(
+    session: Session, policy: PolicyConfig, clock: Clock, scope: DetectionScope | None = None
+) -> DetectionSummary:
     """Run the rule engine on the database and upsert exceptions by their stable ID.
+
+    With a `scope`, only that worker's exceptions dated inside it are created, refreshed or
+    closed; everything else is left for the next full run.
 
     - New exception -> inserted as open, assigned to the worker's supervisor. If the engine
       auto-resolved it (policy.json auto_resolve), it is stored as resolved with
@@ -197,22 +224,31 @@ def run_detection(session: Session, policy: PolicyConfig, clock: Clock) -> Detec
             raise ConflictError("no data loaded: call POST /api/seed first", code="not_seeded")
         as_of = clock.now()
         result = run_engine(ds, policy, as_of)
+        found = [
+            e for e in result.exceptions if scope is None or scope.covers(e.employee_id, e.date)
+        ]
         supervisors = {e.employee_id: e.supervisor_id for e in ds.employees}
-        existing = {r.id: r for r in session.scalars(select(ExceptionRow).with_for_update()).all()}
+        stmt = select(ExceptionRow).with_for_update()
+        if scope is not None:
+            stmt = stmt.where(
+                ExceptionRow.employee_id == scope.employee_id,
+                ExceptionRow.date.between(scope.start, scope.end),
+            )
+        existing = {r.id: r for r in session.scalars(stmt).all()}
         summary = DetectionSummary(
             as_of=as_of.isoformat(timespec="seconds"),
             policy_version=result.policy_version,
-            found=len(result.exceptions),
+            found=len(found),
             by_policy=dict(
                 sorted(
-                    Counter(e.policy_id for e in result.exceptions).items(),
+                    Counter(e.policy_id for e in found).items(),
                     key=lambda kv: int(kv[0][1:]),
                 )
             ),
-            exception_ids=[e.exception_id for e in result.exceptions],
+            exception_ids=[e.exception_id for e in found],
         )
 
-        for exc in result.exceptions:
+        for exc in found:
             row = existing.pop(exc.exception_id, None)
             if row is None:
                 row = _new_row(exc, supervisors.get(exc.employee_id), clock)
@@ -534,6 +570,69 @@ def detect_after_fix(
     }
 
 
+def detect_after_punch(
+    session: Session, policy: PolicyConfig, clock: Clock, punch: dict[str, Any]
+) -> dict[str, Any]:
+    """After a device punch was stored: detection for that worker's week, in its own
+    transaction. The punch is already committed; if detection fails it stays, the failure
+    is logged and audited, and the next full run (or scheduler cycle) picks it up."""
+    stamp = datetime.fromisoformat(punch["timestamp"])
+    scope = punch_scope(punch["employee_id"], stamp)
+    scope_out = {
+        "employee_id": scope.employee_id,
+        "start": scope.start.isoformat(),
+        "end": scope.end.isoformat(),
+    }
+    try:
+        summary = run_detection(session, policy, clock, scope)
+    except Exception as exc:  # noqa: BLE001 - detection must never lose the punch
+        log.exception(
+            "detection after punch failed",
+            extra={"event": "post_punch_detection_failed", "punch_id": punch["punch_id"]},
+        )
+        message = "Detection did not run after the punch; the next run will pick it up."
+        try:
+            with session.begin():
+                _audit(
+                    session,
+                    clock,
+                    exception_id=None,
+                    actor="system",
+                    action="post_punch_detection_failed",
+                    after={"punch_id": punch["punch_id"], "scope": scope_out},
+                    reason=f"{message} ({type(exc).__name__})",
+                )
+        except Exception:  # noqa: BLE001
+            log.exception("could not audit the failed detection run")
+        return {
+            "ran": False,
+            "scope": scope_out,
+            "new_exception_ids": [],
+            "closed_exception_ids": [],
+            "updated": 0,
+            "error": message,
+        }
+    result = {
+        "ran": True,
+        "scope": scope_out,
+        "new_exception_ids": summary.created_ids,
+        "closed_exception_ids": summary.closed_no_longer_detected,
+        "updated": summary.updated,
+        "error": None,
+    }
+    with session.begin():
+        _audit(
+            session,
+            clock,
+            exception_id=None,
+            actor="system",
+            action="post_punch_detection",
+            after={"punch_id": punch["punch_id"], **result},
+            reason="Detection re-ran for the worker's week after a device punch.",
+        )
+    return result
+
+
 def reject(
     session: Session, clock: Clock, *, exception_id: str, actor_id: str, reason: str
 ) -> ExceptionRow:
@@ -576,10 +675,14 @@ def reject(
     return row
 
 
-def _worker_handoff(session: Session, row: ExceptionRow, actor_id: str) -> EmployeeRow:
-    actor = require_reviewer(session, actor_id)
+def _worker_handoff(session: Session, row: ExceptionRow, actor_id: str | None) -> EmployeeRow:
+    """actor_id None = the scheduler acting as "system" (no reviewer or assignee check; the
+    investigation's code-owned route must still say the worker is next)."""
+    if actor_id is not None:
+        actor = require_reviewer(session, actor_id)
     check_transition(row.status, "awaiting_worker", action="ask_worker")
-    _require_assignee(row, actor, "ask the worker about")
+    if actor_id is not None:
+        _require_assignee(row, actor, "ask the worker about")
     investigation = row.investigation_case
     if investigation is None:
         raise ConflictError(
@@ -598,10 +701,13 @@ def ask_worker(
     settings: Settings,
     *,
     exception_id: str,
-    actor_id: str,
+    actor_id: str | None,
     note: str | None = None,
 ) -> ExceptionRow:
-    """Phrase a verified question and save it with the worker handoff."""
+    """Phrase a verified question and save it with the worker handoff.
+
+    actor_id None means the scheduler sends it automatically (audited as actor "system").
+    It changes no timecard data, only who the case waits for."""
     with session.begin():
         row = session.get(ExceptionRow, exception_id)
         if row is None:
@@ -637,7 +743,7 @@ def ask_worker(
             session,
             clock,
             exception_id=row.id,
-            actor=ROLE_TO_ACTOR[_actor(session, actor_id).role],
+            actor=ROLE_TO_ACTOR[_actor(session, actor_id).role] if actor_id else "system",
             actor_id=actor_id,
             action="ask_worker",
             before=before,

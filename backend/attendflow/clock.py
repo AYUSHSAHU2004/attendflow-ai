@@ -2,8 +2,9 @@
 
 The demo runs at a fixed moment (ATTENDFLOW_AS_OF, Thu 16 Apr 2026 08:00), so every
 created_at, updated_at and waiting_since uses it, never the server clock. Rows are ordered
-by their sequential id, not by time. A clock that moves forward comes with the scheduler
-(Phase 11); it only has to implement now().
+by their sequential id, not by time. The Phase 11 scheduler keeps this fixed clock (a
+simulated punch carries its own explicit timestamp); its own run times are real UTC
+because they describe the server. Another clock only has to implement now().
 """
 
 from __future__ import annotations

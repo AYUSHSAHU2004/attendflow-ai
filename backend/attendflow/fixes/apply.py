@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 
 from attendflow.data.schemas import ScheduleRow
 from attendflow.db.models import (
+    PUNCH_ID_LOCK,
     ExceptionRow,
     LeaveBalanceRow,
     LeaveRecordRow,
@@ -54,7 +55,7 @@ from attendflow.policy.models import PolicyConfig
 
 Change = dict[str, Any]
 CORRECTION_DEVICE = "CORRECTION"
-_PUNCH_ID_LOCK = 42_001  # advisory lock key: one writer at a time picks new punch IDs
+_PUNCH_ID_LOCK = PUNCH_ID_LOCK  # one writer at a time picks new punch IDs (shared with ingest)
 
 
 class FixContext:

@@ -2,7 +2,14 @@
 // replaces this module.
 export type Actor = { id: string; name: string }
 
-export const workerActor: Actor = { id: 'E001', name: 'Amit Verma' }
+const defaultWorker: Actor = { id: 'E001', name: 'Amit Verma' }
+
+// Workers a dev build can act as with `?as=` on the inbox (Phase 11 demo: Neha gets the
+// message the scheduler sends after a simulated punch). Phase 22 checklist.
+export const workers: Record<string, Actor> = {
+  E001: defaultWorker,
+  E004: { id: 'E004', name: 'Neha Gupta' },
+}
 
 export const reviewers: Record<string, Actor> = {
   E101: { id: 'E101', name: 'Ravi Kumar' },
@@ -34,3 +41,13 @@ const defaultAdmin = reviewers.E201
 export const adminActor: Actor = import.meta.env.DEV
   ? reviewerFor(search, true, defaultAdmin)
   : defaultAdmin
+
+// The worker inbox (/) acts as Amit. Dev builds only: `?as=E004` acts as Neha. Production
+// builds drop the branch (import.meta.env.DEV is the constant false), like the reviewer one.
+export function workerFor(search: string, dev: boolean): Actor {
+  if (!dev) return defaultWorker
+  const wanted = new URLSearchParams(search).get('as')?.toUpperCase() ?? ''
+  return workers[wanted] ?? defaultWorker
+}
+
+export const workerActor: Actor = import.meta.env.DEV ? workerFor(search, true) : defaultWorker

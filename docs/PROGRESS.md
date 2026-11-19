@@ -690,3 +690,85 @@ Seed, detect, investigate Amit's P1 and ask him on `/dev`. Answer No on `/` and 
 the three end-to-end stories without a key.
 
 **Next: Phase 11** (mock punch API + scheduler) starts the full product.
+
+## Phase 11: Mock attendance device and scheduler (2026-11-19)
+
+**Built**
+- `POST /api/punches`, a mock attendance device authenticated by `X-Device-Key`
+  (`DEVICE_API_KEY`; without a key configured it answers 503). It accepts in/out/break
+  punches in local time. It refuses an unknown or non-worker employee, a time after the
+  as-of time or more than 7 days before it, an unknown location, an exact duplicate and
+  bad input, always in the shared error shape (401/409/422/503).
+- `ingest/punches.py`, the one new writer of source data. It only inserts timecards rows,
+  and each punch gets a `punch_ingested` audit row (actor `device`) in the same
+  transaction. It shares the punch ID lock with `fixes/apply.py`.
+- Detection after a punch (`detect_after_punch`) runs for that worker's Mon-Sun week in
+  its own transaction. If it fails, the punch stays and the failure is audited.
+- A scheduler: a background thread in the API with a non-overlap lock. Each cycle runs
+  detection for everyone, investigates new open cases (newest first, one at a time, per
+  cycle limit), sends worker messages for cases routed to the worker (acting as
+  `system`), and stores a summary in `scheduler_runs` plus a `scheduler_cycle` audit row.
+  One failing case is recorded and the cycle continues.
+- Endpoints for Priya only: `GET /api/admin/scheduler`, `POST .../run-now`,
+  `.../start`, `.../stop`. With `ATTENDFLOW_DEMO_MODE=true` only:
+  `POST /api/admin/demo/reset` and `POST /api/admin/demo/punch`.
+- Migration `0006_device_and_scheduler`: `device` audit actor, `scheduler_runs`,
+  `exceptions.investigated_facts_hash`.
+- `/admin`: a scheduler status line and **Run scheduler now**. In demo mode it also shows
+  a **Simulate punch** form, and the list refreshes itself every 4 s while that form is
+  open. The worker inbox takes a dev-only `?as=E004`.
+- Plain-language audit summaries for the automatic steps. `ATTENDFLOW_CORS_ORIGINS`
+  setting (needed to run a second dev stack on other ports).
+
+**Decisions** (13 defaults accepted, with one change)
+- **Backlog (your change):** the scheduler only touches cases first detected after it
+  started, after a demo reset, or after the first cycle. Older cases are counted as
+  `skipped_backlog`. `SCHEDULER_BACKLOG=true` processes them. Amit's planted P1 stays
+  free for the manual walkthrough.
+- Investigate again only if the case is open and its engine facts changed (hash stored
+  at investigation time). A template result with unchanged facts is never retried
+  automatically.
+- Worker messages are sent automatically (they change no timecard data) and audited as
+  `system`.
+- Demo punch is **08:58**, not 09:02: 09:02 is 2 minutes late, so detection would also
+  add an auto-resolved P7 (existing within-grace behaviour).
+- A demo reset checks the caller against the stored employees. On an empty database, run
+  `POST /api/seed` once.
+- OpenAPI types are generated with demo mode on, so CI does not depend on `.env`.
+
+**Checks**
+- Backend with `REQUIRE_DB=1`: 577 passed, 2 skipped (the opt-in real-LLM tests). 50 new
+  test cases: `test_ingest.py` (26), `test_scheduler.py` (22),
+  `test_e2e_scheduler.py` (2). Updated: the static writer test allows exactly the ingest
+  module (PunchRow, insert only). The SQL write-hook test allows writer `ingest` only as
+  an INSERT into timecards, with one matching `punch_ingested` row per new punch. The
+  endpoint list includes the new routes and no demo routes.
+- Frontend: 51 tests (18 new), type-check, build, OpenAPI drift check. The production
+  bundle has no `URLSearchParams` and no `Neha`. One existing admin test now waits for
+  the reload effect (it was racy under load).
+- Migration 0006 downgrades and upgrades cleanly. Ruff and `attendflow-validate` pass.
+
+**Live check** (dev DB, API on :8011 and Vite on :5183, scheduler every 15 s, 1
+investigation and 1 message per cycle)
+- No key: demo reset (17 found), then the Simulate punch form sent Neha's 08:58 clock-in
+  (P0073). New `P1-E004-2026-04-15`, P10 closed, counters 18 / 16 open. The next timed
+  cycle (no click) stored the template investigation in 161 ms (LLM_API_KEY not set) and
+  sent the template message. Counters: 15 open, 1 waiting for worker. Neha's inbox
+  (`/?as=E004`) showed the question. The audit trail shows detected, auto investigation
+  started/finished, ask_worker (system) and message sent. Amit's P1 and inbox stayed
+  untouched.
+- Real key, one cycle: validated (not template) investigation in 5.65 s, LLM-written
+  message in 1.34 s, cycle 7.1 s. The next cycle made no model calls. The real-key API
+  was then stopped.
+
+**Phase 22 checklist (added)**: demo mode off, the worker `?as=` override, a strong
+`DEVICE_API_KEY` and CORS origins, one API process for the scheduler lock (see CLAUDE.md).
+
+**Verify:** `alembic upgrade head`; put `ATTENDFLOW_DEMO_MODE=true`, `SCHEDULER_ENABLED=true`,
+`SCHEDULER_INTERVAL_SECONDS=15` in `.env`; start the API and Vite; open `/admin`. If the
+database is empty, run `POST /api/seed` once, then reset with
+`POST /api/admin/demo/reset` (header `X-Actor-Id: E201`). Send Neha (E004), Clock in,
+2026-04-15 08:58. Within one interval her new P1 shows "investigated → worker", and
+`/?as=E004` shows the question. Without a key the same flow uses templates.
+
+**Next: Phase 12** (auto-resolve + undo).

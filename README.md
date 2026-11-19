@@ -103,7 +103,8 @@ or a local Ollama model is a `.env` change. Licence notes: [docs/LLM_LICENCE.md]
 
 ## Status
 
-**Prototype complete (Phase 10).** See [docs/PROGRESS.md](docs/PROGRESS.md), and
+**Prototype complete (Phase 10); Phase 11 adds a mock attendance device and a scheduler.**
+See [docs/PROGRESS.md](docs/PROGRESS.md), and
 [docs/DEMO_WALKTHROUGH.md](docs/DEMO_WALKTHROUGH.md) for the click-by-click demo.
 
 ## Worker and supervisor demo pages
@@ -136,6 +137,20 @@ is Priya's page: counters, every exception with filters and a name search, a rea
 case detail with the full audit trail, an **Investigate** button for open cases, and the
 decision card for cases escalated to her. The admin API (`GET /api/admin/exceptions`,
 `GET /api/admin/exceptions/{id}`) answers only E201; everyone else gets 403 `admin_only`.
+
+## Automatic flow (Phase 11): device punches and the scheduler
+
+- `POST /api/punches` is a mock attendance device (header `X-Device-Key` = `DEVICE_API_KEY`).
+  A punch is stored with an audit row and detection runs for that worker's week. No LLM.
+- With `SCHEDULER_ENABLED=true` the API runs a cycle every `SCHEDULER_INTERVAL_SECONDS`:
+  detection, then up to `SCHEDULER_INVESTIGATIONS_PER_CYCLE` investigations of **new**
+  cases, then the worker messages they call for. Cases that existed before the scheduler
+  started are left alone unless `SCHEDULER_BACKLOG=true`. Priya can also press **Run
+  scheduler now** on `/admin`.
+- `ATTENDFLOW_DEMO_MODE=true` (demo only, off by default) adds a **Simulate punch** panel
+  on `/admin` and `POST /api/admin/demo/reset`. Try Neha (E004), clock in, Wed 15 Apr 08:58:
+  a new P1 appears, the scheduler investigates it and Neha's inbox
+  (`http://localhost:5173/?as=E004`, dev builds only) gets the question.
 
 From `frontend/`, run `npm test`, `npm run typecheck`, and `npm run build`.
 Run `npm run api:generate` after backend API changes to refresh the generated

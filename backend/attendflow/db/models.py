@@ -2,9 +2,10 @@
 
 Two groups:
 - Source data, one table per CSV (employees, timecards, schedule, leave_records,
-  leave_balances, holidays). Only `db/seed.py` (demo reset) and `fixes/apply.py`
-  (approved fixes) may write to them; a test enforces this.
-- Case tables: exceptions, audit_log, tool_calls, settings.
+  leave_balances, holidays). Only `db/seed.py` (demo reset), `fixes/apply.py` (approved
+  fixes) and `ingest/punches.py` (new device punches, insert only) may write to them; tests
+  enforce this.
+- Case tables: exceptions, audit_log, tool_calls, settings, scheduler_runs.
 
 All times are plain local wall-clock times ("timestamp without time zone"), like the CSVs.
 """
@@ -51,7 +52,10 @@ EXCEPTION_STATUSES = (
     "rejected",
     "escalated",
 )
-ACTORS = ("system", "agent", "worker", "supervisor", "admin")
+ACTORS = ("system", "agent", "worker", "supervisor", "admin", "device")
+# Shared by every writer that numbers new punches (fixes/apply.py, ingest/punches.py), so
+# two transactions never pick the same next punch ID.
+PUNCH_ID_LOCK = 42_001
 
 
 def _in(column: str, values: tuple[str, ...]) -> str:
@@ -185,6 +189,9 @@ class ExceptionRow(Base):
     investigation_case: Mapped[dict[str, Any] | None]
     worker_recheck: Mapped[dict[str, Any] | None]
     applied_fix: Mapped[dict[str, Any] | None]  # the option a human approved (or auto-resolve)
+    # Hash of the engine facts the stored investigation saw (cases/facts.py). The scheduler
+    # investigates again only when the facts changed since.
+    investigated_facts_hash: Mapped[str | None] = mapped_column(String(64))
     assigned_to: Mapped[str | None] = mapped_column(ForeignKey("employees.employee_id"))
     waiting_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
     last_detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=False))
@@ -286,6 +293,24 @@ class SettingRow(Base):
     key: Mapped[str] = mapped_column(String(80), primary_key=True)
     value: Mapped[Any] = mapped_column(JSONB)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=False))
+
+
+class SchedulerRunRow(Base):
+    """One scheduler cycle and its summary. Times are real UTC: they describe the server's
+    work, not the business day (which stays on the fixed demo clock)."""
+
+    __tablename__ = "scheduler_runs"
+    __table_args__ = (
+        CheckConstraint(_in("trigger", ("schedule", "run_now")), "trigger"),
+        CheckConstraint(_in("status", ("running", "completed", "failed")), "status"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    trigger: Mapped[str] = mapped_column(String(10))
+    status: Mapped[str] = mapped_column(String(10))
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    summary: Mapped[dict[str, Any] | None]
 
 
 SOURCE_TABLES = (

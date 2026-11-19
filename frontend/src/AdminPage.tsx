@@ -10,6 +10,7 @@ import {
   type AdminFilters,
   type AdminOverview,
 } from './api'
+import { SchedulerPanel } from './SchedulerPanel'
 import { CaseCard, plainError } from './SupervisorPage'
 import { displayDate } from './WorkerInbox'
 
@@ -331,6 +332,8 @@ export function AdminPage() {
     <main className="page wide admin" id="main">
       <h1>All exceptions</h1>
       <p className="lede">Signed in as {adminActor.name} ({adminActor.id})</p>
+
+      <SchedulerPanel onChanged={() => setRefresh((value) => value + 1)} />
 
       {data && (
         <section aria-label="Counters" className="counters">

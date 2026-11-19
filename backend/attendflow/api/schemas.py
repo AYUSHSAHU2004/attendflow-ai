@@ -12,7 +12,7 @@ from attendflow.cases.transitions import Status
 from attendflow.engine.models import ACTION_INFO
 from attendflow.tools.models import Finding, RunChecksOut
 
-ActorType = Literal["system", "agent", "worker", "supervisor", "admin"]
+ActorType = Literal["system", "agent", "worker", "supervisor", "admin", "device"]
 EMPLOYEE_ID = r"^E\d{3}$"
 POLICY_ID = r"^P\d{1,2}$"
 
@@ -547,3 +547,161 @@ class AdminCaseOut(ApiModel):
     applied_fix: dict[str, Any] | None
     audit_trail: list[AdminAuditEntryOut] = Field(description="Oldest first")
     tool_calls: list[AdminToolCallOut]
+
+
+# ---------------------------------------------------------------- device punches (Phase 11)
+
+LOCAL_TIMESTAMP = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?$"
+PunchType = Literal["in", "out", "break_start", "break_end"]
+
+
+class PunchIn(RequestModel):
+    """One punch from an attendance device. Times are plain local wall-clock times."""
+
+    employee_id: str = Field(pattern=EMPLOYEE_ID, examples=["E004"])
+    timestamp: str = Field(
+        pattern=LOCAL_TIMESTAMP,
+        description="Local time, no timezone, e.g. 2026-04-15T09:02 (seconds optional)",
+        examples=["2026-04-15T09:02"],
+    )
+    type: PunchType
+    source: Literal["device"] = "device"
+    device_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=50,
+        pattern=r"^[A-Za-z0-9._-]+$",
+        description="Defaults to the worker's usual device",
+    )
+    location: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=100,
+        description="One of the known locations; defaults to the worker's usual one",
+    )
+
+    @model_validator(mode="after")
+    def _real_time(self):
+        try:
+            datetime.fromisoformat(self.timestamp)
+        except ValueError as exc:
+            raise ValueError(f"timestamp is not a real date and time: {self.timestamp}") from exc
+        return self
+
+    def local_timestamp(self) -> datetime:
+        return datetime.fromisoformat(self.timestamp)
+
+
+class DemoPunchIn(PunchIn):
+    """A simulated device punch from the /admin demo panel (DEMO_MODE only)."""
+
+
+class PunchOut(ApiModel):
+    punch_id: str
+    employee_id: str
+    timestamp: str
+    type: PunchType
+    source: Literal["device"]
+    device_id: str
+    location: str
+
+
+class DetectionScopeOut(ApiModel):
+    employee_id: str
+    start: date
+    end: date
+
+
+class PunchDetectionOut(ApiModel):
+    ran: bool
+    scope: DetectionScopeOut
+    new_exception_ids: list[str]
+    closed_exception_ids: list[str]
+    updated: int
+    error: str | None = Field(description="Set when detection failed; the punch is kept")
+
+
+class PunchAcceptedOut(ApiModel):
+    punch: PunchOut
+    detection: PunchDetectionOut
+
+
+# ---------------------------------------------------------------- scheduler (Phase 11)
+
+
+class CycleInvestigationOut(ApiModel):
+    exception_id: str
+    job_id: str
+    job_status: Literal["running", "completed", "failed"]
+    reason: str | None
+    fallback: bool = Field(description="True when the engine template was stored")
+    who_to_ask: str | None
+    duration_ms: float | None
+
+
+class CycleErrorOut(ApiModel):
+    exception_id: str | None
+    step: Literal["detection", "investigate", "ask_worker"]
+    error: str
+
+
+class SchedulerCycleOut(ApiModel):
+    cycle_id: int
+    trigger: Literal["schedule", "run_now"]
+    status: Literal["completed", "failed"]
+    as_of: str
+    started_at: str = Field(description="Real UTC time (operational)")
+    finished_at: str | None
+    duration_ms: float | None
+    backlog: bool = Field(description="Whether cases detected before the watermark were processed")
+    watermark_audit_id: int
+    detection: Literal["ok", "failed"] | None
+    detected: int
+    new: int
+    new_exception_ids: list[str]
+    closed_exception_ids: list[str]
+    investigated: list[CycleInvestigationOut]
+    messages_sent: list[str]
+    skipped_budget: list[str] = Field(description="New cases left for the next cycle")
+    skipped_message_budget: list[str]
+    skipped_backlog: int = Field(
+        description="Cases detected before the scheduler started that it left alone"
+    )
+    errors: list[CycleErrorOut]
+
+
+class WatermarkOut(ApiModel):
+    audit_id: int
+    set_by: Literal["scheduler_start", "demo_reset", "first_cycle"]
+    set_at: str
+
+
+class DemoWorkerOut(ApiModel):
+    employee_id: str
+    name: str
+    team: str
+
+
+class SchedulerStatusOut(ApiModel):
+    enabled_setting: bool = Field(description="SCHEDULER_ENABLED at startup")
+    running: bool = Field(description="The timer thread is running now")
+    cycle_in_progress: bool
+    interval_seconds: float
+    investigations_per_cycle: int
+    messages_per_cycle: int
+    backlog: bool
+    next_run_at: datetime | None
+    overlaps_skipped: int
+    watermark: WatermarkOut | None
+    last_cycle: SchedulerCycleOut | None
+    as_of: datetime = Field(description="The demo clock's 'now'; punches after it are refused")
+    demo_mode: bool
+    workers: list[DemoWorkerOut] = Field(
+        description="Workers a simulated punch can be sent for (demo mode only, else empty)"
+    )
+
+
+class DemoResetOut(ApiModel):
+    seed: SeedOut
+    detection: DetectionRunOut
+    watermark_audit_id: int

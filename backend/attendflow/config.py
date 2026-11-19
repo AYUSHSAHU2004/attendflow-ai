@@ -41,8 +41,25 @@ class Settings:
     llm_investigation_budget_seconds: float = 45
     llm_diagnostics: bool = True
     llm_extraction_attempts: int = 2
+    # Phase 11: mock attendance device, scheduler and demo helpers.
+    device_api_key: str | None = None  # X-Device-Key for POST /api/punches; unset = disabled
+    device_max_backdate_days: int = 7
+    demo_mode: bool = False  # demo-only endpoints and the /admin Simulate punch panel
+    scheduler_enabled: bool = False
+    scheduler_interval_seconds: float = 60
+    scheduler_investigations_per_cycle: int = 3
+    scheduler_messages_per_cycle: int = 3
+    scheduler_backlog: bool = False  # also work through cases detected before the start
+    cors_origins: tuple[str, ...] = ("http://localhost:5173", "http://127.0.0.1:5173")
 
     def __post_init__(self) -> None:
+        interval = self.scheduler_interval_seconds
+        if not isfinite(interval) or interval < 1:
+            raise ValueError("SCHEDULER_INTERVAL_SECONDS must be at least 1")
+        if self.scheduler_investigations_per_cycle < 0 or self.scheduler_messages_per_cycle < 0:
+            raise ValueError("scheduler per-cycle limits must not be negative")
+        if self.device_max_backdate_days < 1:
+            raise ValueError("DEVICE_MAX_BACKDATE_DAYS must be positive")
         budget = self.llm_investigation_budget_seconds
         if not isfinite(budget) or budget <= 0:
             raise ValueError("LLM_INVESTIGATION_BUDGET_SECONDS must be positive and finite")
@@ -74,7 +91,24 @@ def get_settings(env_file: Path | None = REPO_ROOT / ".env") -> Settings:
         llm_diagnostics=_env_bool("LLM_DIAGNOSTICS", default=True),
         llm_extraction_attempts=int(os.getenv("LLM_EXTRACTION_ATTEMPTS") or 2),
         llm_investigation_budget_seconds=float(os.getenv("LLM_INVESTIGATION_BUDGET_SECONDS") or 45),
+        device_api_key=os.getenv("DEVICE_API_KEY") or None,
+        device_max_backdate_days=int(os.getenv("DEVICE_MAX_BACKDATE_DAYS") or 7),
+        demo_mode=_env_bool("ATTENDFLOW_DEMO_MODE", default=False),
+        scheduler_enabled=_env_bool("SCHEDULER_ENABLED", default=False),
+        scheduler_interval_seconds=float(os.getenv("SCHEDULER_INTERVAL_SECONDS") or 60),
+        scheduler_investigations_per_cycle=int(
+            os.getenv("SCHEDULER_INVESTIGATIONS_PER_CYCLE") or 3
+        ),
+        scheduler_messages_per_cycle=int(os.getenv("SCHEDULER_MESSAGES_PER_CYCLE") or 3),
+        scheduler_backlog=_env_bool("SCHEDULER_BACKLOG", default=False),
+        cors_origins=_env_list("ATTENDFLOW_CORS_ORIGINS")
+        or ("http://localhost:5173", "http://127.0.0.1:5173"),
     )
+
+
+def _env_list(name: str) -> tuple[str, ...]:
+    raw = os.getenv(name) or ""
+    return tuple(item.strip() for item in raw.split(",") if item.strip())
 
 
 def _env_bool(name: str, default: bool) -> bool:

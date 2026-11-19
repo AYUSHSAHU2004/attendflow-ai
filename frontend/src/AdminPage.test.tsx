@@ -7,6 +7,7 @@ import {
   getAdminCase,
   getAdminOverview,
   getCase,
+  getSchedulerStatus,
   pollInvestigation,
   startInvestigation,
   type AdminCase,
@@ -21,7 +22,9 @@ vi.mock('./api', async (importOriginal) => ({
   startInvestigation: vi.fn(),
   pollInvestigation: vi.fn(),
   getCase: vi.fn(),
+  getSchedulerStatus: vi.fn(),
 }))
+import { schedulerStatus } from './testFixtures'
 
 const AMIT_P1 = 'P1-E001-2026-04-14'
 const MEENA_P5 = 'P5-E002-2026-04-13'
@@ -124,6 +127,7 @@ beforeEach(() => {
   vi.mocked(startInvestigation).mockReset()
   vi.mocked(pollInvestigation).mockReset()
   vi.mocked(getCase).mockReset()
+  vi.mocked(getSchedulerStatus).mockReset().mockResolvedValue(schedulerStatus())
 })
 
 describe('AdminPage', () => {
@@ -274,8 +278,9 @@ describe('AdminDetail', () => {
     expect(startInvestigation).toHaveBeenCalledWith(AMIT_P1, expect.anything(), 'E201')
     expect(pollInvestigation).toHaveBeenCalledTimes(2)
     expect(pollInvestigation).toHaveBeenLastCalledWith('/api/exceptions/x/investigate/job1', expect.anything(), 'E201')
-    expect(getAdminCase).toHaveBeenCalledTimes(2)
-    expect(getAdminOverview).toHaveBeenCalledTimes(2)
+    // The reload runs in an effect after the notice renders; wait for it under load.
+    await waitFor(() => expect(getAdminCase).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(getAdminOverview).toHaveBeenCalledTimes(2))
   })
 
   it('shows an investigate refusal in plain words', async () => {

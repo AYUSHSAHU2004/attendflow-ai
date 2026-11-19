@@ -18,6 +18,7 @@ from attendflow.agent.case import (
     routing,
 )
 from attendflow.agent.structured import investigate
+from attendflow.cases.facts import facts_hash
 from attendflow.clock import Clock
 from attendflow.config import Settings
 from attendflow.db.models import AuditLogRow, EmployeeRow, ExceptionRow, InvestigationJobRow
@@ -51,9 +52,18 @@ class InvestigationJobs:
     settings: Settings
     clock: Clock
 
-    def start(self, exception_id: str, actor: str) -> tuple[InvestigationJobRow, bool]:
+    def start(self, exception_id: str, actor: str | None) -> tuple[InvestigationJobRow, bool]:
+        """actor None = the scheduler ("system"); it is not an employee, so no permission
+        check applies. Every other caller must be payroll or the assigned supervisor."""
         with self.sessions.begin() as session:
-            row = authorized_case(session, exception_id, actor, lock=True)
+            if actor is None:
+                row = session.get(ExceptionRow, exception_id, with_for_update=True)
+                if row is None:
+                    raise NotFoundError(
+                        f"exception {exception_id} not found", code="exception_not_found"
+                    )
+            else:
+                row = authorized_case(session, exception_id, actor, lock=True)
             existing = session.scalar(
                 select(InvestigationJobRow).where(
                     InvestigationJobRow.exception_id == row.id,
@@ -159,6 +169,7 @@ class InvestigationJobs:
                     update={"duration_ms": duration, "who_to_ask": who, "next_action": next_action}
                 )
             row.investigation_case = case.model_dump(mode="json")
+            row.investigated_facts_hash = facts_hash(row)
             if row.worker_recheck is None:
                 row.proposed_fix = (
                     case.proposed_fix.model_dump(mode="json") if case.proposed_fix else None

@@ -257,7 +257,14 @@ def audit_summary(entry: AuditLogRow, employees: dict[str, EmployeeRow]) -> str:
             return f"Investigation stored from the engine template ({after.get('reason')})."
         return "Investigation stored; the model's draft passed code validation."
     if action == "ask_worker":
+        if entry.actor == "system":
+            return "The scheduler asked the worker to confirm (automatic)."
         return "Asked the worker to confirm."
+    if action == "auto_investigation_started":
+        return "The scheduler started an investigation (automatic)."
+    if action == "auto_investigation_finished":
+        how = "engine template" if after.get("fallback") else "validated model draft"
+        return f"Automatic investigation finished ({how}); next: {after.get('who_to_ask')}."
     if action == "worker_message_sent":
         source = "the template" if after.get("source") == "template" else "the LLM (validated)"
         return f"Message to the worker written by {source}."

@@ -63,7 +63,7 @@ and CI, 10-minute demo video, 5 slides.
 
 Done: 0 Setup + data + policy + LLM test; 1 Rule engine P1-P7, P15; 2 Rules P8-P14, P16, P17;
 3 Backend + DB + API; 4 Read-only tools + fix options for P3/P4/P6/P7; 5 LLM client + agent loop; 6 structured investigations and jobs; 7 worker messages and inbox; 8 worker clock-out extraction and re-check; 9 supervisor approval screen; 10 Priya's list +
-end-to-end tests (**prototype complete**).
+end-to-end tests (**prototype complete**); 11 mock punch API + scheduler.
 
 **Prototype (3-10)**
 3. Backend + DB + API
@@ -91,7 +91,7 @@ end-to-end tests (**prototype complete**).
 23. Tests + evaluation
 24. Delivery
 
-**Next: Phase 11.**
+**Next: Phase 12.**
 
 **Carry-over notes**
 - Phase 5 Groq bug: `run_checks` advertised Pydantic's RFC 3339 `date-time` format for
@@ -115,6 +115,17 @@ end-to-end tests (**prototype complete**).
   - `X-Actor-Id` is not authentication. Add real login before going public.
   - `GET /api/exceptions`, `/api/audit-log` and `/api/tool-calls` have no role check (used
     by `/dev`). Restrict them to the payroll admin or remove them with `/dev`.
+  - Phase 11: set `ATTENDFLOW_DEMO_MODE=false`. That removes `POST /api/admin/demo/reset`
+    (wipes every table) and `/api/admin/demo/punch`, and hides the Simulate punch panel.
+  - Phase 11: the worker inbox override `?as=E004` (`workerFor` in `actors.ts`) is dev-only
+    like the reviewer one; a test checks it. Confirm it is absent from the bundle (same
+    `URLSearchParams` grep; also no `Neha` string).
+  - Phase 11: set a long random `DEVICE_API_KEY` (or leave it unset to disable
+    `POST /api/punches`), and set `ATTENDFLOW_CORS_ORIGINS` to the real frontend origin.
+  - Phase 11: the scheduler runs in the API process with an in-process lock. Run one API
+    process (or move the lock to a Postgres advisory lock) before scaling out.
+  - Phase 11: `scheduler_cycle` rows and `/api/admin/scheduler` expose case IDs only, not
+    LLM text; keep it that way when the activity feed is added (Phase 14).
 
 ## Decisions so far (do not re-ask)
 
@@ -424,6 +435,79 @@ end-to-end tests (**prototype complete**).
   `structured_investigation_finished`, then `investigation_case_stored`.
 - Demo script with live numbers: [docs/DEMO_WALKTHROUGH.md](docs/DEMO_WALKTHROUGH.md).
 
+**Mock device + scheduler (Phase 11)**
+- `POST /api/punches` is the mock attendance device. Auth is the `X-Device-Key` header
+  checked against `DEVICE_API_KEY` (constant-time compare). A missing or wrong key is
+  401 `invalid_device_key`; no key configured is 503 `device_api_not_configured`. The
+  body has `employee_id`, `timestamp` (local, no timezone, seconds optional), `type`
+  (in/out/break_start/break_end), source `device`, and optional `device_id` and
+  `location`. Checks: a known worker (422 `unknown_employee` / `not_a_worker`), not
+  after as-of (422 `punch_in_future`), not more than `DEVICE_MAX_BACKDATE_DAYS` (7)
+  before it (422 `punch_too_old`), a location from P17 `sites` (422 `unknown_location`),
+  and no exact duplicate (same worker, time and type, not voided: 409 `duplicate_punch`).
+  Device and location default to the worker's latest device punch (else their team's
+  most used one), read from the data.
+- **`ingest/punches.py` is the third writer** of source data, after `fixes/apply.py` and
+  the seed. It only INSERTs timecards rows, never updates, voids or deletes. Each punch
+  gets a `punch_ingested` audit row (actor `device`, no exception ID, `after` = the punch
+  + `via` device_api/demo_simulator + `requested_by`) in the same transaction. Punch IDs
+  continue `P0073...` under the advisory lock `PUNCH_ID_LOCK` (db/models.py) shared with
+  apply.py. Tests: the static check allows exactly this module to use `PunchRow` (insert
+  only, two `session.add`), and the SQL write hook allows writer `ingest` only as an
+  INSERT into timecards with one matching `punch_ingested` row per new punch.
+- After a punch, `service.detect_after_punch` runs detection in its own transaction,
+  scoped by `DetectionScope` to that worker and the Mon-Sun week (starting the week of
+  the day before, for night shifts). The engine still runs on all data; only rows in
+  scope are created, refreshed or closed. Audit: `post_punch_detection` (system), or
+  `post_punch_detection_failed` with the error type only; the punch is kept and the
+  next full run picks it up.
+- Scheduler (`scheduler/cycle.py` + `scheduler/runner.py`): a plain daemon thread in the
+  API process, no new dependency. A non-blocking lock means an overlapping cycle is
+  skipped and counted, never doubled; run-now while busy is 409 `scheduler_busy`. Each
+  cycle: full detection, then investigations (existing job code, actor None = system, one
+  at a time, newest detected first, then severity, at most
+  `SCHEDULER_INVESTIGATIONS_PER_CYCLE`), then worker messages for open cases routed to the
+  worker that were never asked (`ask_worker` with `actor_id=None`, audited as `system`,
+  at most `SCHEDULER_MESSAGES_PER_CYCLE`). One failing case is recorded (AppError code +
+  message, else the type only) and the cycle goes on. The summary goes to
+  `scheduler_runs` (real UTC times) and one `scheduler_cycle` audit row. The system rows
+  per case are `auto_investigation_started`, `auto_investigation_finished` and `ask_worker`.
+- **Backlog rule (user decision):** by default the scheduler only touches cases first
+  detected after the watermark (the max audit ID stored in `settings` as
+  `scheduler_watermark` when the scheduler starts, on a demo reset, or on the first cycle
+  if neither happened). Older cases are counted in `skipped_backlog` and left alone, so
+  Amit's planted P1 stays for the manual walkthrough. `SCHEDULER_BACKLOG=true` processes
+  them too.
+- Re-investigation: `jobs.finish` stores `exceptions.investigated_facts_hash` (sha256 of
+  the detection content fields, `cases/facts.py`). A case is investigated again only if
+  it is still open and the hash changed. A template (fallback) case with unchanged facts
+  is never retried automatically (keeps Groq quiet); Priya can press Investigate.
+- Settings: `SCHEDULER_ENABLED` (false), `SCHEDULER_INTERVAL_SECONDS` (60),
+  `SCHEDULER_INVESTIGATIONS_PER_CYCLE` (3), `SCHEDULER_MESSAGES_PER_CYCLE` (3),
+  `SCHEDULER_BACKLOG` (false), `DEVICE_API_KEY`, `DEVICE_MAX_BACKDATE_DAYS` (7),
+  `ATTENDFLOW_DEMO_MODE` (false), `ATTENDFLOW_CORS_ORIGINS` (default the Vite :5173
+  origins). Tests force these in `api_settings`, whatever `.env` says.
+- Endpoints (payroll admin only, else 403 `admin_only`): `GET /api/admin/scheduler`
+  (status, last cycle, watermark, as-of, demo mode, workers for the simulator),
+  `POST .../run-now`, `POST .../start`, `POST .../stop` (runtime only; start moves the
+  watermark).
+- **DEMO_MODE** (`ATTENDFLOW_DEMO_MODE=true`) adds `demo_router`: `POST
+  /api/admin/demo/reset` (seed + detection + watermark; the caller must exist, so an
+  empty DB needs `POST /api/seed` once) and `POST /api/admin/demo/punch` (the same
+  ingest path as the device, `via=demo_simulator`, no device key in the browser). With
+  demo mode off these routes are not registered (404). OpenAPI types are generated with
+  demo mode on (`scripts/generate-api.mjs`), independent of `.env`.
+- Frontend: `/admin` has `SchedulerPanel` (status line, Run scheduler now; in demo mode
+  also the Simulate punch form). While the simulator is open it refreshes the list and
+  status every 4 s. The worker inbox takes a dev-only `?as=E004` (Neha), the same way as
+  the reviewer override.
+- Demo scenario: Neha (E004) clocks in Wed 15 Apr **08:58** (not 09:02, which would add an
+  auto-resolved P7 within grace) with no clock-out. This gives a fresh
+  `P1-E004-2026-04-15` and closes her planted `P10-E004-2026-04-15`. The P1 routes to the
+  worker, so one cycle investigates it and messages Neha.
+- Detection already auto-resolves P2 and P7 within grace (Phase 3 behaviour), including
+  after a device punch. Phase 12 adds the scheduled job and undo.
+
 ## Repo map
 
 ```
@@ -444,16 +528,22 @@ backend/attendflow/
   agent/loop.py          Native tool calls over one stored exception, returns AgentRun
   agent/journal.py       Separate write sessions for tool call and audit rows
   clock.py               FixedClock: the only source of "now" (ATTENDFLOW_AS_OF)
+  ingest/punches.py      the ONLY other writer: new device punches (INSERT + audit row)
+  scheduler/cycle.py     one cycle: detect, investigate new cases, message workers, summary
+  scheduler/runner.py    Scheduler thread, non-overlap lock, start/stop/status
   errors.py              AppError family -> HTTP status + error code
-  db/models.py           SQLAlchemy tables (6 source tables + exceptions, audit_log, tool_calls, settings)
+  db/models.py           SQLAlchemy tables (6 source tables + exceptions, audit_log, tool_calls,
+                         settings, scheduler_runs); PUNCH_ID_LOCK
   db/migrations/         Alembic (alembic.ini at repo root)
   db/seed.py             demo reset: truncate all, load CSVs
   db/dataset.py          read-only: DB -> engine Dataset (voided punches left out)
   fixes/params.py        Pydantic params per fix action; decision-only action list
   fixes/apply.py         the ONLY writer of timecards/schedule/leave after approval
   cases/transitions.py   status flow table + check_transition()
-  cases/service.py       run_detection (upsert), approve/edit, reject, ask_worker, worker_reply,
-                         detect_after_fix
+  cases/service.py       run_detection (upsert, optional DetectionScope), approve/edit, reject,
+                         ask_worker (also as system), worker_reply, detect_after_fix,
+                         detect_after_punch
+  cases/facts.py         CONTENT_FIELDS + facts_hash() (re-investigate only on changed facts)
   cases/supervisor.py    supervisor queue, case card, consequence note, reviewer permission
   cases/admin.py         payroll admin overview, counters, read-only case detail, audit summaries
   tools/models.py        tool inputs/outputs (Pydantic), ok/error envelope, ProposedChange
@@ -469,7 +559,8 @@ backend/attendflow/
 data/                    6 CSVs + policy.json (limits) + policy.md (plain-language, cited by agent)
 docs/                    PROGRESS.md, PLANTED_CASES.md, LLM_LICENCE.md, DEMO_WALKTHROUGH.md
 tests/                   pytest suite
-frontend/                Vite React: worker inbox (/), supervisor (/supervisor), admin (/admin), dev (/dev)
+frontend/                Vite React: worker inbox (/), supervisor (/supervisor), admin (/admin, with
+                         SchedulerPanel), dev (/dev)
 docker-compose.yml       PostgreSQL 16 (host port 5433); docker/initdb creates the test DB
 .github/workflows/ci.yml lint + validate + tests (with a Postgres service) on Python 3.12
 ```
@@ -489,5 +580,7 @@ python -m uv run attendflow-tools list     # agent tools (get_punches employee_i
 # Set AGENT_MAX_STEPS=6 in your shell for this sequential Groq smoke.
 python -m uv run attendflow-agent-smoke P1-E001-2026-04-14
 python -m uv run pytest                    # tests (API tests need the db container)
+# Device punch (needs DEVICE_API_KEY in .env and the API running):
+curl -X POST localhost:8000/api/punches -H "X-Device-Key: $DEVICE_API_KEY" -H "Content-Type: application/json" -d '{"employee_id":"E004","timestamp":"2026-04-15T08:58","type":"in"}'
 python -m uv run ruff check . && python -m uv run ruff format --check .
 ```

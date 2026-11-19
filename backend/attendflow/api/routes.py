@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hmac
 from collections.abc import Iterator
 from typing import Annotated
 
@@ -23,6 +24,8 @@ from attendflow.api.schemas import (
     AskWorkerIn,
     AuditEntryOut,
     AuditListOut,
+    DemoPunchIn,
+    DemoResetOut,
     DetectionRunOut,
     EditIn,
     ErrorResponse,
@@ -31,7 +34,11 @@ from attendflow.api.schemas import (
     ExceptionOut,
     HealthOut,
     InvestigationJobOut,
+    PunchAcceptedOut,
+    PunchIn,
     RejectIn,
+    SchedulerCycleOut,
+    SchedulerStatusOut,
     SeedOut,
     Severity,
     SupervisorCaseOut,
@@ -48,12 +55,25 @@ from attendflow.cases.transitions import Status
 from attendflow.clock import Clock
 from attendflow.config import Settings
 from attendflow.data.loader import DataValidationError
-from attendflow.db.models import AuditLogRow, ExceptionRow, ToolCallRow
+from attendflow.db.models import AuditLogRow, EmployeeRow, ExceptionRow, ToolCallRow
 from attendflow.db.seed import seed_from_csv
-from attendflow.errors import AppError, ForbiddenError, NotFoundError
+from attendflow.errors import (
+    AppError,
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+    ServiceUnavailableError,
+    UnauthorizedError,
+)
+from attendflow.ingest.punches import PunchInput, Via, ingest_punch
 from attendflow.policy.models import PolicyConfig, load_policy_text
+from attendflow.scheduler.cycle import set_watermark
+from attendflow.scheduler.runner import Scheduler
 
 router = APIRouter(prefix="/api")
+# DEMO_MODE only: create_app() includes this router only when ATTENDFLOW_DEMO_MODE=true, so
+# with demo mode off these endpoints do not exist at all (404). Phase 22 checklist.
+demo_router = APIRouter(prefix="/api/admin/demo", tags=["demo"])
 
 
 def _errors(*codes: int) -> dict:
@@ -595,3 +615,206 @@ def tool_calls(
         stmt.order_by(ToolCallRow.exception_id, ToolCallRow.id).limit(limit)
     ).all()
     return ToolCallListOut(count=len(rows), items=[ToolCallOut.model_validate(r) for r in rows])
+
+
+# ---------------------------------------------------------------- device punches (Phase 11)
+
+
+def _receive_punch(
+    request: Request,
+    session: Session,
+    body: PunchIn,
+    *,
+    via: Via,
+    requested_by: str | None,
+) -> PunchAcceptedOut:
+    """Store the punch (ingest module, own transaction, audited), then run detection for
+    the worker's week in a second transaction that can fail without losing the punch."""
+    state = request.app.state
+    punch = ingest_punch(
+        session,
+        state.clock,
+        state.settings,
+        state.policy,
+        PunchInput(
+            employee_id=body.employee_id,
+            timestamp=body.local_timestamp(),
+            type=body.type,
+            device_id=body.device_id,
+            location=body.location,
+        ),
+        via=via,
+        requested_by=requested_by,
+    )
+    detection = service.detect_after_punch(session, state.policy, state.clock, punch)
+    return PunchAcceptedOut(punch=punch, detection=detection)
+
+
+@router.post(
+    "/punches",
+    response_model=PunchAcceptedOut,
+    status_code=201,
+    tags=["device"],
+    summary="Mock attendance device: record one punch",
+    description="Authenticated by the `X-Device-Key` header (DEVICE_API_KEY), not by an "
+    "actor. The timestamp is local time with no timezone and may not be after the as-of "
+    "time. An exact duplicate is 409. The punch is written by the ingest module with a "
+    "`punch_ingested` audit row; detection then runs for that worker's week. Uses no LLM.",
+    responses=_errors(401, 409, 422, 503),
+)
+def receive_punch(
+    body: PunchIn,
+    request: Request,
+    session: SessionDep,
+    settings: Annotated[Settings, Depends(get_settings_dep)],
+    device_key: Annotated[str | None, Header(alias="X-Device-Key")] = None,
+):
+    if not settings.device_api_key:
+        raise ServiceUnavailableError(
+            "the device API is not configured on this server (DEVICE_API_KEY)",
+            code="device_api_not_configured",
+        )
+    if device_key is None or not hmac.compare_digest(
+        device_key.encode("utf-8"), settings.device_api_key.encode("utf-8")
+    ):
+        raise UnauthorizedError("missing or wrong device key", code="invalid_device_key")
+    return _receive_punch(request, session, body, via="device_api", requested_by=None)
+
+
+# ---------------------------------------------------------------- scheduler (Phase 11)
+
+
+def _scheduler(request: Request) -> Scheduler:
+    return request.app.state.scheduler
+
+
+def _require_admin(session: Session, actor_id: str) -> None:
+    with session.begin():
+        admin.require_admin(session, actor_id)
+
+
+def _status(request: Request, session: Session) -> SchedulerStatusOut:
+    settings = request.app.state.settings
+    workers = []
+    if settings.demo_mode:
+        with session.begin():
+            workers = [
+                {"employee_id": e.employee_id, "name": e.name, "team": e.team}
+                for e in session.scalars(
+                    select(EmployeeRow)
+                    .where(EmployeeRow.role == "worker")
+                    .order_by(EmployeeRow.employee_id)
+                )
+            ]
+    return SchedulerStatusOut(
+        **_scheduler(request).status(),
+        as_of=request.app.state.clock.now(),
+        demo_mode=settings.demo_mode,
+        workers=workers,
+    )
+
+
+@router.get(
+    "/admin/scheduler",
+    response_model=SchedulerStatusOut,
+    tags=["scheduler"],
+    summary="Scheduler status and the last cycle's summary (payroll admin only)",
+    responses=_errors(403, 422),
+)
+def scheduler_status(actor_id: ActorId, request: Request, session: SessionDep):
+    _require_admin(session, actor_id)
+    return _status(request, session)
+
+
+@router.post(
+    "/admin/scheduler/run-now",
+    response_model=SchedulerCycleOut,
+    tags=["scheduler"],
+    summary="Run one scheduler cycle now and return its summary (payroll admin only)",
+    description="Detection, then investigations of new cases and worker messages within "
+    "the per-cycle limits. 409 scheduler_busy if a cycle is already running.",
+    responses=_errors(403, 409, 422),
+)
+def scheduler_run_now(actor_id: ActorId, request: Request, session: SessionDep):
+    _require_admin(session, actor_id)
+    summary = _scheduler(request).run_once("run_now")
+    if summary is None:
+        raise ConflictError("a scheduler cycle is already running", code="scheduler_busy")
+    return summary
+
+
+@router.post(
+    "/admin/scheduler/start",
+    response_model=SchedulerStatusOut,
+    tags=["scheduler"],
+    summary="Start the timer (runtime only; a restart goes back to SCHEDULER_ENABLED)",
+    description="Cases detected from now on count as new for the scheduler.",
+    responses=_errors(403, 422),
+)
+def scheduler_start(actor_id: ActorId, request: Request, session: SessionDep):
+    _require_admin(session, actor_id)
+    _scheduler(request).start()
+    return _status(request, session)
+
+
+@router.post(
+    "/admin/scheduler/stop",
+    response_model=SchedulerStatusOut,
+    tags=["scheduler"],
+    summary="Stop the timer (a running cycle finishes first)",
+    responses=_errors(403, 422),
+)
+def scheduler_stop(actor_id: ActorId, request: Request, session: SessionDep):
+    _require_admin(session, actor_id)
+    _scheduler(request).stop()
+    return _status(request, session)
+
+
+# ---------------------------------------------------------------- demo helpers (DEMO_MODE)
+
+
+@demo_router.post(
+    "/reset",
+    response_model=DemoResetOut,
+    summary="Demo only: reseed, run detection, and reset the scheduler's 'new case' mark",
+    description="Exists only when ATTENDFLOW_DEMO_MODE=true. Payroll admin only. "
+    "Destructive: wipes every table like POST /api/seed.",
+    responses=_errors(403, 409, 422),
+)
+def demo_reset(actor_id: ActorId, request: Request, session: SessionDep):
+    state = request.app.state
+    _require_admin(session, actor_id)
+    if _scheduler(request).busy:
+        raise ConflictError("a scheduler cycle is running; try again", code="scheduler_busy")
+    try:
+        with session.begin():
+            counts = seed_from_csv(session, state.settings.data_dir)
+    except DataValidationError as exc:
+        raise AppError(
+            "the demo CSVs are invalid; nothing was changed",
+            code="invalid_data",
+            details=exc.errors,
+        ) from exc
+    detection = service.run_detection(session, state.policy, state.clock)
+    watermark = set_watermark(state.session_factory, state.clock, "demo_reset")
+    state.logger.info("demo reset", extra={"event": "demo_reset", **counts})
+    return DemoResetOut(
+        seed=SeedOut(message="Demo data loaded and detection run.", counts=counts),
+        detection=DetectionRunOut(**detection.__dict__),
+        watermark_audit_id=watermark,
+    )
+
+
+@demo_router.post(
+    "/punch",
+    response_model=PunchAcceptedOut,
+    status_code=201,
+    summary="Demo only: send a simulated device punch",
+    description="Exists only when ATTENDFLOW_DEMO_MODE=true. Payroll admin only. Goes "
+    "through the same ingest module and checks as POST /api/punches, so the device key "
+    "never has to be in the browser. Audited with via=demo_simulator.",
+    responses=_errors(403, 409, 422),
+)
+def demo_punch(body: DemoPunchIn, actor_id: ActorId, request: Request, session: SessionDep):
+    _require_admin(session, actor_id)
+    return _receive_punch(request, session, body, via="demo_simulator", requested_by=actor_id)
