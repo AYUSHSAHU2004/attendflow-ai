@@ -21,6 +21,7 @@ attendflow-validate = "attendflow.scripts.validate_data:main"
 attendflow-llm-test = "attendflow.scripts.llm_smoke_test:main"
 attendflow-detect = "attendflow.scripts.detect:main"
 attendflow-api = "attendflow.api.app:main"
+attendflow-tools = "attendflow.scripts.tools_cli:main"
 
 [dependency-groups]
 dev = [

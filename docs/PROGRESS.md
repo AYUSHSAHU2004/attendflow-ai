@@ -274,3 +274,91 @@ Done-when check in `/docs`:
 
 **Next: Phase 4**
 - Read-only tools for the agent, plus fix options for P3, P4, P6 and P7.
+
+## Phase 4: Read-only agent tools + fix options for P3, P4, P6, P7 (2026-11-19) ✅
+
+**Built**
+- **Fix options** (engine code, no LLM). Every option now also has `description`,
+  `decision_only`, `policy_id` and `requires_worker_confirmation`. `decision_only` and the
+  default description come from one table (`ACTION_INFO`), so they always match the writer.
+  - P3: `approve_overtime` (decision) and `correct_clock_out` (voids the wrong clock-out and
+    adds the confirmed one; prefilled at the 9 h limit, Meena Mon 16:29:47 = 16:30).
+  - P4: `record_break` (adds break punches; Neha 12:00-12:30 suggested) and
+    `record_missed_break` (decision, follow-up note required).
+  - P6: `record_short_rest` (decision, reason required) and `move_next_shift_later`
+    (upcoming shift only: previous end + 11 h, rounded up to the minute, same length).
+  - P7 (late and early): `accept_reason` (reason required) and `record_as_late` /
+    `record_as_early_leave`. Both decision-only.
+- Three new writers in `fixes/apply.py` (`correct_clock_out`, `add_break`, `move_shift`),
+  with the same one-transaction rule and stale/future/overlap guards.
+- **Worker-confirmation guard:** options flagged `requires_worker_confirmation` (P3
+  correction, P4 break) are refused (409 `worker_not_confirmed`) until the worker's latest
+  reply on the case is Yes.
+- **Detection** adds options to cases already in progress that were stored without any
+  (audit row `options_added`); status and assignee are untouched. `GET /api/exceptions`
+  shows the new fields, and derives them for options stored before this phase.
+- **Tools** (`backend/attendflow/tools/`): `get_schedule`, `get_leave`,
+  `get_leave_balance`, `get_punches`, `get_policy`, `run_checks`.
+  - Typed Pydantic input and output, one-line LLM descriptions, short output (tested
+    budgets: 1,000 chars; `get_policy` 2,000 because it returns the real policy text;
+    `run_checks` 1,200).
+  - Bad input never raises: `{"ok": false, "error": {code, message, hint}}`.
+  - `run_checks` applies the change to an in-memory copy, re-runs the whole engine and
+    returns new violations, resolved ones, still-open ones, the day's hours and the week's
+    projected hours.
+- **Registry:** `openai_tools()` gives the OpenAI function-calling list, with schemas made
+  from the Pydantic models and flattened (no `$ref`).
+- **Read-only, three layers:** tools never get a session (the runner loads the data in a
+  `SET TRANSACTION READ ONLY` session that always rolls back), a flush guard, and tests
+  (every table snapshotted around every tool; no writer imports in `tools/`).
+- **Logging hook:** `ToolRunner(..., on_call=...)` gets name, arguments, output, ok and
+  duration for every call. Phase 5 will write `tool_calls` from it.
+- CLI `attendflow-tools` (`list`, `schema`, or any tool; `--csv` reads the CSVs).
+- 139 new tests (401 total).
+
+**Decisions** (all 16 defaults accepted)
+- Option names follow policy.md: P3 is a punch *correction* (not "cut hours"); P4 and P6
+  *record* the breach or the reason rather than "approve" it.
+- **No `mark_gap_as_leave` for P7:** policy.md does not allow it.
+- **policy.md change (approved):** P7 allowed fixes now end with "Early leave beyond grace
+  is handled the same way."
+- Decision options with a note: an empty note is taken from the approve `reason`; with
+  neither, approve is 422 `invalid_params`.
+- P3 correction is offered only on single-shift days. The P6 move is never offered if it
+  would push the shift onto another date (P15).
+- `run_checks` reuses the fix-option `{action, params}` shape (11 actions), so the agent
+  can copy an option and change one value. "No violations" = `new_violations` is empty.
+  For Amit, a 19:30 clock-out reports **P3 (9.5 h)** and a **new P5 risk (41.5 h)**.
+- A parity test approves real fixes on the test DB and checks that detection finds exactly
+  what `run_checks` predicted (P1, P5 cut, P3 correction, P4 break).
+- Small refactors: `build_context()` in `engine.py`, `week_hours()` out of the P5 check,
+  and `shift_end_for_hours()` shared by the writer and the simulation.
+- Two Phase 3 tests were updated because their premise changed: "approve without options"
+  now empties one stored row by hand, and Karan's P7 now expects the two option IDs.
+
+**Notes for later phases**
+- Phase 5: pass `openai_tools()` to the model and run calls through
+  `ToolRunner.for_database`; log `tool_calls` from `on_call` in a separate write session.
+- Phase 9: P1, P9, P10 and P13 also say "the worker is asked first" but are not flagged
+  `requires_worker_confirmation` yet (so the Phase 3 demo approve still works). Decide then.
+- Phase 22: `POST /api/seed` must be disabled or protected on the deployed server.
+
+**How to run and verify** (from `C:\dev\attendflow-ai`; stop a running `attendflow-api`
+first, or `uv sync` cannot replace its .exe)
+```bash
+python -m uv sync
+python -m uv run pytest                     # expect 401 passed
+python -m uv run attendflow-detect --fixes --policy P3,P4,P7
+python -m uv run attendflow-tools get_punches employee_id=E001 date=2026-04-14
+python -m uv run attendflow-tools get_leave_balance employee_id=E007 leave_type=sick
+python -m uv run attendflow-tools get_policy policy_id=P3
+# Git Bash (single quotes keep the JSON intact):
+python -m uv run attendflow-tools run_checks '{"employee_id":"E001","date":"2026-04-14","proposed_change":{"action":"set_clock_out","params":{"timestamp":"2026-04-14T19:30"}}}'
+```
+Done-when check: run_checks prints `2 new violation(s): P5 2026-04-13, P3 2026-04-14`
+(with 18:00 instead: `no new violations; resolves P1`). In `/docs`: `POST /api/seed`,
+`POST /api/detection/run`, then `GET /api/exceptions`: Meena's P3, Neha's P4 and Karan's
+P7 show their options. P6 options are tested on synthetic fixtures (no demo case).
+
+**Next: Phase 5**
+- LLM client + agent loop: call the tools, log each call, validate the output.

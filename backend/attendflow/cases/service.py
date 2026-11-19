@@ -35,7 +35,7 @@ from attendflow.errors import (
     NotFoundError,
 )
 from attendflow.fixes.apply import apply_auto_resolve, apply_fix
-from attendflow.fixes.params import FixParamsError, params_json, parse_params
+from attendflow.fixes.params import REQUIRED_NOTE, FixParamsError, params_json, parse_params
 from attendflow.policy.models import PolicyConfig
 
 log = logging.getLogger("attendflow.cases")
@@ -43,6 +43,7 @@ log = logging.getLogger("attendflow.cases")
 ROLE_TO_ACTOR = {"worker": "worker", "supervisor": "supervisor", "payroll_admin": "admin"}
 # Fields detection refreshes on an open exception.
 CONTENT_FIELDS = ("title", "summary", "severity", "kind", "details", "evidence", "fix_options")
+FINAL = ("resolved", "rejected")
 
 
 # ------------------------------------------------------------------ helpers
@@ -137,6 +138,7 @@ class DetectionSummary:
     created: int = 0
     updated: int = 0
     unchanged: int = 0
+    options_added: int = 0
     auto_resolved: int = 0
     closed_no_longer_detected: list[str] = field(default_factory=list)
     by_policy: dict[str, int] = field(default_factory=dict)
@@ -226,7 +228,11 @@ def run_detection(session: Session, policy: PolicyConfig, clock: Clock) -> Detec
 
             row.last_detected_at = clock.now()
             if row.status != "open":
-                summary.unchanged += 1
+                if row.status not in FINAL and not row.fix_options and exc.fix_options:
+                    _add_options(session, row, exc, clock)
+                    summary.options_added += 1
+                else:
+                    summary.unchanged += 1
                 continue
             new = _content(exc)
             changed = {k: v for k, v in new.items() if getattr(row, k) != v}
@@ -277,6 +283,42 @@ def run_detection(session: Session, policy: PolicyConfig, clock: Clock) -> Detec
         },
     )
     return summary
+
+
+def _add_options(session: Session, row: ExceptionRow, exc: TimecardException, clock: Clock) -> None:
+    """A case a human is already working on, created before its policy had fix options
+    (Phase 4 added them for P3, P4, P6, P7): add the options only. Status, assignee and
+    the numbers the human has seen are left alone."""
+    row.fix_options = _content(exc)["fix_options"]
+    row.updated_at = clock.now()
+    _audit(
+        session,
+        clock,
+        exception_id=row.id,
+        actor="system",
+        action="options_added",
+        after={"fix_options": [o["option_id"] for o in row.fix_options]},
+        reason="Fix options for this policy were added after the case was opened.",
+    )
+
+
+def _require_worker_confirmation(session: Session, row: ExceptionRow, option: dict) -> None:
+    """Options flagged requires_worker_confirmation (policy: the worker confirms first) can
+    only be approved after the worker's latest reply on this case said Yes."""
+    if not option.get("requires_worker_confirmation"):
+        return
+    reply = session.scalars(
+        select(AuditLogRow)
+        .where(AuditLogRow.exception_id == row.id, AuditLogRow.action == "worker_reply")
+        .order_by(AuditLogRow.id.desc())
+    ).first()
+    if reply is None or not (reply.after or {}).get("confirmed"):
+        raise ConflictError(
+            f"{option['option_id']} needs the worker to confirm first: ask the worker, "
+            "then approve after they reply Yes",
+            code="worker_not_confirmed",
+            details={"worker_replied": reply is not None},
+        )
 
 
 def _auto_resolve(session: Session, row: ExceptionRow, policy: PolicyConfig, clock: Clock) -> None:
@@ -338,8 +380,12 @@ def approve(
         check_transition(row.status, "resolved", action=action_name)
         _require_assignee(row, actor, action_name)
         option = _find_option(row, option_id)
+        _require_worker_confirmation(session, row, option)
 
         merged = {**option["params"], **(params or {})}
+        note_key = REQUIRED_NOTE.get(option["action"])
+        if note_key and not str(merged.get(note_key) or "").strip() and reason:
+            merged[note_key] = reason.strip()
         try:
             parsed = parse_params(option["action"], option["params"], merged)
         except FixParamsError as exc:

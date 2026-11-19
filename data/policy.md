@@ -108,7 +108,7 @@ last clock-out compared with the scheduled end.
 
 **Allowed fixes:** Arrivals within grace are auto-resolved and audit-logged. Late arrivals
 beyond grace go to the supervisor, who may accept a reason from the worker. The clock-in
-time itself is never moved earlier.
+time itself is never moved earlier. Early leave beyond grace is handled the same way.
 
 ## P8: Unscheduled work needs approval
 

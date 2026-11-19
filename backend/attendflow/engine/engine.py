@@ -8,12 +8,35 @@ from attendflow.data.loader import Dataset
 from attendflow.engine.checks import CHECKS
 from attendflow.engine.models import EngineResult
 from attendflow.engine.rules import RuleContext
-from attendflow.engine.shifts import process_punches
+from attendflow.engine.shifts import ProcessedPunches, process_punches
 from attendflow.policy.models import PolicyConfig
 
 
 def _policy_number(policy_id: str) -> int:
     return int(policy_id.removeprefix("P"))
+
+
+def build_context(
+    dataset: Dataset, policy: PolicyConfig, as_of: datetime
+) -> tuple[RuleContext, ProcessedPunches]:
+    """Stages 1-2 of the engine: punches -> shifts, then the rule context (leave applied to
+    the schedule). The read-only tools use it too, so they see exactly what checks see."""
+    if as_of.tzinfo is not None:
+        raise ValueError("as_of must be a plain local time (no timezone)")
+    processed = process_punches(dataset, policy, as_of)
+    workers = {e.employee_id for e in dataset.employees if e.role == "worker"}
+    ctx = RuleContext(
+        policy=policy,
+        as_of=as_of,
+        shifts=processed.shifts,
+        schedule=[r for r in dataset.schedule if r.employee_id in workers],
+        duplicate_runs=processed.duplicate_runs,
+        leave_records=[r for r in dataset.leave_records if r.employee_id in workers],
+        leave_balances=[b for b in dataset.leave_balances if b.employee_id in workers],
+        holidays=list(dataset.holidays),
+        punches=[p for p in dataset.punches if p.employee_id in workers and p.timestamp <= as_of],
+    )
+    return ctx, processed
 
 
 def run_engine(
@@ -27,22 +50,7 @@ def run_engine(
     `policies` limits which checks run (default: all implemented ones). The result is
     fully deterministic: same data + same policy + same as-of time -> same output.
     """
-    if as_of.tzinfo is not None:
-        raise ValueError("as_of must be a plain local time (no timezone)")
-    processed = process_punches(dataset, policy, as_of)
-    workers = {e.employee_id for e in dataset.employees if e.role == "worker"}
-    # Building the context also applies leave to the schedule (stage 1, see checks.py).
-    ctx = RuleContext(
-        policy=policy,
-        as_of=as_of,
-        shifts=processed.shifts,
-        schedule=[r for r in dataset.schedule if r.employee_id in workers],
-        duplicate_runs=processed.duplicate_runs,
-        leave_records=[r for r in dataset.leave_records if r.employee_id in workers],
-        leave_balances=[b for b in dataset.leave_balances if b.employee_id in workers],
-        holidays=list(dataset.holidays),
-        punches=[p for p in dataset.punches if p.employee_id in workers and p.timestamp <= as_of],
-    )
+    ctx, processed = build_context(dataset, policy, as_of)
     selected = policies or list(CHECKS)
     unknown = [p for p in selected if p not in CHECKS]
     if unknown:

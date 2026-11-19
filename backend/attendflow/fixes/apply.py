@@ -30,15 +30,18 @@ from attendflow.db.models import (
     PunchRow,
     ScheduleEntryRow,
 )
-from attendflow.engine.shifts import scheduled_hours
+from attendflow.engine.shifts import scheduled_hours, shift_end_for_hours
 from attendflow.errors import ConflictError, InvalidFixError
 from attendflow.fixes.params import (
+    AddBreakParams,
     AddPunchesParams,
     ConvertFullDayParams,
+    CorrectPunchParams,
     DateParams,
     EditPunchesParams,
     LeaveDayParams,
     MoveLeaveTypeParams,
+    MoveShiftParams,
     Params,
     PunchIdsParams,
     ReduceScheduleParams,
@@ -245,6 +248,73 @@ def _set_clock_in(ctx: FixContext, p: SetClockParams) -> list[Change]:
     return [ctx.new_punch(p.timestamp, "in")]
 
 
+def _evidence_times(ctx: FixContext, type_: str) -> list[datetime]:
+    return sorted(
+        datetime.fromisoformat(r["timestamp"]) for r in ctx.evidence_punches() if r["type"] == type_
+    )
+
+
+def _correct_clock_out(ctx: FixContext, p: CorrectPunchParams) -> list[Change]:
+    """P3: the clock-out was wrong. Void it and add the confirmed one (never overwrite)."""
+    old = ctx.punch(p.punch_id)
+    if old.type != "out":
+        raise InvalidFixError(
+            f"punch {p.punch_id} is a '{old.type}' punch, not a clock-out", code="wrong_punch_type"
+        )
+    ctx.check_punch_time(p.timestamp)
+    ins = _evidence_times(ctx, "in")
+    if ins:
+        max_hours = ctx.policy.number("P15", "max_shift_hours")
+        if not ins[-1] < p.timestamp <= ins[-1] + timedelta(hours=max_hours):
+            raise InvalidFixError(
+                f"clock-out must be after the clock-in ({ins[-1]:%H:%M}) and within "
+                f"{max_hours:g} h of it",
+                code="punch_outside_shift",
+            )
+    return [ctx.void(p.punch_id), ctx.new_punch(p.timestamp, "out", old.location)]
+
+
+def _add_break(ctx: FixContext, p: AddBreakParams) -> list[Change]:
+    """P4: add the break the worker confirms, inside the shift and clear of other breaks."""
+    ins, outs = _evidence_times(ctx, "in"), _evidence_times(ctx, "out")
+    if (ins and p.break_start <= ins[0]) or (outs and p.break_end >= outs[-1]):
+        raise InvalidFixError(
+            "the break must be between the clock-in and the clock-out", code="break_outside_shift"
+        )
+    others = _evidence_times(ctx, "break_start") + _evidence_times(ctx, "break_end")
+    if any(p.break_start <= t <= p.break_end for t in others):
+        raise InvalidFixError(
+            "the break overlaps a break that is already punched", code="break_overlaps"
+        )
+    return [ctx.new_punch(p.break_start, "break_start"), ctx.new_punch(p.break_end, "break_end")]
+
+
+def _move_shift(ctx: FixContext, p: MoveShiftParams) -> list[Change]:
+    """P6: move an upcoming shift later so the rest before it is long enough."""
+    row = ctx.schedule_row(p.date)
+    if (row.shift_start, row.shift_end) != (p.current_start, p.current_end):
+        raise ConflictError(
+            f"the {p.date} shift is now {row.shift_start:%H:%M}-{row.shift_end:%H:%M}, not "
+            f"{p.current_start:%H:%M}-{p.current_end:%H:%M}; run detection again",
+            code="stale_fix",
+        )
+    if datetime.combine(p.date, p.new_start) <= ctx.as_of:
+        raise InvalidFixError(
+            f"the new start {p.new_start:%H:%M} on {p.date:%a %d %b} is not in the future",
+            code="shift_not_upcoming",
+        )
+    before = f"{row.shift_start:%H:%M}-{row.shift_end:%H:%M}"
+    row.shift_start, row.shift_end = p.new_start, p.new_end
+    return [
+        {
+            "table": "schedule",
+            "op": "update",
+            "date": p.date.isoformat(),
+            "shift": {"before": before, "after": f"{p.new_start:%H:%M}-{p.new_end:%H:%M}"},
+        }
+    ]
+
+
 def _add_punches(ctx: FixContext, p: AddPunchesParams) -> list[Change]:
     max_hours = ctx.policy.number("P15", "max_shift_hours")
     if p.clock_out - p.clock_in > timedelta(hours=max_hours):
@@ -269,15 +339,6 @@ def _reject_unscheduled(ctx: FixContext, p: RejectUnscheduledParams) -> list[Cha
     return [ctx.void(pid) for pid in p.punch_ids]
 
 
-def _new_shift_end(ctx: FixContext, row: ScheduleEntryRow, new_hours: float) -> datetime:
-    """The end time that gives `new_hours` planned hours, using the same lunch rule as
-    scheduled_hours() (P5: 1 h unpaid lunch on shifts longer than 6 h)."""
-    break_after = ctx.policy.number("P5", "planned_break_after_hours")
-    break_hours = ctx.policy.number("P5", "planned_break_minutes") / 60
-    span = new_hours if new_hours <= break_after else new_hours + break_hours
-    return datetime.combine(row.date, row.shift_start) + timedelta(hours=span)
-
-
 def _reduce_schedule(ctx: FixContext, p: ReduceScheduleParams) -> list[Change]:
     changes: list[Change] = []
     for cut in p.cuts:
@@ -296,7 +357,8 @@ def _reduce_schedule(ctx: FixContext, p: ReduceScheduleParams) -> list[Change]:
                 {"table": "schedule", "op": "delete", "date": cut.date.isoformat(), "shift": before}
             )
             continue
-        row.shift_end = _new_shift_end(ctx, row, cut.new_hours).time()
+        sched = ScheduleRow.model_validate(row, from_attributes=True)
+        row.shift_end = shift_end_for_hours(sched, cut.new_hours, ctx.policy).time()
         changes.append(
             {
                 "table": "schedule",
@@ -440,6 +502,9 @@ APPLIERS: dict[str, Callable[[FixContext, Any], list[Change]]] = {
     "split_paid_unpaid_leave": _split_paid_unpaid,
     "move_leave_type": _move_leave_type,
     "reject_leave_days": _reject_leave_days,
+    "correct_clock_out": _correct_clock_out,
+    "add_break": _add_break,
+    "move_shift": _move_shift,
 }
 
 

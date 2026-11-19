@@ -164,7 +164,7 @@ def _make(
         summary=summary,
         details=details,
         evidence=[*sorted(punches.values(), key=lambda p: (p.timestamp, p.punch_id)), *others],
-        fix_options=fix_options or [],
+        fix_options=[o.model_copy(update={"policy_id": policy_id}) for o in fix_options or []],
     )
 
 
@@ -309,6 +309,17 @@ def check_p3_daily_hours(ctx: RuleContext) -> list[TimecardException]:
     for (emp, on), shifts in sorted(per_day.items()):
         worked = sum(s.worked_hours or 0 for s in shifts)
         if worked > limit:
+            fixes = [
+                FixOption(
+                    option_id="approve_overtime",
+                    action="approve_overtime",
+                    label=f"Confirm the extra {fmt(worked - limit)} h were authorised "
+                    "(they stay as overtime)",
+                    params={"date": on.isoformat(), "hours": h(worked - limit)},
+                )
+            ]
+            if len(shifts) == 1:
+                fixes.append(_p3_correct_clock_out(shifts[0], limit))
             found.append(
                 _make(
                     ctx,
@@ -324,9 +335,41 @@ def check_p3_daily_hours(ctx: RuleContext) -> list[TimecardException]:
                         "shifts": len(shifts),
                     },
                     [p for s in shifts for p in s.punches],
+                    fix_options=fixes,
                 )
             )
     return found
+
+
+def limit_clock_out(s: Shift, limit_hours: float) -> datetime:
+    """The clock-out that makes the shift exactly `limit_hours` worked: clock-in + limit,
+    pushed later by every break that starts before that time."""
+    assert s.clock_in is not None
+    end = s.clock_in.timestamp + timedelta(hours=limit_hours)
+    for b in sorted(s.breaks, key=lambda b: b.start):
+        if b.start < end:
+            end += b.end - b.start
+    return end
+
+
+def _p3_correct_clock_out(s: Shift, limit: float) -> FixOption:
+    assert s.clock_out is not None
+    new_end = limit_clock_out(s, limit)
+    return FixOption(
+        option_id="correct_clock_out",
+        action="correct_clock_out",
+        label=f"The clock-out {hhmm(s.clock_out.timestamp)} was wrong: correct it to the "
+        f"time the worker confirms (at the {fmt(limit)} h limit: {hhmm(new_end)})",
+        description="Only if the punch was wrong. Hours are never removed without the "
+        "worker being told, so the worker must confirm the real clock-out first. The "
+        "suggested time gives exactly the daily limit; edit it to the confirmed time.",
+        params={
+            "punch_id": s.clock_out.punch_id,
+            "timestamp": new_end.isoformat(timespec="seconds"),
+            "worked_hours_after_fix": h(limit),
+        },
+        requires_worker_confirmation=True,
+    )
 
 
 # ---------------------------------------------------------------- P4 break
@@ -355,9 +398,47 @@ def check_p4_break(ctx: RuleContext) -> list[TimecardException]:
                     "min_break_minutes": min_break,
                 },
                 s.punches,
+                fix_options=_p4_fix_options(s, min_break),
             )
         )
     return found
+
+
+def _p4_fix_options(s: Shift, min_break: float) -> list[FixOption]:
+    assert s.clock_in is not None and s.clock_out is not None
+    # Suggested break: min_break minutes from the middle of the shift, on whole minutes.
+    start = to_minute(s.clock_in.timestamp + (s.clock_out.timestamp - s.clock_in.timestamp) / 2)
+    end = start + timedelta(minutes=min_break)
+    worked_after = (s.worked_hours or 0) - min_break / 60
+    return [
+        FixOption(
+            option_id="record_break",
+            action="add_break",
+            label=f"The worker took a {fmt(min_break)} min break but did not punch it: add it "
+            f"at the time they confirm (suggested {hhmm(start)}-{hhmm(end)})",
+            description="Only if the worker confirms they took the break. Adds break punches "
+            f"as corrections; worked hours become {fmt(worked_after)} h with the suggested "
+            "times. Edit the times to the ones the worker confirms.",
+            params={
+                "break_start": start.isoformat(timespec="seconds"),
+                "break_end": end.isoformat(timespec="seconds"),
+                "worked_hours_after_fix": h(worked_after),
+            },
+            requires_worker_confirmation=True,
+        ),
+        FixOption(
+            option_id="record_missed_break",
+            action="record_missed_break",
+            label="No break was taken: record the breach and the follow-up",
+            description="Missed breaks are never hidden. The breach stays on record with the "
+            "supervisor's follow-up note (give it as the approve reason).",
+            params={
+                "date": s.date.isoformat(),
+                "worked_hours": h(s.worked_hours or 0),
+                "follow_up": "",
+            },
+        ),
+    ]
 
 
 # ---------------------------------------------------------------- P5 weekly overtime
@@ -410,6 +491,72 @@ def _p5_fix_options(
     return fixes
 
 
+@dataclass
+class WeekHours:
+    """P5 numbers for one worker and week: hours worked so far + hours still scheduled."""
+
+    worked: float = 0.0
+    remaining: float = 0.0
+    days: list[dict[str, Any]] = field(default_factory=list)
+    future: list[tuple[date, float]] = field(default_factory=list)  # can still be changed
+
+    @property
+    def projected(self) -> float:
+        return self.worked + self.remaining
+
+
+def week_hours(
+    ctx: RuleContext, emp: str, wk: date, shifts: list[Shift], rows: list[ScheduleRow]
+) -> WeekHours:
+    """The P5 projection for the Monday-Sunday week starting `wk` (leave already applied)."""
+    out = WeekHours()
+
+    def in_week(d: date) -> bool:
+        return wk <= d < wk + timedelta(days=7)
+
+    covered: set[date] = set()
+    for s in shifts:
+        if not in_week(s.date):
+            continue
+        if s.schedule is not None:
+            covered.add(s.schedule.date)
+        if s.worked_hours is not None:
+            hours, source = s.worked_hours, "worked"
+            out.worked += hours
+        elif s.schedule is None:
+            hours, source = 0.0, "unknown (missing punch, unscheduled)"
+        elif s.status == "in_progress":
+            hours, source = scheduled_hours(s.schedule, ctx.policy), "in progress"
+        else:
+            # Past shift with a missing punch: estimate at its scheduled hours.
+            hours, source = scheduled_hours(s.schedule, ctx.policy), "estimated"
+            out.worked += hours
+        out.days.append({"date": s.date.isoformat(), "hours": h(hours), "source": source})
+
+    for r in rows:
+        if not in_week(r.date) or r.date in covered:
+            continue
+        start, end = schedule_bounds(r)
+        if end <= ctx.as_of:
+            continue  # past scheduled day without punches: an absence, not hours
+        hours = ctx.planned_hours(r)  # leave already taken out of the schedule
+        leave = ctx.active_leave_on(emp, r.date)
+        source = "scheduled"
+        if leave is not None:
+            source = f"{leave.duration}-day {leave.leave_type} leave ({leave.status})"
+            if leave.duration == "half":
+                source = f"scheduled minus {source}"
+        out.days.append({"date": r.date.isoformat(), "hours": h(hours), "source": source})
+        if hours <= 0:
+            continue
+        out.remaining += hours
+        if start > ctx.as_of:
+            out.future.append((r.date, hours))
+    # In-progress shifts still count as scheduled hours.
+    out.remaining += sum(d["hours"] for d in out.days if d["source"] == "in progress")
+    return out
+
+
 def check_p5_weekly_overtime(ctx: RuleContext) -> list[TimecardException]:
     limit = ctx.policy.number("P5", "weekly_overtime_after_hours")
     shifts_by_emp = ctx.shifts_by_employee()
@@ -420,51 +567,8 @@ def check_p5_weekly_overtime(ctx: RuleContext) -> list[TimecardException]:
         weeks = sorted({week_start(r.date) for r in rows} | {week_start(s.date) for s in shifts})
         for wk in weeks:
             in_week = lambda d, wk=wk: wk <= d < wk + timedelta(days=7)  # noqa: E731
-            days: list[dict[str, Any]] = []
-            worked = 0.0
-            future: list[tuple[date, float]] = []  # (date, hours) that can still be changed
-            covered: set[date] = set()
-            for s in shifts:
-                if not in_week(s.date):
-                    continue
-                if s.schedule is not None:
-                    covered.add(s.schedule.date)
-                if s.worked_hours is not None:
-                    hours, source = s.worked_hours, "worked"
-                    worked += hours
-                elif s.schedule is None:
-                    hours, source = 0.0, "unknown (missing punch, unscheduled)"
-                elif s.status == "in_progress":
-                    hours, source = scheduled_hours(s.schedule, ctx.policy), "in progress"
-                else:
-                    # Past shift with a missing punch: estimate at its scheduled hours.
-                    hours, source = scheduled_hours(s.schedule, ctx.policy), "estimated"
-                    worked += hours
-                days.append({"date": s.date.isoformat(), "hours": h(hours), "source": source})
-
-            remaining = 0.0
-            for r in rows:
-                if not in_week(r.date) or r.date in covered:
-                    continue
-                start, end = schedule_bounds(r)
-                if end <= ctx.as_of:
-                    continue  # past scheduled day without punches: an absence, not hours
-                hours = ctx.planned_hours(r)  # leave already taken out of the schedule
-                leave = ctx.active_leave_on(emp, r.date)
-                source = "scheduled"
-                if leave is not None:
-                    source = f"{leave.duration}-day {leave.leave_type} leave ({leave.status})"
-                    if leave.duration == "half":
-                        source = f"scheduled minus {source}"
-                days.append({"date": r.date.isoformat(), "hours": h(hours), "source": source})
-                if hours <= 0:
-                    continue
-                remaining += hours
-                if start > ctx.as_of:
-                    future.append((r.date, hours))
-            # In-progress shifts still count as scheduled hours.
-            remaining += sum(d["hours"] for d in days if d["source"] == "in progress")
-
+            wh = week_hours(ctx, emp, wk, shifts, rows)
+            worked, remaining, days, future = wh.worked, wh.remaining, wh.days, wh.future
             projected = worked + remaining
             if projected <= limit:
                 continue
@@ -564,9 +668,54 @@ def check_p6_rest(ctx: RuleContext) -> list[TimecardException]:
                     },
                     [p for p in (prev.end_punch, nxt.start_punch) if p is not None],
                     kind="breach" if actual else "risk",
+                    fix_options=_p6_fix_options(ctx, prev, nxt, rest, min_rest),
                 )
             )
     return found
+
+
+def _ceil_minute(ts: datetime) -> datetime:
+    whole = ts.replace(second=0, microsecond=0)
+    return whole if whole == ts else whole + timedelta(minutes=1)
+
+
+def _p6_fix_options(
+    ctx: RuleContext, prev: _Period, nxt: _Period, rest: float, min_rest: float
+) -> list[FixOption]:
+    fixes = [
+        FixOption(
+            option_id="record_short_rest",
+            action="record_short_rest",
+            label=f"Record why the rest was only {fmt(rest)} h",
+            description="The supervisor records the reason for the short rest (give it as "
+            "the approve reason). No shift changes.",
+            params={"date": nxt.date.isoformat(), "rest_hours": h(rest), "reason": ""},
+        )
+    ]
+    # The next shift can only be adjusted while it is still in the future (from the schedule).
+    if nxt.start_actual or nxt.start is None or nxt.end is None or nxt.start <= ctx.as_of:
+        return fixes
+    assert prev.end is not None
+    new_start = _ceil_minute(prev.end + timedelta(hours=min_rest))
+    if new_start.date() != nxt.date:
+        return fixes  # it would move to another day, which changes the shift's date (P15)
+    new_end = new_start + (nxt.end - nxt.start)
+    fixes.append(
+        FixOption(
+            option_id="move_next_shift_later",
+            action="move_shift",
+            label=f"Move the {day_label(nxt.date)} shift to {hhmm(new_start)}-{hhmm(new_end)} "
+            f"(the earliest start with {fmt(min_rest)} h rest; same length)",
+            params={
+                "date": nxt.date.isoformat(),
+                "current_start": nxt.start.strftime("%H:%M"),
+                "current_end": nxt.end.strftime("%H:%M"),
+                "new_start": new_start.strftime("%H:%M"),
+                "new_end": new_end.strftime("%H:%M"),
+            },
+        )
+    )
+    return fixes
 
 
 # ---------------------------------------------------------------- P7 late / early
@@ -603,6 +752,7 @@ def check_p7_late_early(ctx: RuleContext) -> list[TimecardException]:
                         details,
                         [s.clock_in],
                         suffix="late",
+                        fix_options=_p7_fix_options(s.date, "late_arrival", late),
                     )
                 )
             elif late > 0 and auto:
@@ -641,6 +791,32 @@ def check_p7_late_early(ctx: RuleContext) -> list[TimecardException]:
                         },
                         [s.clock_out],
                         suffix="early",
+                        fix_options=_p7_fix_options(s.date, "early_leave", early),
                     )
                 )
     return found
+
+
+def _p7_fix_options(on: date, kind: str, minutes: float) -> list[FixOption]:
+    """Both options are decision-only: the clock-in is never moved earlier (P7), and
+    policy.md does not allow turning the missed minutes into leave."""
+    what = "late arrival" if kind == "late_arrival" else "early leave"
+    record_id = "record_as_late" if kind == "late_arrival" else "record_as_early_leave"
+    base = {"date": on.isoformat(), "type": kind, "minutes": h(minutes)}
+    return [
+        FixOption(
+            option_id="accept_reason",
+            action="accept_reason",
+            label=f"Accept the worker's reason for the {fmt(minutes)} min {what}",
+            description=f"The supervisor accepts the worker's reason (give it as the approve "
+            f"reason). The punches stay as they are; the {what} is recorded as excused.",
+            params={**base, "reason": ""},
+        ),
+        FixOption(
+            option_id=record_id,
+            action="record_lateness",
+            label=f"Record the {fmt(minutes)} min {what} (no reason accepted)",
+            description=f"The {what} stays on record as it happened. The punches are not changed.",
+            params=base,
+        ),
+    ]

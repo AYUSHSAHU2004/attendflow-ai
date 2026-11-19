@@ -74,6 +74,19 @@ E201 Priya (payroll admin), E001 Amit (worker). Only the person the case is assi
 can act. A fix is applied by code, in one transaction with its audit row, only after
 approval. A supervisor's reject escalates the case to Priya.
 
+### Agent tools (read-only)
+
+Six tools the agent calls while investigating: `get_schedule`, `get_leave`,
+`get_leave_balance`, `get_punches`, `get_policy` and `run_checks` (tests a proposed change
+in memory and reports the violations it would cause). They read the database in a
+read-only transaction and never write.
+
+```bash
+uv run attendflow-tools list
+uv run attendflow-tools get_punches employee_id=E001 date=2026-04-14
+uv run attendflow-tools get_policy policy_id=P3      # add --csv to read data/*.csv instead
+```
+
 If `uv` is not on your PATH, use `python -m uv` instead.
 
 ## Demo data

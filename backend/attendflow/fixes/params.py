@@ -13,7 +13,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from attendflow.data.schemas import LeaveType, LocalDate, LocalTimestamp
+from attendflow.data.schemas import LeaveType, LocalDate, LocalTime, LocalTimestamp
 
 
 class Params(BaseModel):
@@ -71,6 +71,42 @@ class EditPunchesParams(PunchIdsParams):
             raise ValueError(f"punch(es) {outside} are not part of this fix option")
         if len({c.punch_id for c in self.changes}) != len(self.changes):
             raise ValueError("each punch may be changed only once")
+        return self
+
+
+class CorrectPunchParams(Params):
+    """Replace one wrong punch (P3: the clock-out) with the time the worker confirms."""
+
+    punch_id: str
+    timestamp: LocalTimestamp
+    worked_hours_after_fix: float | None = None  # shown to the human; recomputed by detection
+
+
+class AddBreakParams(Params):
+    break_start: LocalTimestamp
+    break_end: LocalTimestamp
+    worked_hours_after_fix: float | None = None
+
+    @model_validator(mode="after")
+    def _order(self) -> AddBreakParams:
+        if self.break_end <= self.break_start:
+            raise ValueError("break_end must be after break_start")
+        return self
+
+
+class MoveShiftParams(Params):
+    """Move an upcoming shift (P6). current_* guard against a schedule that changed."""
+
+    date: LocalDate
+    current_start: LocalTime
+    current_end: LocalTime
+    new_start: LocalTime
+    new_end: LocalTime
+
+    @model_validator(mode="after")
+    def _non_zero(self) -> MoveShiftParams:
+        if self.new_start == self.new_end:
+            raise ValueError("new_start and new_end must differ")
         return self
 
 
@@ -163,6 +199,9 @@ DATA_ACTIONS: dict[str, type[Params]] = {
     "split_paid_unpaid_leave": SplitPaidUnpaidParams,
     "move_leave_type": MoveLeaveTypeParams,
     "reject_leave_days": RejectLeaveDaysParams,
+    "correct_clock_out": CorrectPunchParams,
+    "add_break": AddBreakParams,
+    "move_shift": MoveShiftParams,
 }
 
 DECISION_ACTIONS = frozenset(
@@ -177,8 +216,20 @@ DECISION_ACTIONS = frozenset(
         "approve_without_certificate",
         "mark_unpaid_hours",
         "confirm_punches_valid",
+        "record_missed_break",
+        "record_short_rest",
+        "accept_reason",
+        "record_lateness",
     }
 )
+
+# Decision-only actions that must carry a note: the param that holds it. An empty note is
+# filled from the approve reason; if both are empty, approve is refused.
+REQUIRED_NOTE = {
+    "record_missed_break": "follow_up",
+    "record_short_rest": "reason",
+    "accept_reason": "reason",
+}
 
 
 class FixParamsError(ValueError):
@@ -214,13 +265,24 @@ def validate_decision_params(original: dict[str, Any], params: dict[str, Any]) -
     return params
 
 
+def validate_required_note(action: str, params: dict[str, Any]) -> None:
+    key = REQUIRED_NOTE.get(action)
+    if key is not None and not str(params.get(key) or "").strip():
+        raise FixParamsError(
+            f"{action} needs a {key.replace('_', '-')} note: send it as the approve reason",
+            [{"loc": key, "msg": "must not be empty"}],
+        )
+
+
 def parse_params(action: str, original: dict[str, Any], params: dict[str, Any]) -> Params | dict:
     """Validate merged params for `action`. Returns a model (data actions) or the dict."""
     model = DATA_ACTIONS.get(action)
     if model is None:
         if action not in DECISION_ACTIONS:
             raise FixParamsError(f"no applier for fix action {action!r}")
-        return validate_decision_params(original, params)
+        checked = validate_decision_params(original, params)
+        validate_required_note(action, checked)
+        return checked
     try:
         return model.model_validate(params)
     except ValidationError as exc:

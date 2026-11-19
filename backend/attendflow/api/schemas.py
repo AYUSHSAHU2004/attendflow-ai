@@ -5,9 +5,10 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from attendflow.cases.transitions import Status
+from attendflow.engine.models import ACTION_INFO
 
 ActorType = Literal["system", "agent", "worker", "supervisor", "admin"]
 EMPLOYEE_ID = r"^E\d{3}$"
@@ -58,6 +59,9 @@ class DetectionRunOut(ApiModel):
     created: int
     updated: int = Field(description="Open exceptions whose numbers changed")
     unchanged: int
+    options_added: int = Field(
+        description="Cases already in progress that got fix options their policy lacked before"
+    )
     auto_resolved: int
     closed_no_longer_detected: list[str]
     by_policy: dict[str, int]
@@ -71,7 +75,23 @@ class FixOptionOut(ApiModel):
     option_id: str
     action: str
     label: str
+    description: str = ""
     params: dict[str, Any]
+    decision_only: bool = Field(description="True = changes no timecard, schedule or leave data")
+    policy_id: str | None = None
+    requires_worker_confirmation: bool = Field(
+        default=False, description="Approve is refused until the worker has confirmed (Yes)"
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _fill_from_action(cls, data: Any) -> Any:
+        # Options stored before Phase 4 lack description/decision_only: derive them.
+        if isinstance(data, dict) and data.get("action") in ACTION_INFO:
+            decision_only, description = ACTION_INFO[data["action"]]
+            data = {**data, "decision_only": decision_only}
+            data.setdefault("description", description)
+        return data
 
 
 class ExceptionOut(ApiModel):
@@ -95,6 +115,13 @@ class ExceptionOut(ApiModel):
     last_detected_at: datetime
     created_at: datetime
     updated_at: datetime
+
+    @model_validator(mode="after")
+    def _option_policy(self) -> ExceptionOut:
+        for opt in self.fix_options:
+            if opt.policy_id is None:
+                opt.policy_id = self.policy_id
+        return self
 
 
 class ExceptionListOut(ApiModel):

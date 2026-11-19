@@ -62,7 +62,7 @@ and CI, 10-minute demo video, 5 slides.
 ## Phase plan
 
 Done: 0 Setup + data + policy + LLM test; 1 Rule engine P1-P7, P15; 2 Rules P8-P14, P16, P17;
-3 Backend + DB + API.
+3 Backend + DB + API; 4 Read-only tools + fix options for P3/P4/P6/P7.
 
 **Prototype (3-10)**
 3. Backend + DB + API
@@ -90,11 +90,14 @@ Done: 0 Setup + data + policy + LLM test; 1 Rule engine P1-P7, P15; 2 Rules P8-P
 23. Tests + evaluation
 24. Delivery
 
-**Next: Phase 4.**
+**Next: Phase 5.**
 
 **Carry-over notes**
-- Phase 4 must add fix options for **P3, P4, P6 and P7** (they have none yet, so approve
-  returns 409 `no_fix_options`). P2 needs none: it is handled by auto-resolve.
+- Phase 5: pass `openai_tools()` as `tools=` and run calls through `ToolRunner.for_database`;
+  write `tool_calls` rows from its `on_call` hook in a separate write session.
+- Phase 9: P1, P9, P10 and P13 also say "the worker is asked first" in policy.md but are not
+  flagged `requires_worker_confirmation` yet (kept so the Phase 3 demo approve still works).
+  Decide then whether to flag them.
 - Phase 22: `POST /api/seed` wipes every table. It must be disabled
   (`ATTENDFLOW_ENABLE_SEED=false`) or protected on the deployed server.
 
@@ -222,6 +225,38 @@ Done: 0 Setup + data + policy + LLM test; 1 Rule engine P1-P7, P15; 2 Rules P8-P
 - Errors: always `{"error": {"code", "message", "details"}}`. Logs: one JSON line per
   event with request_id (`LOG_FORMAT=text` for local reading).
 
+**Fix options + tools (Phase 4)**
+- Every FixOption has `description`, `decision_only`, `policy_id` and
+  `requires_worker_confirmation`. `decision_only` and the default description come from
+  `ACTION_INFO` in `engine/models.py` (a test checks it against `fixes/params.py`).
+- P3: `approve_overtime` (decision) + `correct_clock_out` (void + new punch; prefilled at
+  the 9 h limit, e.g. Meena 16:29:47; worker must confirm). P4: `record_break` (`add_break`,
+  30 min from the shift middle, e.g. Neha 12:00-12:30; worker must confirm) +
+  `record_missed_break` (decision, `follow_up` required). P6: `record_short_rest` (decision,
+  `reason` required) + `move_next_shift_later` (`move_shift`, only for an upcoming
+  scheduled shift: previous end + 11 h, rounded up to the minute, same length, never
+  onto another date). P7 (late and early): `accept_reason` (`reason` required) +
+  `record_as_late` / `record_as_early_leave` (`record_lateness`). Both decision-only;
+  policy.md does not allow turning missed minutes into leave, so there is no such option.
+- policy.md P7 got one sentence (user-approved): "Early leave beyond grace is handled the
+  same way."
+- Required notes (`REQUIRED_NOTE` in params.py): an empty note is filled from the approve
+  `reason`; with neither, approve is 422 `invalid_params`.
+- `requires_worker_confirmation`: approve is 409 `worker_not_confirmed` unless the latest
+  `worker_reply` on the case said Yes.
+- Detection adds options (only) to non-final cases stored with none; audit `options_added`.
+- Tools (`backend/attendflow/tools/`): get_schedule, get_leave, get_leave_balance,
+  get_punches, get_policy, run_checks. Results are `{"ok": true, ...}` or
+  `{"ok": false, "error": {code, message, hint}}`, never exceptions. Inputs are IDs + ISO
+  dates only. Output budgets (tested): 1,000 chars; get_policy 2,000; run_checks 1,200.
+- Read-only: tools never get a session. `ToolRunner.for_database` loads a Dataset in a
+  `SET TRANSACTION READ ONLY` session (plus a flush guard) and always rolls back; tests
+  snapshot every table around every tool and forbid writer imports in `tools/`.
+- run_checks: the change uses the fix-option `{action, params}` shape, is applied to an
+  in-memory copy (`tools/simulate.py`, same guards as apply.py), the full engine re-runs,
+  and results are filtered to that worker's Mon-Sun week: `new_violations`, `resolved`,
+  `still_open`, day and week hours. A parity test checks it against the real writer.
+
 ## Repo map
 
 ```
@@ -237,7 +272,7 @@ backend/attendflow/
   engine/rules_leave.py  P9, P11, P12, P13
   engine/rules_review.py P17 possible punch conflict
   engine/checks.py       ordered CHECKS registry + the check-order note
-  engine/engine.py       run_engine(dataset, policy, as_of) -> EngineResult
+  engine/engine.py       build_context() + run_engine(dataset, policy, as_of) -> EngineResult
   llm/client.py          OpenAI-compatible chat_once()/list_models(); failures -> LLMError
   clock.py               FixedClock: the only source of "now" (ATTENDFLOW_AS_OF)
   errors.py              AppError family -> HTTP status + error code
@@ -249,9 +284,16 @@ backend/attendflow/
   fixes/apply.py         the ONLY writer of timecards/schedule/leave after approval
   cases/transitions.py   status flow table + check_transition()
   cases/service.py       run_detection (upsert), approve/edit, reject, ask_worker, worker_reply
+  tools/models.py        tool inputs/outputs (Pydantic), ok/error envelope, ProposedChange
+  tools/read_tools.py    get_schedule, get_leave, get_leave_balance, get_punches, get_policy
+  tools/run_checks.py    run_checks: simulate a change, re-run the engine, diff the week
+  tools/simulate.py      in-memory copy of the fix appliers (never touches the DB)
+  tools/registry.py      TOOLS + openai_tools() (OpenAI function-calling, flattened schemas)
+  tools/runner.py        ToolRunner: validate, load read-only, call, on_call hook
+  tools/context.py       ToolContext + read_only_session()
   api/app.py             create_app(), error handlers, request logging, attendflow-api
   api/routes.py          /api endpoints;  api/schemas.py request/response models
-  scripts/               generate_data, validate_data, llm_smoke_test, detect (CLI entry points)
+  scripts/               generate_data, validate_data, llm_smoke_test, detect, tools_cli (CLIs)
 data/                    6 CSVs + policy.json (limits) + policy.md (plain-language, cited by agent)
 docs/                    PROGRESS.md, PLANTED_CASES.md, LLM_LICENCE.md
 tests/                   pytest suite
@@ -271,6 +313,7 @@ python -m uv run attendflow-generate-data  # rebuild data/*.csv
 docker compose up -d db                    # PostgreSQL (port 5433)
 python -m uv run alembic upgrade head      # create/upgrade tables
 python -m uv run attendflow-api            # API on http://localhost:8000/docs
+python -m uv run attendflow-tools list     # agent tools (get_punches employee_id=E001 date=2026-04-14; --csv)
 python -m uv run pytest                    # tests (API tests need the db container)
 python -m uv run ruff check . && python -m uv run ruff format --check .
 ```

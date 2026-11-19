@@ -105,7 +105,9 @@ def test_approve_unknown_option(demo):
 
 
 def test_approve_without_fix_options(demo):
-    # P3 gets its fix options in Phase 4; until then it can only be rejected.
+    # Since Phase 4 every open demo case has options, so empty one stored row by hand.
+    with session_for(demo) as s, s.begin():
+        s.get(ExceptionRow, MEENA_P3_MON).fix_options = []
     assert_error(
         post(demo, MEENA_P3_MON, "approve", {"option_id": "x"}, RAVI), 409, "no_fix_options"
     )

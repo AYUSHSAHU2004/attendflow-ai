@@ -48,6 +48,16 @@ def scheduled_hours(row: ScheduleRow, policy: PolicyConfig) -> float:
     return hours
 
 
+def shift_end_for_hours(row: ScheduleRow, new_hours: float, policy: PolicyConfig) -> datetime:
+    """The end time that gives `new_hours` planned hours, using the same lunch rule as
+    scheduled_hours() (P5: 1 h unpaid lunch on shifts longer than 6 h). Shared by the fix
+    writer and the run_checks simulation, so both shorten a shift the same way."""
+    break_after = policy.number("P5", "planned_break_after_hours")
+    break_hours = policy.number("P5", "planned_break_minutes") / 60
+    span = new_hours if new_hours <= break_after else new_hours + break_hours
+    return datetime.combine(row.date, row.shift_start) + timedelta(hours=span)
+
+
 def _sort_key(p: Punch) -> tuple[datetime, str]:
     return (p.timestamp, p.punch_id)
 

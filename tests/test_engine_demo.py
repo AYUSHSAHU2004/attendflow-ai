@@ -81,7 +81,8 @@ def test_neha_and_karan_numbers(result):
     assert by_policy["P4"].details["worked_hours"] == 6
     assert by_policy["P4"].details["break_minutes"] == 0
     assert by_policy["P7"].details["late_minutes"] == 90
-    assert by_policy["P7"].fix_options == []  # filled in a later phase
+    # Phase 4: decision-only options (the clock-in is never moved earlier).
+    assert [o.option_id for o in by_policy["P7"].fix_options] == ["accept_reason", "record_as_late"]
 
 
 def test_ramesh_night_shifts_are_single_shifts_and_not_flagged(result):
