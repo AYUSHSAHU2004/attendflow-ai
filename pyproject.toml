@@ -5,9 +5,14 @@ description = "AttendFlow AI: an agent that finds and fixes timecard exceptions 
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "alembic>=1.20.1",
+    "fastapi>=0.165.0",
     "openai>=1.50",
+    "psycopg[binary]>=3.2",
     "pydantic>=2.9",
     "python-dotenv>=1.0",
+    "sqlalchemy>=2.0",
+    "uvicorn[standard]>=0.54.0",
 ]
 
 [project.scripts]
@@ -15,9 +20,11 @@ attendflow-generate-data = "attendflow.scripts.generate_data:main"
 attendflow-validate = "attendflow.scripts.validate_data:main"
 attendflow-llm-test = "attendflow.scripts.llm_smoke_test:main"
 attendflow-detect = "attendflow.scripts.detect:main"
+attendflow-api = "attendflow.api.app:main"
 
 [dependency-groups]
 dev = [
+    "httpx>=0.28.1",
     "pytest>=8.3",
     "ruff>=0.7",
 ]

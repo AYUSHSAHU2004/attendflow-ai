@@ -30,7 +30,7 @@ with the LLM switched off.
 ## Repo layout
 
 ```
-backend/attendflow/   Python package (config, data loading, policy, rule engine, LLM client, scripts)
+backend/attendflow/   Python package (config, data, policy, rule engine, DB, fixes, cases, API, LLM client)
 frontend/             React + TypeScript app (from a later phase)
 data/                 Demo CSVs, policy.json (limits), policy.md (plain-language policy)
 docs/                 PROGRESS, PLANTED_CASES, LLM_LICENCE
@@ -57,6 +57,22 @@ uv run attendflow-llm-test        # sends one prompt to the configured model
 uv run pytest                     # runs the tests
 uv run attendflow-generate-data   # rebuilds data/*.csv (deterministic)
 ```
+
+### Backend API (PostgreSQL + FastAPI)
+
+Needs Docker. The database listens on **localhost:5433**.
+
+```bash
+docker compose up -d db           # PostgreSQL 16 (+ a test database)
+uv run alembic upgrade head       # create the tables
+uv run attendflow-api             # http://localhost:8000/docs
+```
+
+In `/docs`: `POST /api/seed` (demo reset), then `POST /api/detection/run` (17 exceptions).
+Acting endpoints need an `X-Actor-Id` header: E101 Ravi, E102 Sunita (supervisors),
+E201 Priya (payroll admin), E001 Amit (worker). Only the person the case is assigned to
+can act. A fix is applied by code, in one transaction with its audit row, only after
+approval. A supervisor's reject escalates the case to Priya.
 
 If `uv` is not on your PATH, use `python -m uv` instead.
 

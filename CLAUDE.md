@@ -59,6 +59,45 @@ and CI, 10-minute demo video, 5 slides.
 6. Keep explanations short and plain. Explain any non-obvious decision in one or two lines.
 7. The user commits and pushes themselves. Tell them what to commit; don't commit unasked.
 
+## Phase plan
+
+Done: 0 Setup + data + policy + LLM test; 1 Rule engine P1-P7, P15; 2 Rules P8-P14, P16, P17;
+3 Backend + DB + API.
+
+**Prototype (3-10)**
+3. Backend + DB + API
+4. Read-only tools + fix options for P3/P4/P7
+5. LLM client + agent loop
+6. InvestigationCase schema + fallback + `/investigate`
+7. Worker message + Amit page
+8. Free-text extraction + re-check
+9. Ravi's approval
+10. Priya's plain list + integration test (**prototype done**)
+
+**Full product (11-24)**
+11. Mock punch API + scheduler
+12. Auto-resolve + undo
+13. No-reply escalation
+14. Activity Center + autonomy table
+15. Role switcher + Priya dashboard
+16. Payroll readiness
+17. Briefing + Amit mobile + summary
+18. Settings backend
+19. Admin UI
+20. Employee Q&A
+21. Analytics
+22. Deployment
+23. Tests + evaluation
+24. Delivery
+
+**Next: Phase 4.**
+
+**Carry-over notes**
+- Phase 4 must add fix options for **P3, P4, P6 and P7** (they have none yet, so approve
+  returns 409 `no_fix_options`). P2 needs none: it is handled by auto-resolve.
+- Phase 22: `POST /api/seed` wipes every table. It must be disabled
+  (`ATTENDFLOW_ENABLE_SEED=false`) or protected on the deployed server.
+
 ## Decisions so far (do not re-ask)
 
 **Environment**
@@ -148,6 +187,41 @@ and CI, 10-minute demo video, 5 slides.
 - Exception `evidence` can hold punches, leave, balance, schedule and holiday rows. Rows dump
   to JSON in their CSV formats (so JSON loads back).
 
+**Backend (Phase 3)**
+- PostgreSQL 16 in Docker (`docker compose up -d db`) on host port **5433**: this machine
+  already runs a local PostgreSQL 18 service on 5432. Dev DB `attendflow`, test DB
+  `attendflow_test` (created by `docker/initdb`). SQLAlchemy 2 (sync) + psycopg 3 + Alembic.
+- API tests run on real Postgres; skipped with a message if unreachable, except in CI
+  (`REQUIRE_DB=1`). The test DB schema is built by the real migrations.
+- Tests drop and rebuild their database's schema, so `tests/conftest.py` refuses (fails,
+  never skips) any database whose name does not end in `_test`, checked on the URL and on
+  the server.
+- Detection reads the **DB**, not the CSVs. `POST /api/seed` = full demo reset.
+  Upsert by `exception_id`: open rows refreshed, in-progress/resolved/rejected untouched,
+  open rows no longer found -> `resolved` by system ("no_longer_detected").
+- Auto-resolve (P2): stored `resolved` + `auto_resolved=true`, duplicate tap voided in the
+  DB in the same transaction, audit rows `detected` + `auto_resolve` (actor system).
+- Status flow (`cases/transitions.py`): open -> awaiting_worker | awaiting_supervisor |
+  resolved | escalated; awaiting_worker -> awaiting_supervisor | escalated;
+  awaiting_supervisor -> resolved | awaiting_worker | escalated; escalated ->
+  awaiting_supervisor | resolved | rejected. resolved/rejected are final. 409 otherwise.
+- **Reject:** a supervisor's reject moves the case to `escalated`, assigned to the payroll
+  admin (E201), reason in the audit log. Only the assignee's reject of an escalated case
+  is final (`rejected`).
+- **Permissions:** `X-Actor-Id` header (no login yet). Only the person in `assigned_to`
+  may approve/edit/reject/ask-worker; `assigned_to` always names whose turn it is
+  (supervisor -> worker while awaiting_worker -> supervisor; E201 after an escalation).
+- Approve = pick an `option_id`; edit = approve with changed params (merged, validated by
+  a Pydantic model per action in `fixes/params.py`). `edit_punches` needs `changes`.
+- `fixes/apply.py` is the only writer of timecards/schedule/leave (plus the seed); a test
+  enforces it. Fix + exception update + audit row in one transaction. Punches are never
+  deleted: corrections void the old row and add `source="correction"`. Decision-only
+  actions (overtime, holiday pay, comp-off, ...) change no data, only `applied_fix`.
+- All `created_at`/`updated_at`/`waiting_since` come from `clock.FixedClock(as_of)`;
+  rows are ordered by id. Log timestamps are real UTC (they are operational).
+- Errors: always `{"error": {"code", "message", "details"}}`. Logs: one JSON line per
+  event with request_id (`LOG_FORMAT=text` for local reading).
+
 ## Repo map
 
 ```
@@ -165,12 +239,25 @@ backend/attendflow/
   engine/checks.py       ordered CHECKS registry + the check-order note
   engine/engine.py       run_engine(dataset, policy, as_of) -> EngineResult
   llm/client.py          OpenAI-compatible chat_once()/list_models(); failures -> LLMError
+  clock.py               FixedClock: the only source of "now" (ATTENDFLOW_AS_OF)
+  errors.py              AppError family -> HTTP status + error code
+  db/models.py           SQLAlchemy tables (6 source tables + exceptions, audit_log, tool_calls, settings)
+  db/migrations/         Alembic (alembic.ini at repo root)
+  db/seed.py             demo reset: truncate all, load CSVs
+  db/dataset.py          read-only: DB -> engine Dataset (voided punches left out)
+  fixes/params.py        Pydantic params per fix action; decision-only action list
+  fixes/apply.py         the ONLY writer of timecards/schedule/leave after approval
+  cases/transitions.py   status flow table + check_transition()
+  cases/service.py       run_detection (upsert), approve/edit, reject, ask_worker, worker_reply
+  api/app.py             create_app(), error handlers, request logging, attendflow-api
+  api/routes.py          /api endpoints;  api/schemas.py request/response models
   scripts/               generate_data, validate_data, llm_smoke_test, detect (CLI entry points)
 data/                    6 CSVs + policy.json (limits) + policy.md (plain-language, cited by agent)
 docs/                    PROGRESS.md, PLANTED_CASES.md, LLM_LICENCE.md
 tests/                   pytest suite
 frontend/                React app (from a later phase)
-.github/workflows/ci.yml lint + validate + tests on Python 3.12
+docker-compose.yml       PostgreSQL 16 (host port 5433); docker/initdb creates the test DB
+.github/workflows/ci.yml lint + validate + tests (with a Postgres service) on Python 3.12
 ```
 
 ## Commands
@@ -181,6 +268,9 @@ python -m uv run attendflow-validate       # validate CSVs + policy files
 python -m uv run attendflow-detect         # rule engine table (--fixes, --json, --employee E002, --policy P11,P12)
 python -m uv run attendflow-llm-test       # one prompt to the model (add --list-models)
 python -m uv run attendflow-generate-data  # rebuild data/*.csv
-python -m uv run pytest                    # tests
+docker compose up -d db                    # PostgreSQL (port 5433)
+python -m uv run alembic upgrade head      # create/upgrade tables
+python -m uv run attendflow-api            # API on http://localhost:8000/docs
+python -m uv run pytest                    # tests (API tests need the db container)
 python -m uv run ruff check . && python -m uv run ruff format --check .
 ```

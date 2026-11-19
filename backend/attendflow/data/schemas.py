@@ -104,7 +104,8 @@ class Punch(CsvRow):
     employee_id: EmployeeId
     timestamp: LocalTimestamp
     type: Literal["in", "out", "break_start", "break_end"]
-    source: Literal["device", "app"]
+    # "correction" punches are added by approved fixes (DB only; the CSVs never contain them).
+    source: Literal["device", "app", "correction"]
     device_id: str = Field(min_length=1)
     location: str = Field(min_length=1)
 

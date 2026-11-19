@@ -172,8 +172,105 @@ row ... no medical certificate" (P12). Karan shows P9 on Wed. Sana shows P8 + P1
 Farah shows P13 (8.03 h on a half-day leave). Amit and Meena show P14 (low). Ramesh, Arjun
 and Pooja show nothing.
 
-**Next: Phase 3**
-- The LLM layer: tools the agent can call over the engine results (read-only), plain-language
-  explanations and worker messages grounded in `details` and `evidence`, Pydantic-validated
-  output with retry and a template fallback.
-- Still open: fix_options for P3, P4 and P7; an optional P17 demo case.
+**Next: Phase 3** (under the new phase plan below)
+- Backend + DB + API: PostgreSQL, FastAPI and the first API endpoints over the engine results.
+- Still open: fix_options for P3, P4 and P7 (now Phase 4); an optional P17 demo case.
+
+## Phase plan change (2026-11-19)
+
+The plan was renumbered after Phase 2. The LLM layer, previously "Phase 3", is now split
+across Phases 5-8. Phases 0-2 are done; next is Phase 3. The same list is in
+[../CLAUDE.md](../CLAUDE.md#phase-plan).
+
+| # | Phase | | # | Phase |
+|---|---|---|---|---|
+| 3 | Backend + DB + API | | 14 | Activity Center + autonomy table |
+| 4 | Read-only tools + fix options for P3/P4/P7 | | 15 | Role switcher + Priya dashboard |
+| 5 | LLM client + agent loop | | 16 | Payroll readiness |
+| 6 | InvestigationCase schema + fallback + `/investigate` | | 17 | Briefing + Amit mobile + summary |
+| 7 | Worker message + Amit page | | 18 | Settings backend |
+| 8 | Free-text extraction + re-check | | 19 | Admin UI |
+| 9 | Ravi's approval | | 20 | Employee Q&A |
+| 10 | Priya's plain list + integration test (**prototype done**) | | 21 | Analytics |
+| 11 | Mock punch API + scheduler | | 22 | Deployment |
+| 12 | Auto-resolve + undo | | 23 | Tests + evaluation |
+| 13 | No-reply escalation | | 24 | Delivery |
+
+## Phase 3: PostgreSQL schema and FastAPI backend (2026-11-19) ✅
+
+**Built**
+- PostgreSQL 16 in Docker (`docker-compose.yml`, host port 5433) with a separate test
+  database. SQLAlchemy 2 tables + an Alembic migration (`0001_initial_schema`):
+  - Source data, one table per CSV. Punches get `voided`, `voided_by_exception` and
+    `created_by_exception`; leave rows get a DB-only `unpaid` flag.
+  - `exceptions` (the engine ID is the primary key, so detection never duplicates),
+    `audit_log`, `tool_calls` and `settings`. Status, actor, severity and kind are CHECK
+    constraints in the database too.
+- `db/seed.py`: full demo reset from the CSVs (validated first; nothing is wiped if a CSV
+  is bad). `db/dataset.py`: the engine now runs on the database.
+- `cases/service.py`: detection upsert, approve, edit, reject, ask-worker, worker-reply.
+  Each call is one transaction. `cases/transitions.py`: the status flow table.
+- `fixes/apply.py`: writes approved fixes (14 data actions: punch corrections, schedule
+  cuts, rest days, leave record/cancel/convert/split/move/reject). 10 decision-only actions
+  are recorded without data changes. Guards: punches must be on the shift day and not in
+  the future, only upcoming shifts can change, leave balances must have room, stale fixes
+  are refused (409 `stale_fix`).
+- FastAPI app (`attendflow-api`), 12 endpoints under `/api`, OpenAPI docs at `/docs`,
+  one error shape, JSON logs with request IDs.
+- 108 new tests (262 total): every endpoint, every status pair, permissions, each fix
+  writer, idempotent detection, "a rejected fix leaves the timecard unchanged", a forced
+  failure that rolls back the fix, a write-guard test, and a migration-vs-models check.
+  CI now runs a Postgres service and fails if the API tests would be skipped.
+- Safety guard: the tests refuse any database whose name does not end in `_test`, so a
+  mistyped `TEST_DATABASE_URL` can never wipe the dev database.
+
+**Decisions** (all 17 defaults, with the user's changes)
+- **Reject:** a supervisor's reject moves the case to `escalated` and assigns it to the
+  payroll admin (E201), with the reason in the audit log. On an escalated case the
+  assignee may approve, edit or reject; their reject is final (`rejected`). So
+  open/awaiting_supervisor -> rejected is not allowed.
+- **Permissions:** only the person in `assigned_to` can act. It always names whose turn it
+  is: the supervisor, then the worker while awaiting_worker, then E201 after a reject.
+- **Auto-resolved P2:** stored as `resolved` with `auto_resolved=true`. Sana's duplicate tap
+  P0005 is voided in the DB in the same transaction, with audit rows `detected` and
+  `auto_resolve`. The scheduled job and undo come in Phase 12.
+- **Detection runs on the DB**, so approved fixes show up on the next run. Open
+  exceptions that disappear are closed by the system (`no_longer_detected`). Resolved and
+  rejected cases are never reopened.
+- **Port 5433:** this machine already has a PostgreSQL 18 Windows service on 5432 (that
+  service was left untouched).
+- **Time:** every business timestamp comes from the fixed demo clock (Thu 16 Apr 08:00);
+  log timestamps are real UTC.
+- `edit_punches` (P13) has no new times in its engine params, so it can only be applied
+  with **edit** and `params.changes`. `request_certificate` is decision-only for now
+  (the message to the worker comes in Phase 7).
+- A small engine change: P17's "two sites" check ignores correction punches, which are
+  typed in by a supervisor rather than punched at a place.
+
+**Notes for later phases**
+- **Phase 4:** add fix options for **P3, P4, P6 and P7**. Until then, approve returns 409
+  `no_fix_options` for them; they can still be rejected. P2 needs none (auto-resolve).
+- **Phase 22:** `POST /api/seed` wipes every table. It must be disabled
+  (`ATTENDFLOW_ENABLE_SEED=false`) or protected on the deployed server.
+
+**How to run and verify** (from `C:\dev\attendflow-ai`)
+```bash
+python -m uv sync
+docker compose up -d db                    # PostgreSQL on localhost:5433
+python -m uv run alembic upgrade head      # create the tables
+python -m uv run attendflow-api            # open http://localhost:8000/docs
+python -m uv run pytest                    # expect 262 passed
+```
+Done-when check in `/docs`:
+1. The page lists 12 endpoints.
+2. `POST /api/seed`, then `POST /api/detection/run`: expect `found 17, created 17,
+   auto_resolved 1`.
+3. `GET /api/exceptions`: 16 `open` and 1 `resolved` (Sana's P2, `auto_resolved: true`).
+4. Approve `P1-E001-2026-04-14` with header `X-Actor-Id: E101` and body
+   `{"option_id": "set_clock_out_to_scheduled_end"}`. The status becomes `resolved` and the
+   audit trail ends with `approve`.
+5. Reject `P3-E002-2026-04-13` as E101 with a reason. It becomes `escalated` and is
+   assigned to E201.
+
+**Next: Phase 4**
+- Read-only tools for the agent, plus fix options for P3, P4, P6 and P7.

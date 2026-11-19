@@ -8,6 +8,23 @@ on:
 jobs:
   backend:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: attendflow
+          POSTGRES_PASSWORD: attendflow
+          POSTGRES_DB: attendflow_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U attendflow"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      TEST_DATABASE_URL: postgresql+psycopg://attendflow:attendflow@localhost:5433/attendflow_test
+      REQUIRE_DB: "1"  # API tests must run in CI, never be skipped
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -23,5 +40,5 @@ jobs:
           uv run ruff format --check .
       - name: Validate demo data and policy files
         run: uv run attendflow-validate
-      - name: Tests
+      - name: Tests (engine + API on PostgreSQL)
         run: uv run pytest

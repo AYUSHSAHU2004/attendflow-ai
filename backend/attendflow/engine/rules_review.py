@@ -88,7 +88,8 @@ def _two_sites(ctx: RuleContext, day_of) -> list[TimecardException]:
     sites = ctx.policy.mapping("P17", "sites")
     by_emp: dict[str, list[Punch]] = defaultdict(list)
     for p in ctx.punches:
-        by_emp[p.employee_id].append(p)
+        if p.source != "correction":  # typed in by a supervisor, not punched at a place
+            by_emp[p.employee_id].append(p)
     found = []
     for emp, punches in sorted(by_emp.items()):
         punches.sort(key=lambda p: (p.timestamp, p.punch_id))

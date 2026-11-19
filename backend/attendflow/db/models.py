@@ -1,0 +1,242 @@
+"""SQLAlchemy tables.
+
+Two groups:
+- Source data, one table per CSV (employees, timecards, schedule, leave_records,
+  leave_balances, holidays). Only `db/seed.py` (demo reset) and `fixes/apply.py`
+  (approved fixes) may write to them; a test enforces this.
+- Case tables: exceptions, audit_log, tool_calls, settings.
+
+All times are plain local wall-clock times ("timestamp without time zone"), like the CSVs.
+"""
+
+from __future__ import annotations
+
+from datetime import date, datetime, time
+from typing import Any
+
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    CheckConstraint,
+    Date,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    MetaData,
+    String,
+    Text,
+    Time,
+    UniqueConstraint,
+)
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+# Stable constraint names, so Alembic migrations are predictable.
+NAMING = {
+    "ix": "ix_%(column_0_label)s",
+    "uq": "uq_%(table_name)s_%(column_0_name)s",
+    "ck": "ck_%(table_name)s_%(constraint_name)s",
+    "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
+    "pk": "pk_%(table_name)s",
+}
+
+EXCEPTION_STATUSES = (
+    "open",
+    "awaiting_worker",
+    "awaiting_supervisor",
+    "resolved",
+    "rejected",
+    "escalated",
+)
+ACTORS = ("system", "agent", "worker", "supervisor", "admin")
+
+
+def _in(column: str, values: tuple[str, ...]) -> str:
+    return f"{column} IN ({', '.join(repr(v) for v in values)})"
+
+
+class Base(DeclarativeBase):
+    metadata = MetaData(naming_convention=NAMING)
+    type_annotation_map = {dict[str, Any]: JSONB, list[Any]: JSONB}
+
+
+# ------------------------------------------------------------------ source data (CSV tables)
+
+
+class EmployeeRow(Base):
+    __tablename__ = "employees"
+    __table_args__ = (
+        CheckConstraint(_in("role", ("worker", "supervisor", "payroll_admin")), "role"),
+    )
+
+    employee_id: Mapped[str] = mapped_column(String(8), primary_key=True)
+    name: Mapped[str] = mapped_column(String(100))
+    role: Mapped[str] = mapped_column(String(20))
+    team: Mapped[str] = mapped_column(String(50))
+    supervisor_id: Mapped[str | None] = mapped_column(ForeignKey("employees.employee_id"))
+
+
+class PunchRow(Base):
+    """One clock punch. Never deleted or overwritten: a correction voids the old row and
+    adds a new one with source='correction', both pointing at the exception."""
+
+    __tablename__ = "timecards"
+    __table_args__ = (
+        CheckConstraint(_in("type", ("in", "out", "break_start", "break_end")), "type"),
+        CheckConstraint(_in("source", ("device", "app", "correction")), "source"),
+        Index("ix_timecards_employee_ts", "employee_id", "timestamp"),
+    )
+
+    punch_id: Mapped[str] = mapped_column(String(16), primary_key=True)
+    employee_id: Mapped[str] = mapped_column(ForeignKey("employees.employee_id"))
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=False))
+    type: Mapped[str] = mapped_column(String(12))
+    source: Mapped[str] = mapped_column(String(12))
+    device_id: Mapped[str] = mapped_column(String(50))
+    location: Mapped[str] = mapped_column(String(100))
+    voided: Mapped[bool] = mapped_column(Boolean, default=False)
+    voided_by_exception: Mapped[str | None] = mapped_column(String(80))
+    created_by_exception: Mapped[str | None] = mapped_column(String(80))
+
+
+class ScheduleEntryRow(Base):
+    __tablename__ = "schedule"
+    __table_args__ = (UniqueConstraint("employee_id", "date"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    employee_id: Mapped[str] = mapped_column(ForeignKey("employees.employee_id"))
+    date: Mapped[date] = mapped_column(Date)
+    shift_start: Mapped[time] = mapped_column(Time(timezone=False))
+    shift_end: Mapped[time] = mapped_column(Time(timezone=False))
+
+
+class LeaveRecordRow(Base):
+    __tablename__ = "leave_records"
+    __table_args__ = (
+        UniqueConstraint("employee_id", "date"),
+        CheckConstraint(_in("leave_type", ("sick", "casual", "earned")), "leave_type"),
+        CheckConstraint(_in("duration", ("full", "half")), "duration"),
+        CheckConstraint(_in("status", ("approved", "pending", "rejected")), "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    employee_id: Mapped[str] = mapped_column(ForeignKey("employees.employee_id"))
+    date: Mapped[date] = mapped_column(Date)
+    leave_type: Mapped[str] = mapped_column(String(10))
+    duration: Mapped[str] = mapped_column(String(4))
+    status: Mapped[str] = mapped_column(String(10))
+    certificate_uploaded: Mapped[bool] = mapped_column(Boolean, default=False)
+    # DB only (not in the CSV): set when an approved fix turns the day into unpaid time off.
+    unpaid: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class LeaveBalanceRow(Base):
+    __tablename__ = "leave_balances"
+
+    employee_id: Mapped[str] = mapped_column(ForeignKey("employees.employee_id"), primary_key=True)
+    leave_type: Mapped[str] = mapped_column(String(10), primary_key=True)
+    total_per_year: Mapped[float] = mapped_column(Float)
+    used: Mapped[float] = mapped_column(Float)
+
+
+class HolidayRow(Base):
+    __tablename__ = "holidays"
+    __table_args__ = (CheckConstraint(_in("type", ("national", "company", "optional")), "type"),)
+
+    date: Mapped[date] = mapped_column(Date, primary_key=True)
+    name: Mapped[str] = mapped_column(String(100))
+    type: Mapped[str] = mapped_column(String(10))
+
+
+# ------------------------------------------------------------------ case tables
+
+
+class ExceptionRow(Base):
+    """One timecard exception. `id` is the engine's stable exception_id (natural key), so
+    running detection twice never creates duplicates."""
+
+    __tablename__ = "exceptions"
+    __table_args__ = (
+        CheckConstraint(_in("status", EXCEPTION_STATUSES), "status"),
+        CheckConstraint(_in("severity", ("low", "medium", "high")), "severity"),
+        CheckConstraint(_in("kind", ("breach", "risk")), "kind"),
+        Index("ix_exceptions_status", "status"),
+        Index("ix_exceptions_employee", "employee_id"),
+        Index("ix_exceptions_policy", "policy_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    employee_id: Mapped[str] = mapped_column(ForeignKey("employees.employee_id"))
+    date: Mapped[date] = mapped_column(Date)
+    policy_id: Mapped[str] = mapped_column(String(4))
+    title: Mapped[str] = mapped_column(String(200))
+    summary: Mapped[str] = mapped_column(Text)
+    severity: Mapped[str] = mapped_column(String(6))
+    kind: Mapped[str] = mapped_column(String(6))
+    status: Mapped[str] = mapped_column(String(20))
+    auto_resolved: Mapped[bool] = mapped_column(Boolean, default=False)
+    details: Mapped[dict[str, Any]]
+    evidence: Mapped[list[Any]]
+    fix_options: Mapped[list[Any]]
+    proposed_fix: Mapped[dict[str, Any] | None]  # filled by the agent (Phase 6)
+    applied_fix: Mapped[dict[str, Any] | None]  # the option a human approved (or auto-resolve)
+    assigned_to: Mapped[str | None] = mapped_column(ForeignKey("employees.employee_id"))
+    waiting_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
+    last_detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=False))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=False))
+
+
+class AuditLogRow(Base):
+    __tablename__ = "audit_log"
+    __table_args__ = (
+        CheckConstraint(_in("actor", ACTORS), "actor"),
+        Index("ix_audit_log_exception", "exception_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    exception_id: Mapped[str | None] = mapped_column(ForeignKey("exceptions.id"))
+    actor: Mapped[str] = mapped_column(String(12))
+    actor_id: Mapped[str | None] = mapped_column(String(8))  # employee ID; null for system
+    action: Mapped[str] = mapped_column(String(40))
+    before: Mapped[dict[str, Any] | None]
+    after: Mapped[dict[str, Any] | None]
+    reason: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False))
+
+
+class ToolCallRow(Base):
+    """One tool call made by the agent while investigating (written from Phase 5)."""
+
+    __tablename__ = "tool_calls"
+    __table_args__ = (UniqueConstraint("exception_id", "step_no"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    exception_id: Mapped[str] = mapped_column(ForeignKey("exceptions.id"))
+    step_no: Mapped[int] = mapped_column(Integer)
+    tool_name: Mapped[str] = mapped_column(String(60))
+    input: Mapped[dict[str, Any]]
+    output: Mapped[dict[str, Any] | None]
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False))
+
+
+class SettingRow(Base):
+    """App settings (filled from Phase 18). Policy limits stay in policy.json."""
+
+    __tablename__ = "settings"
+
+    key: Mapped[str] = mapped_column(String(80), primary_key=True)
+    value: Mapped[Any] = mapped_column(JSONB)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=False))
+
+
+SOURCE_TABLES = (
+    EmployeeRow,
+    PunchRow,
+    ScheduleEntryRow,
+    LeaveRecordRow,
+    LeaveBalanceRow,
+    HolidayRow,
+)
