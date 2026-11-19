@@ -22,6 +22,7 @@ from tests.api_helpers import (
     MEENA_P3_MON,
     MEENA_P5,
     RAVI,
+    confirm_amit_clock_out,
     post,
     session_for,
     store_test_investigation,
@@ -180,6 +181,8 @@ def test_run_checks_predicts_what_the_real_fix_gives(
     option = next(o for o in exc["fix_options"] if o["option_id"] == option_id)
     predicted = _predicted(demo, employee_id, day, option["action"], option["params"])
 
+    if option["action"] == "set_clock_out":
+        confirm_amit_clock_out(demo)
     if confirm:
         store_test_investigation(demo, exception_id, option_id)
         assert post(demo, exception_id, "ask-worker", {}, RAVI).status_code == 200

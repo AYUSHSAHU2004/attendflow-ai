@@ -121,9 +121,14 @@ npm run dev
 Open `http://localhost:5173/dev`, keep Amit's P1 exception ID, select
 **Investigate**, wait for the result, then select **Ask worker**. Open
 `http://localhost:5173/` for Amit's inbox. **Yes** sends the case to Ravi.
-**No** saves the required details and keeps the question open in Amit's inbox
-until Phase 8 validates the actual time. If the provider is unavailable,
-the same workflow uses a template question.
+**No** saves the details and asks Amit to confirm the time understood or enter
+an exact clock-out. The case stays in his inbox until he confirms a valid time.
+If the provider is unavailable, the app uses a template question and a manual
+time field. Both Yes and confirmed clock-outs get the same server-side re-check.
+
+`LLM_DIAGNOSTICS=on` is for demo data. **Set `LLM_DIAGNOSTICS=off` in a real
+deployment** to suppress rejected extraction previews because worker text is
+personal data. Protect and retain the raw-reply audit according to your policy.
 
 From `frontend/`, run `npm test`, `npm run typecheck`, and `npm run build`.
 Run `npm run api:generate` after backend API changes to refresh the generated

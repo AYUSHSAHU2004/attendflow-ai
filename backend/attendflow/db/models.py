@@ -183,6 +183,7 @@ class ExceptionRow(Base):
     fix_options: Mapped[list[Any]]
     proposed_fix: Mapped[dict[str, Any] | None]
     investigation_case: Mapped[dict[str, Any] | None]
+    worker_recheck: Mapped[dict[str, Any] | None]
     applied_fix: Mapped[dict[str, Any] | None]  # the option a human approved (or auto-resolve)
     assigned_to: Mapped[str | None] = mapped_column(ForeignKey("employees.employee_id"))
     waiting_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
@@ -211,6 +212,8 @@ class WorkerMessageRow(Base):
     reply_text: Mapped[str | None] = mapped_column(Text)
     replied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
     needs_actual_time: Mapped[bool] = mapped_column(Boolean, default=False)
+    asked_fix: Mapped[dict[str, Any] | None]
+    time_review: Mapped[dict[str, Any] | None]
 
 
 class AuditLogRow(Base):

@@ -104,7 +104,10 @@ def test_template_delivery_and_private_reply_receipt(demo, monkeypatch):
 
     response = post(demo, AMIT_P1, "worker-reply", {"confirmed": True}, AMIT)
     assert response.status_code == 200
-    assert response.json() == {
+    receipt = response.json()
+    review = receipt.pop("time_review")
+    assert review["stage"] == "confirmed"
+    assert receipt == {
         "exception_id": AMIT_P1,
         "confirmed": True,
         "needs_actual_time": False,

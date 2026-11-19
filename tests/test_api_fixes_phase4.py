@@ -115,7 +115,7 @@ def test_p3_correction_needs_the_worker_to_confirm_first(demo):
     confirm_with_worker(demo, MEENA_P3_MON, MEENA, confirmed=False)
     assert_error(post(demo, MEENA_P3_MON, "approve", body, RAVI), 409, "invalid_transition")
     assert snapshot(demo) == before
-    assert audit_count(demo) == audits + 3  # handoff, message generation, and reply
+    assert audit_count(demo) == audits + 4  # handoff, message, reply, and extraction outcome
 
 
 def test_p3_correction_voids_the_old_clock_out_and_adds_the_confirmed_one(demo):

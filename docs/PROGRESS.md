@@ -509,3 +509,41 @@ python -m uv run attendflow-agent-smoke P1-E001-2026-04-14 --fallback-only
 
 **Next: Phase 8** validates the actual time from a No reply before moving the
 case to the supervisor.
+
+## Phase 8: Validate and re-check a worker's actual clock-out (2026-11-19)
+
+- Migration `0005_worker_time` records the fix asked about, the worker's pending
+  time review, and the full confirmed re-check on the case. It enables manual
+  entry for legacy No replies with a supported stored clock-out option.
+- P1 missing clock-outs and P3 wrong clock-outs use tool-free JSON extraction.
+  Code checks the claimed time against the reply, clock-in, fixed clock, and
+  maximum shift length. A single approximate time can become a candidate.
+  Unclear times and provider failures expose manual entry. Invalid model
+  output gets at most one correction attempt in normal operation.
+- The inbox supports Confirm, Edit, and manual time, including on reload.
+  The server simulates the proposed change before handoff and builds the
+  worker's impact note from the result. Yes runs the same re-check with the
+  proposed time captured when the message was sent. P1 approval requires the
+  worker-confirmed timestamp and uses it for the stored option. The original
+  investigation remains available alongside the subsequent worker re-check.
+- The audit records the raw worker reply, extraction or manual result, source,
+  and re-check. `LLM_DIAGNOSTICS=on` keeps up to 150 sanitized characters of
+  rejected output in demo audits. Set it to `off` in a real deployment
+  because worker text is personal data.
+- The two isolated real-key checks used one extraction attempt each. The truck
+  reply yielded approximate 19:30 with medium confidence. Confirmation stored
+  a P3 breach at 9.5 h and a P5 risk at 41.5 h projected, resolved P1 in simulation,
+  and assigned the case to the supervisor. "After 7" stored a low-confidence
+  clarification with no time or re-check and kept the case with the worker.
+  The wrong key returned HTTP 401 and manual 18:00 resolved P1 in simulation
+  with no new violations. None of the three runs wrote to the source tables.
+- Local checks passed 478 PostgreSQL tests and eight frontend tests. Two
+  opt-in provider tests were skipped. Ruff, OpenAPI drift, TypeScript, and the
+  production build passed. Hosted CI awaits the Phase 8 push.
+
+**Verify:** migrate to head, start the API and Vite, then use `/dev` to send a
+question for a fresh Amit P1 case. Open the inbox, answer No and provide a
+clock-out, then confirm or use the manual field. The exception detail contains
+the re-check. Repeat with a fresh case and Yes to verify the scheduled time.
+
+**Next: Phase 9** adds Ravi's approval page.

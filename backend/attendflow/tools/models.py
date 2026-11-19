@@ -238,6 +238,7 @@ class PolicyOut(ToolOutput):
 
 class Finding(BaseModel):
     policy_id: str
+    kind: Literal["breach", "risk"] | None = None
     date: str
     reason: str
     numbers: dict[str, float] | None = None

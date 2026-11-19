@@ -39,11 +39,15 @@ class Settings:
     llm_reasoning_effort: str = "low"
     agent_max_steps: int = 5
     llm_investigation_budget_seconds: float = 45
+    llm_diagnostics: bool = True
+    llm_extraction_attempts: int = 2
 
     def __post_init__(self) -> None:
         budget = self.llm_investigation_budget_seconds
         if not isfinite(budget) or budget <= 0:
             raise ValueError("LLM_INVESTIGATION_BUDGET_SECONDS must be positive and finite")
+        if self.llm_extraction_attempts not in {1, 2}:
+            raise ValueError("LLM_EXTRACTION_ATTEMPTS must be 1 or 2")
         if self.agent_max_steps < 1:
             raise ValueError("AGENT_MAX_STEPS must be positive")
         if self.llm_reasoning_effort not in {"off", "low", "medium", "high"}:
@@ -67,6 +71,8 @@ def get_settings(env_file: Path | None = REPO_ROOT / ".env") -> Settings:
         log_level=(os.getenv("LOG_LEVEL") or "INFO").upper(),
         llm_reasoning_effort=(os.getenv("LLM_REASONING_EFFORT") or "low").lower(),
         agent_max_steps=int(os.getenv("AGENT_MAX_STEPS") or 5),
+        llm_diagnostics=_env_bool("LLM_DIAGNOSTICS", default=True),
+        llm_extraction_attempts=int(os.getenv("LLM_EXTRACTION_ATTEMPTS") or 2),
         llm_investigation_budget_seconds=float(os.getenv("LLM_INVESTIGATION_BUDGET_SECONDS") or 45),
     )
 

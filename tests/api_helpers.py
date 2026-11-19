@@ -119,3 +119,17 @@ def store_test_investigation(client, exception_id: str, option_id: str | None = 
             )
         row.investigation_case = case.model_dump(mode="json")
         row.proposed_fix = case.proposed_fix.model_dump(mode="json") if case.proposed_fix else None
+
+
+def confirm_amit_clock_out(client, time: str | None = None) -> None:
+    store_test_investigation(client, AMIT_P1)
+    assert post(client, AMIT_P1, "ask-worker", {}, RAVI).status_code == 200
+    if time is None:
+        reply = post(client, AMIT_P1, "worker-reply", {"confirmed": True}, AMIT)
+    else:
+        saved = post(
+            client, AMIT_P1, "worker-reply", {"confirmed": False, "text": "I left late."}, AMIT
+        )
+        assert saved.status_code == 200, saved.text
+        reply = post(client, AMIT_P1, "worker-manual-time", {"time": time}, AMIT)
+    assert reply.status_code == 200, reply.text

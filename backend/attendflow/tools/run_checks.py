@@ -30,6 +30,7 @@ def _numbers(exc: TimecardException) -> dict[str, float]:
 def _finding(exc: TimecardException, with_numbers: bool) -> Finding:
     return Finding(
         policy_id=exc.policy_id,
+        kind=exc.kind,
         date=exc.date.isoformat(),
         reason=exc.summary,
         numbers=_numbers(exc) if with_numbers else None,

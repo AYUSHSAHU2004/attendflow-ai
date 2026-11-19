@@ -62,7 +62,7 @@ and CI, 10-minute demo video, 5 slides.
 ## Phase plan
 
 Done: 0 Setup + data + policy + LLM test; 1 Rule engine P1-P7, P15; 2 Rules P8-P14, P16, P17;
-3 Backend + DB + API; 4 Read-only tools + fix options for P3/P4/P6/P7; 5 LLM client + agent loop; 6 structured investigations and jobs; 7 worker messages and inbox.
+3 Backend + DB + API; 4 Read-only tools + fix options for P3/P4/P6/P7; 5 LLM client + agent loop; 6 structured investigations and jobs; 7 worker messages and inbox; 8 worker clock-out extraction and re-check.
 
 **Prototype (3-10)**
 3. Backend + DB + API
@@ -90,16 +90,15 @@ Done: 0 Setup + data + policy + LLM test; 1 Rule engine P1-P7, P15; 2 Rules P8-P
 23. Tests + evaluation
 24. Delivery
 
-**Next: Phase 8.**
+**Next: Phase 9.**
 
 **Carry-over notes**
 - Phase 5 Groq bug: `run_checks` advertised Pydantic's RFC 3339 `date-time` format for
   timezone-free local timestamps. Groq rejected minute-precision values with HTTP 400.
   The schema now advertises the app's local time patterns; the registry tests check
   every tool schema recursively for unsupported formats and schema references.
-- Phase 9: P1, P9, P10 and P13 also say "the worker is asked first" in policy.md but are not
-  flagged `requires_worker_confirmation` yet (kept so the Phase 3 demo approve still works).
-  Decide then whether to flag them.
+- Phase 9: Review whether P9, P10 and P13 should have the same worker confirmation
+  guard as P1. Their policy text says the worker is asked first.
 - Phase 22: `POST /api/seed` wipes every table. It must be disabled
   (`ATTENDFLOW_ENABLE_SEED=false`) or protected on the deployed server.
 
@@ -319,6 +318,25 @@ Done: 0 Setup + data + policy + LLM test; 1 Rule engine P1-P7, P15; 2 Rules P8-P
 - `frontend/src/api.generated.ts` comes from FastAPI OpenAPI. Refresh it with
   `npm run api:generate` from `frontend/`. CI checks drift, runs component
   tests and type-checking, and builds the frontend.
+
+**Worker time extraction and re-check (Phase 8)**
+- P1 missing clock-outs and P3 wrong clock-outs use the stored clock-out option
+  and a verified clock-in. Free text is data. The LLM gets the shift date,
+  schedule and clock-in and returns tool-free JSON. Code validates the schema,
+  requires one stated time, and checks it against the fixed clock and P15's
+  maximum shift length. It accepts an unambiguous approximation for review
+  and sends vague, conflicting, or invalid times to the manual form.
+- The worker stays assigned until confirming the candidate or submitting an
+  exact time. Yes uses the timestamp captured with the question. Both routes
+  run the deterministic re-check and store the timestamp, option, source, and
+  full result in `worker_recheck`. The inbox shows a code-generated impact
+  note only. P1 approval uses the confirmed timestamp and refuses changes to it.
+- Invalid model output gets one correction attempt before manual fallback.
+  Provider failures use the manual form immediately. `LLM_DIAGNOSTICS=on`
+  is the demo default and stores up to 150 sanitized characters of rejected
+  output. **Set `LLM_DIAGNOSTICS=off` in real deployments** because worker
+  text is personal data. The raw reply audit also requires access controls and
+  a retention policy.
 
 ## Repo map
 

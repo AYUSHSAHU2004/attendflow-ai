@@ -210,6 +210,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/exceptions/{exception_id}/worker-confirm-time": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Worker Confirm Time */
+        post: operations["worker_confirm_time_api_exceptions__exception_id__worker_confirm_time_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/exceptions/{exception_id}/worker-manual-time": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Worker Manual Time */
+        post: operations["worker_manual_time_api_exceptions__exception_id__worker_manual_time_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/worker/messages": {
         parameters: {
             query?: never;
@@ -454,6 +488,7 @@ export interface components {
             proposed_fix: {
                 [key: string]: unknown;
             } | null;
+            worker_recheck?: components["schemas"]["WorkerRecheckOut"] | null;
             /** Applied Fix */
             applied_fix: {
                 [key: string]: unknown;
@@ -542,6 +577,7 @@ export interface components {
             proposed_fix: {
                 [key: string]: unknown;
             } | null;
+            worker_recheck?: components["schemas"]["WorkerRecheckOut"] | null;
             /** Applied Fix */
             applied_fix: {
                 [key: string]: unknown;
@@ -573,6 +609,8 @@ export interface components {
         Finding: {
             /** Policy Id */
             policy_id: string;
+            /** Kind */
+            kind?: ("breach" | "risk") | null;
             /** Date */
             date: string;
             /** Reason */
@@ -834,6 +872,24 @@ export interface components {
             reply_prompt: string;
             /** Needs Actual Time */
             needs_actual_time: boolean;
+            time_review?: components["schemas"]["WorkerTimeReviewOut"] | null;
+        };
+        /** WorkerRecheckOut */
+        WorkerRecheckOut: {
+            /** Timestamp */
+            timestamp: string;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "yes" | "llm" | "manual";
+            /** Proposed Fix */
+            proposed_fix: {
+                [key: string]: unknown;
+            };
+            result: components["schemas"]["RunChecksOut"];
+            /** Impact Note */
+            impact_note: string;
         };
         /** WorkerReplyIn */
         WorkerReplyIn: {
@@ -856,6 +912,31 @@ export interface components {
             confirmed: boolean;
             /** Needs Actual Time */
             needs_actual_time: boolean;
+            time_review?: components["schemas"]["WorkerTimeReviewOut"] | null;
+        };
+        /** WorkerTimeIn */
+        WorkerTimeIn: {
+            /** Time */
+            time: string;
+            /** Actual Date */
+            actual_date?: string | null;
+        };
+        /** WorkerTimeReviewOut */
+        WorkerTimeReviewOut: {
+            /**
+             * Stage
+             * @enum {string}
+             */
+            stage: "candidate" | "manual" | "confirmed";
+            /** Timestamp */
+            timestamp?: string | null;
+            /** Impact Note */
+            impact_note?: string | null;
+            /**
+             * Approximate
+             * @default false
+             */
+            approximate: boolean;
         };
     };
     responses: never;
@@ -1407,6 +1488,132 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["WorkerReplyIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkerReplyOut"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    worker_confirm_time_api_exceptions__exception_id__worker_confirm_time_post: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
+                "X-Actor-Id": string;
+            };
+            path: {
+                exception_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkerReplyOut"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    worker_manual_time_api_exceptions__exception_id__worker_manual_time_post: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
+                "X-Actor-Id": string;
+            };
+            path: {
+                exception_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkerTimeIn"];
             };
         };
         responses: {

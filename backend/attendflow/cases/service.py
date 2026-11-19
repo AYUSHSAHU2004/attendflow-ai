@@ -16,13 +16,19 @@ from __future__ import annotations
 import logging
 from collections import Counter
 from dataclasses import dataclass, field
+from datetime import date, datetime
 from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from attendflow.cases import time_extraction, time_review
 from attendflow.cases.transitions import WAITING, check_transition
-from attendflow.cases.worker_message import generate_worker_message, worker_facts
+from attendflow.cases.worker_message import (
+    generate_worker_message,
+    validate_worker_message,
+    worker_facts,
+)
 from attendflow.clock import Clock
 from attendflow.config import Settings
 from attendflow.db.dataset import load_dataset_from_db
@@ -306,8 +312,14 @@ def _add_options(session: Session, row: ExceptionRow, exc: TimecardException, cl
 
 
 def _require_worker_confirmation(session: Session, row: ExceptionRow, option: dict) -> None:
-    """Options flagged requires_worker_confirmation (policy: the worker confirms first) can
-    only be approved after the worker's latest reply on this case said Yes."""
+    """Require a confirmed time record for P1 and confirmation for other flagged options."""
+    reviewed = (row.worker_recheck or {}).get("proposed_fix") or {}
+    if reviewed.get("option_id") == option["option_id"]:
+        return
+    if row.policy_id == "P1":
+        raise ConflictError(
+            "the worker must confirm the punch time first", code="worker_not_confirmed"
+        )
     if not option.get("requires_worker_confirmation"):
         return
     reply = session.scalars(
@@ -383,9 +395,12 @@ def approve(
         check_transition(row.status, "resolved", action=action_name)
         _require_assignee(row, actor, action_name)
         option = _find_option(row, option_id)
-        _require_worker_confirmation(session, row, option)
-
-        merged = {**option["params"], **(params or {})}
+        reviewed = (row.worker_recheck or {}).get("proposed_fix") or {}
+        confirmed_params = (
+            reviewed.get("params") if reviewed.get("option_id") == option_id else None
+        )
+        default_params = confirmed_params if confirmed_params is not None else option["params"]
+        merged = {**default_params, **(params or {})}
         note_key = REQUIRED_NOTE.get(option["action"])
         if note_key and not str(merged.get(note_key) or "").strip() and reason:
             merged[note_key] = reason.strip()
@@ -394,6 +409,24 @@ def approve(
         except FixParamsError as exc:
             raise InvalidFixError(str(exc), code="invalid_params", details=exc.errors) from exc
 
+        if row.policy_id == "P1" and option["action"] == "set_clock_out" and edited:
+            proposed_stamp = datetime.fromisoformat(params_json(parsed)["timestamp"])
+            ctx = time_review.context(session, row, policy, clock.now())
+            if proposed_stamp > clock.now():
+                raise InvalidFixError("the punch time is in the future", code="punch_in_future")
+            if ctx is not None:
+                try:
+                    ctx.resolve(proposed_stamp.strftime("%H:%M"), proposed_stamp.date())
+                except ValueError as exc:
+                    raise InvalidFixError(str(exc), code="punch_outside_shift") from None
+        _require_worker_confirmation(session, row, option)
+        if (
+            row.policy_id == "P1"
+            and params_json(parsed).get("timestamp") != confirmed_params["timestamp"]
+        ):
+            raise ConflictError(
+                "the worker must confirm the changed punch time", code="worker_not_confirmed"
+            )
         before = _state(row)
         changes = apply_fix(session, row, option["action"], parsed, policy, clock.now())
         _set_status(row, "resolved", clock, row.assigned_to)
@@ -516,6 +549,7 @@ def ask_worker(
             )
         before = _state(row)
         _set_status(row, "awaiting_worker", clock, row.employee_id)
+        row.worker_recheck = None
         message = WorkerMessageRow(
             exception_id=row.id,
             recipient_id=row.employee_id,
@@ -524,6 +558,7 @@ def ask_worker(
             source=draft.source,
             reply_prompt=facts.reply_prompt,
             sent_at=clock.now(),
+            asked_fix=time_review.asked_fix(row),
         )
         session.add(message)
         session.flush()
@@ -580,56 +615,132 @@ def worker_inbox(session: Session, actor_id: str) -> list[WorkerMessageRow]:
     )
 
 
+def _worker_question(
+    session: Session,
+    exception_id: str,
+    actor_id: str,
+) -> tuple[ExceptionRow, EmployeeRow, WorkerMessageRow]:
+    actor = _actor(session, actor_id)
+    row = session.get(ExceptionRow, exception_id, with_for_update=True)
+    if row is None or actor.role != "worker" or actor_id != row.employee_id:
+        raise ForbiddenError("only the recipient can reply to this question", code="not_the_worker")
+    if row.status != "awaiting_worker":
+        raise InvalidTransitionError(
+            f"worker_reply: {row.id} is {row.status}, not waiting for the worker",
+            details={
+                "from": row.status,
+                "to": "awaiting_supervisor",
+                "allowed": ["awaiting_worker"],
+            },
+        )
+    _require_assignee(row, actor, "reply to")
+    message = session.scalar(
+        select(WorkerMessageRow)
+        .where(WorkerMessageRow.exception_id == row.id, WorkerMessageRow.recipient_id == actor_id)
+        .order_by(WorkerMessageRow.id.desc())
+        .limit(1)
+    )
+    if message is None:
+        raise ConflictError("there is no unanswered question", code="no_open_worker_question")
+    return row, actor, message
+
+
+def _handoff_confirmed_time(
+    session: Session,
+    row: ExceptionRow,
+    actor: EmployeeRow,
+    message: WorkerMessageRow,
+    clock: Clock,
+    review: dict,
+    source: str,
+) -> None:
+    before = _state(row)
+    confirmed_time = {**review, "source": source}
+    row.worker_recheck = confirmed_time
+    row.proposed_fix = review["proposed_fix"]
+    message.time_review = {
+        "stage": "confirmed",
+        "timestamp": review["timestamp"],
+        "impact_note": review["impact_note"],
+        "approximate": False,
+    }
+    message.needs_actual_time = False
+    check_transition(row.status, "awaiting_supervisor", action="worker_time_confirmed")
+    _set_status(row, "awaiting_supervisor", clock, actor.supervisor_id)
+    _audit(
+        session,
+        clock,
+        exception_id=row.id,
+        actor="worker",
+        actor_id=actor.employee_id,
+        action="worker_time_confirmed",
+        before=before,
+        after={
+            **_state(row),
+            **confirmed_time,
+            "text": message.reply_text,
+            "message_id": message.id,
+        },
+    )
+
+
 def worker_reply(
     session: Session,
     clock: Clock,
+    settings: Settings,
+    policy: PolicyConfig,
     *,
     exception_id: str,
     actor_id: str,
     confirmed: bool,
     text: str | None,
 ) -> WorkerMessageRow:
-    """Yes routes to a supervisor. No stays with the worker for Phase 8."""
+    """Save the reply first. A model call never holds an exception row lock."""
     if not confirmed and not (text or "").strip():
         raise AppError("tell us what happened when answering No", code="reply_text_required")
+    ctx = None
     with session.begin():
-        actor = _actor(session, actor_id)
-        row = session.get(ExceptionRow, exception_id, with_for_update=True)
-        if row is None or actor.role != "worker" or actor_id != row.employee_id:
-            raise ForbiddenError(
-                "only the recipient can reply to this question", code="not_the_worker"
-            )
-        if row.status != "awaiting_worker":
-            raise InvalidTransitionError(
-                f"worker_reply: {row.id} is {row.status}, not waiting for the worker",
-                details={
-                    "from": row.status,
-                    "to": "awaiting_supervisor",
-                    "allowed": ["awaiting_worker"],
-                },
-            )
-        _require_assignee(row, actor, "reply to")
-        message = session.scalar(
-            select(WorkerMessageRow)
-            .where(
-                WorkerMessageRow.exception_id == row.id, WorkerMessageRow.recipient_id == actor_id
-            )
-            .order_by(WorkerMessageRow.id.desc())
-            .limit(1)
-        )
-        if message is None or message.replied_at is not None:
+        row, actor, message = _worker_question(session, exception_id, actor_id)
+        if message.replied_at is not None:
             raise ConflictError("there is no unanswered question", code="no_open_worker_question")
-
         before = _state(row)
-        if confirmed:
-            check_transition(row.status, "awaiting_supervisor", action="worker_reply")
-            _set_status(row, "awaiting_supervisor", clock, actor.supervisor_id)
-        else:
-            row.updated_at = clock.now()
+        asked = message.asked_fix
+        if asked is None and confirmed:
+            # A legacy question can establish the proposal only if it asked the verified time.
+            candidate = time_review.asked_fix(row)
+            if candidate:
+                try:
+                    validate_worker_message(message.message, worker_facts(row, actor))
+                except ValueError:
+                    pass
+                else:
+                    asked = candidate
+        message_id = message.id
         message.confirmed = confirmed
         message.reply_text = text
         message.replied_at = clock.now()
         message.needs_actual_time = not confirmed
+        if confirmed:
+            if asked:
+                option = _find_option(row, asked["option_id"])
+                stamp = datetime.fromisoformat(asked["params"]["timestamp"])
+                review = time_review.recheck(session, row, option, stamp, policy, clock.now())
+                _handoff_confirmed_time(session, row, actor, message, clock, review, "yes")
+            elif row.policy_id == "P1":
+                raise ConflictError(
+                    "the question did not specify a verifiable time; answer No",
+                    code="worker_time_required",
+                )
+            else:
+                check_transition(row.status, "awaiting_supervisor", action="worker_reply")
+                _set_status(row, "awaiting_supervisor", clock, actor.supervisor_id)
+        else:
+            row.updated_at = clock.now()
+            option = time_review.clock_out_option(row, asked)
+            if option:
+                ctx = time_review.context(session, row, policy, clock.now())
+            if ctx:
+                message.time_review = {"stage": "manual", "approximate": False}
         _audit(
             session,
             clock,
@@ -646,4 +757,100 @@ def worker_reply(
                 "message_id": message.id,
             },
         )
+
+    if ctx is None:
+        return message
+    assert text is not None
+    extraction = time_extraction.extract(settings, text, ctx)
+    with session.begin():
+        row = _get_for_update(session, exception_id)
+        message = session.get(WorkerMessageRow, message_id, populate_existing=True)
+        if message is None:
+            raise ConflictError("the question changed", code="no_open_worker_question")
+        for rejected in extraction.rejected:
+            _audit(
+                session,
+                clock,
+                exception_id=row.id,
+                actor="agent",
+                action="worker_time_extraction_rejected",
+                after={"message_id": message_id, **rejected},
+            )
+        diagnostic = extraction.diagnostic
+        check_result = None
+        if row.status == "awaiting_worker" and message.needs_actual_time and extraction.timestamp:
+            try:
+                option = time_review.clock_out_option(row, message.asked_fix)
+                if option is None or time_review.context(session, row, policy, clock.now()) != ctx:
+                    raise ConflictError("the shift context changed", code="case_changed")
+                preview = time_review.recheck(
+                    session, row, option, extraction.timestamp, policy, clock.now()
+                )
+                check_result = preview["result"]
+                assert extraction.reply is not None
+                message.time_review = {
+                    "stage": "candidate",
+                    "timestamp": preview["timestamp"],
+                    "impact_note": preview["impact_note"],
+                    "approximate": extraction.reply.approximate,
+                }
+            except AppError as exc:
+                diagnostic = exc.message
+        _audit(
+            session,
+            clock,
+            exception_id=row.id,
+            actor="agent",
+            action="worker_time_extracted",
+            reason=diagnostic,
+            after={
+                "message_id": message_id,
+                "text": text,
+                "extracted": extraction.reply.model_dump() if extraction.reply else None,
+                "timestamp": extraction.timestamp.isoformat() if extraction.timestamp else None,
+                "source": "llm",
+                "recheck": check_result,
+                "stage": (message.time_review or {}).get("stage"),
+            },
+        )
+    return message
+
+
+def submit_worker_time(
+    session: Session,
+    clock: Clock,
+    policy: PolicyConfig,
+    *,
+    exception_id: str,
+    actor_id: str,
+    time: str | None = None,
+    actual_date: date | None = None,
+) -> WorkerMessageRow:
+    with session.begin():
+        row, actor, message = _worker_question(session, exception_id, actor_id)
+        if not message.needs_actual_time:
+            raise ConflictError(
+                "this question is not waiting for an actual time", code="time_not_requested"
+            )
+        option = time_review.clock_out_option(row, message.asked_fix)
+        ctx = time_review.context(session, row, policy, clock.now()) if option else None
+        if option is None or ctx is None:
+            raise ConflictError("this case has no clock-out option", code="time_not_supported")
+        candidate = message.time_review or {}
+        if time is None:
+            if candidate.get("stage") != "candidate":
+                raise ConflictError(
+                    "there is no extracted time to confirm", code="no_time_candidate"
+                )
+            stamp = datetime.fromisoformat(candidate["timestamp"])
+            time, actual_date = stamp.strftime("%H:%M"), stamp.date()
+            source = "llm"
+        else:
+            source = "manual"
+        try:
+            stamp = ctx.resolve(time, actual_date)
+        except ValueError as exc:
+            raise InvalidFixError(str(exc), code="invalid_time") from None
+        review = time_review.recheck(session, row, option, stamp, policy, clock.now())
+        _handoff_confirmed_time(session, row, actor, message, clock, review, source)
     return message

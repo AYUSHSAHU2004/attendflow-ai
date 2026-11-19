@@ -34,6 +34,7 @@ from attendflow.api.schemas import (
     WorkerInboxOut,
     WorkerReplyIn,
     WorkerReplyOut,
+    WorkerTimeIn,
 )
 from attendflow.cases import service
 from attendflow.cases.transitions import Status
@@ -345,6 +346,7 @@ def ask_worker(
 @router.post(
     "/exceptions/{exception_id}/worker-reply",
     response_model=WorkerReplyOut,
+    response_model_exclude_none=True,
     tags=["decisions"],
     summary="Record the worker's Yes or No and return a receipt",
     responses=_DECISION_ERRORS,
@@ -355,10 +357,14 @@ def worker_reply(
     actor_id: ActorId,
     session: SessionDep,
     clock: ClockDep,
+    policy: PolicyDep,
+    settings: Annotated[Settings, Depends(get_settings_dep)],
 ):
     message = service.worker_reply(
         session,
         clock,
+        settings,
+        policy,
         exception_id=exception_id,
         actor_id=actor_id,
         confirmed=body.confirmed,
@@ -367,9 +373,51 @@ def worker_reply(
     return message
 
 
+@router.post(
+    "/exceptions/{exception_id}/worker-confirm-time",
+    response_model=WorkerReplyOut,
+    response_model_exclude_none=True,
+    tags=["worker"],
+    responses=_DECISION_ERRORS,
+)
+def worker_confirm_time(
+    exception_id: str, actor_id: ActorId, session: SessionDep, clock: ClockDep, policy: PolicyDep
+):
+    return service.submit_worker_time(
+        session, clock, policy, exception_id=exception_id, actor_id=actor_id
+    )
+
+
+@router.post(
+    "/exceptions/{exception_id}/worker-manual-time",
+    response_model=WorkerReplyOut,
+    response_model_exclude_none=True,
+    tags=["worker"],
+    responses=_DECISION_ERRORS,
+)
+def worker_manual_time(
+    exception_id: str,
+    body: WorkerTimeIn,
+    actor_id: ActorId,
+    session: SessionDep,
+    clock: ClockDep,
+    policy: PolicyDep,
+):
+    return service.submit_worker_time(
+        session,
+        clock,
+        policy,
+        exception_id=exception_id,
+        actor_id=actor_id,
+        time=body.time,
+        actual_date=body.actual_date,
+    )
+
+
 @router.get(
     "/worker/messages",
     response_model=WorkerInboxOut,
+    response_model_exclude_none=True,
     tags=["worker"],
     summary="Questions and pending follow-ups for the worker",
     responses=_errors(403, 422),

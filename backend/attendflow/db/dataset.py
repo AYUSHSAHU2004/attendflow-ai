@@ -6,6 +6,8 @@ detection run. Voided punches are left out, exactly like the engine leaves out P
 
 from __future__ import annotations
 
+from datetime import date
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -30,6 +32,15 @@ from attendflow.db.models import (
 
 def _fields(row: object, model: type) -> dict:
     return {name: getattr(row, name) for name in model.model_fields}
+
+
+def load_schedule_day(session: Session, employee_id: str, day: date) -> ScheduleRow | None:
+    row = session.scalar(
+        select(ScheduleEntryRow).where(
+            ScheduleEntryRow.employee_id == employee_id, ScheduleEntryRow.date == day
+        )
+    )
+    return ScheduleRow.model_validate(_fields(row, ScheduleRow)) if row else None
 
 
 def load_dataset_from_db(session: Session) -> Dataset:

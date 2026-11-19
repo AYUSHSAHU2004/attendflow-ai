@@ -78,7 +78,17 @@ def _provider_message(
     if not isinstance(message, str):
         return ""
 
-    secrets = [settings.llm_api_key, *(item.get("content") for item in messages)]
+    return redact_response_text(message, settings, messages)
+
+
+def redact_response_text(
+    message: str,
+    settings: Settings,
+    messages: list[dict[str, Any]],
+    *,
+    extra_secrets: tuple[str, ...] = (),
+) -> str:
+    secrets = [settings.llm_api_key, *(item.get("content") for item in messages), *extra_secrets]
     for secret in sorted(
         {value for value in secrets if isinstance(value, str) and value}, key=len, reverse=True
     ):

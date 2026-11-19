@@ -32,6 +32,7 @@ from tests.api_helpers import (
     SUNITA,
     assert_error,
     audit_count,
+    confirm_amit_clock_out,
     get,
     post,
     session_for,
@@ -57,6 +58,7 @@ def corrections(client, employee_id: str) -> list[PunchRow]:
 
 
 def test_approve_applies_fix_and_writes_audit(demo):
+    confirm_amit_clock_out(demo)
     r = post(demo, AMIT_P1, "approve", {**CLOCK_OUT, "reason": "Shift ended normally"}, RAVI)
     assert r.status_code == 200, r.text
     exc = r.json()
@@ -76,7 +78,10 @@ def test_approve_applies_fix_and_writes_audit(demo):
 
     audit = exc["audit_trail"][-1]
     assert (audit["actor"], audit["actor_id"], audit["action"]) == ("supervisor", "E101", "approve")
-    assert audit["before"]["status"] == "open" and audit["after"]["status"] == "resolved"
+    assert (
+        audit["before"]["status"] == "awaiting_supervisor"
+        and audit["after"]["status"] == "resolved"
+    )
     assert audit["after"]["applied_fix"]["changes"] == [
         {
             "table": "timecards",
@@ -90,6 +95,7 @@ def test_approve_applies_fix_and_writes_audit(demo):
 
 
 def test_approve_twice_is_an_invalid_transition(demo):
+    confirm_amit_clock_out(demo)
     assert post(demo, AMIT_P1, "approve", CLOCK_OUT, RAVI).status_code == 200
     before = snapshot(demo)
     err = assert_error(post(demo, AMIT_P1, "approve", CLOCK_OUT, RAVI), 409, "invalid_transition")
@@ -173,6 +179,7 @@ def test_request_bodies_are_validated(demo):
 
 
 def test_edit_applies_changed_params(demo):
+    confirm_amit_clock_out(demo, "17:30")
     body = {**CLOCK_OUT, "params": {"timestamp": "2026-04-14T17:30"}, "reason": "Left at 17:30"}
     r = post(demo, AMIT_P1, "edit", body, RAVI)
     assert r.status_code == 200, r.text
@@ -251,6 +258,7 @@ def test_admin_reject_of_escalated_case_is_final(demo):
 
 
 def test_admin_can_approve_an_escalated_case(demo):
+    confirm_amit_clock_out(demo)
     post(demo, AMIT_P1, "reject", {"reason": "not sure"}, RAVI)
     assert_error(post(demo, AMIT_P1, "approve", CLOCK_OUT, RAVI), 403, "not_assigned")
     r = post(demo, AMIT_P1, "approve", CLOCK_OUT, PRIYA)
@@ -293,10 +301,11 @@ def test_ask_worker_then_reply(demo):
         "exception_id": AMIT_P1,
         "confirmed": False,
         "needs_actual_time": True,
+        "time_review": {"stage": "manual", "approximate": False},
     }
     exc = get(demo, AMIT_P1)
     assert (exc["status"], exc["assigned_to"]) == ("awaiting_worker", "E001")
-    audit = exc["audit_trail"][-1]
+    audit = next(item for item in reversed(exc["audit_trail"]) if item["action"] == "worker_reply")
     assert (audit["actor"], audit["action"]) == ("worker", "worker_reply")
     assert audit["after"]["text"] == "left around 7:30ish" and audit["after"]["confirmed"] is False
 
@@ -321,6 +330,7 @@ def test_ask_worker_needs_the_assignee(demo):
 
 
 def test_failure_after_the_fix_rolls_everything_back(demo, monkeypatch):
+    confirm_amit_clock_out(demo)
     before, audits = snapshot(demo), audit_count(demo)
 
     def broken_audit(*args, **kwargs):
@@ -330,7 +340,7 @@ def test_failure_after_the_fix_rolls_everything_back(demo, monkeypatch):
     assert_error(post(demo, AMIT_P1, "approve", CLOCK_OUT, RAVI), 500, "internal_error")
     assert snapshot(demo) == before  # the clock-out punch was rolled back
     assert audit_count(demo) == audits
-    assert get(demo, AMIT_P1)["status"] == "open"
+    assert get(demo, AMIT_P1)["status"] == "awaiting_supervisor"
 
 
 # ---------------------------------------------------------------- what each fix writes

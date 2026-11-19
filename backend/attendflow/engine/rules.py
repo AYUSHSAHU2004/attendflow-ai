@@ -203,6 +203,7 @@ def check_p1_missing_punch(ctx: RuleContext) -> list[TimecardException]:
                             "timestamp": iso(s.scheduled_end),
                             "worked_hours_after_fix": h(span - s.break_minutes / 60),
                         },
+                        requires_worker_confirmation=True,
                     )
                 )
             end_txt = f"scheduled end {hhmm(s.scheduled_end)}" if s.scheduled_end else "unscheduled"
@@ -235,6 +236,7 @@ def check_p1_missing_punch(ctx: RuleContext) -> list[TimecardException]:
                         label=f"Set clock-in to the scheduled shift start "
                         f"({hhmm(s.scheduled_start)})",
                         params={"timestamp": iso(s.scheduled_start)},
+                        requires_worker_confirmation=True,
                     )
                 )
             out_txt = f"clock-out {hhmm(s.clock_out.timestamp)}" if s.clock_out else "no clock-out"

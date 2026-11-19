@@ -4,6 +4,7 @@ import { supervisorActor, workerActor } from './actors'
 type Schemas = components['schemas']
 type ReplyInput = paths['/api/exceptions/{exception_id}/worker-reply']['post']['requestBody']['content']['application/json']
 export type WorkerMessage = Schemas['WorkerMessageOut']
+export type WorkerReceipt = Schemas['WorkerReplyOut']
 export type InvestigationJob = Schemas['InvestigationJobOut']
 export type InvestigationCase = Schemas['InvestigationCase']
 
@@ -39,6 +40,18 @@ export async function sendReply(id: string, reply: ReplyInput) {
   return (await request<Schemas['WorkerReplyOut']>(`${casePath(id)}/worker-reply`, workerActor.id, {
     method: 'POST',
     body: JSON.stringify(reply),
+  })).body
+}
+
+export async function confirmWorkerTime(id: string) {
+  return (await request<WorkerReceipt>(`${casePath(id)}/worker-confirm-time`, workerActor.id, {
+    method: 'POST',
+  })).body
+}
+
+export async function submitManualTime(id: string, body: Schemas['WorkerTimeIn']) {
+  return (await request<WorkerReceipt>(`${casePath(id)}/worker-manual-time`, workerActor.id, {
+    method: 'POST', body: JSON.stringify(body),
   })).body
 }
 

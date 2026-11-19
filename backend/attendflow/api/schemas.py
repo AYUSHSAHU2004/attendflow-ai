@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from attendflow.agent.case import InvestigationCase
 from attendflow.cases.transitions import Status
 from attendflow.engine.models import ACTION_INFO
+from attendflow.tools.models import RunChecksOut
 
 ActorType = Literal["system", "agent", "worker", "supervisor", "admin"]
 EMPLOYEE_ID = r"^E\d{3}$"
@@ -95,6 +96,14 @@ class FixOptionOut(ApiModel):
         return data
 
 
+class WorkerRecheckOut(ApiModel):
+    timestamp: str
+    source: Literal["yes", "llm", "manual"]
+    proposed_fix: dict[str, Any]
+    result: RunChecksOut
+    impact_note: str
+
+
 class ExceptionOut(ApiModel):
     id: str = Field(examples=["P1-E001-2026-04-14"])
     employee_id: str
@@ -110,6 +119,7 @@ class ExceptionOut(ApiModel):
     evidence: list[dict[str, Any]]
     fix_options: list[FixOptionOut]
     proposed_fix: dict[str, Any] | None
+    worker_recheck: WorkerRecheckOut | None = None
     applied_fix: dict[str, Any] | None
     assigned_to: str | None = Field(description="Whose turn it is to act")
     waiting_since: datetime | None
@@ -122,6 +132,8 @@ class ExceptionOut(ApiModel):
         for opt in self.fix_options:
             if opt.policy_id is None:
                 opt.policy_id = self.policy_id
+            if self.policy_id == "P1":
+                opt.requires_worker_confirmation = True
         return self
 
 
@@ -214,9 +226,23 @@ class WorkerReplyIn(RequestModel):
 
     @model_validator(mode="after")
     def _no_needs_text(self) -> WorkerReplyIn:
+        if self.text and "\x00" in self.text:
+            raise ValueError("reply text must not contain null characters")
         if not self.confirmed and not self.text:
             raise ValueError("tell us what happened when answering No")
         return self
+
+
+class WorkerTimeReviewOut(ApiModel):
+    stage: Literal["candidate", "manual", "confirmed"]
+    timestamp: str | None = None
+    impact_note: str | None = None
+    approximate: bool = False
+
+
+class WorkerTimeIn(RequestModel):
+    time: str = Field(pattern=r"^(?:[01][0-9]|2[0-3]):[0-5][0-9]$")
+    actual_date: date | None = None
 
 
 class WorkerMessageOut(ApiModel):
@@ -225,12 +251,14 @@ class WorkerMessageOut(ApiModel):
     message: str
     reply_prompt: str
     needs_actual_time: bool
+    time_review: WorkerTimeReviewOut | None = None
 
 
 class WorkerReplyOut(ApiModel):
     exception_id: str
     confirmed: bool
     needs_actual_time: bool
+    time_review: WorkerTimeReviewOut | None = None
 
 
 class WorkerInboxOut(ApiModel):

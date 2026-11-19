@@ -17,6 +17,7 @@ from tests.api_helpers import (
     SANA_P2,
     assert_error,
     audit_count,
+    confirm_amit_clock_out,
     get,
     session_for,
     snapshot,
@@ -35,6 +36,8 @@ EXPECTED_PATHS = {
     ("post", "/api/exceptions/{exception_id}/reject"),
     ("post", "/api/exceptions/{exception_id}/ask-worker"),
     ("post", "/api/exceptions/{exception_id}/worker-reply"),
+    ("post", "/api/exceptions/{exception_id}/worker-confirm-time"),
+    ("post", "/api/exceptions/{exception_id}/worker-manual-time"),
     ("get", "/api/audit-log"),
     ("get", "/api/tool-calls"),
     ("get", "/api/worker/messages"),
@@ -224,6 +227,7 @@ def test_detection_closes_open_exceptions_that_disappear(demo):
 
 def test_detection_refreshes_open_exceptions(demo):
     # Fixing Amit's P1 makes his holiday hours known, so his open P14 gets new numbers.
+    confirm_amit_clock_out(demo)
     demo.post(
         f"/api/exceptions/{AMIT_P1}/approve",
         json={"option_id": "set_clock_out_to_scheduled_end"},

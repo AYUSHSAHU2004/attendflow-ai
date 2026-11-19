@@ -159,9 +159,10 @@ class InvestigationJobs:
                     update={"duration_ms": duration, "who_to_ask": who, "next_action": next_action}
                 )
             row.investigation_case = case.model_dump(mode="json")
-            row.proposed_fix = (
-                case.proposed_fix.model_dump(mode="json") if case.proposed_fix else None
-            )
+            if row.worker_recheck is None:
+                row.proposed_fix = (
+                    case.proposed_fix.model_dump(mode="json") if case.proposed_fix else None
+                )
             job.status = "failed" if failed else "completed"
             job.reason = reason
             job.finished_at = now
