@@ -412,3 +412,138 @@ class SupervisorCaseOut(ApiModel):
     options: list[CardOptionOut]
     applied_fix: dict[str, Any] | None
     min_note_length: int
+
+
+# ---------------------------------------------------------------- payroll admin
+
+Severity = Literal["low", "medium", "high"]
+AdminSort = Literal["severity", "date", "employee", "updated"]
+
+
+class AdminCountersOut(ApiModel):
+    total: int
+    open: int
+    awaiting_worker: int
+    awaiting_supervisor: int
+    escalated: int
+    resolved: int
+    rejected: int
+    auto_resolved: int = Field(description="Resolved by policy without a human (P2, P7 grace)")
+
+
+class AdminListItemOut(ApiModel):
+    exception_id: str
+    employee_id: str
+    employee_name: str
+    team: str
+    date: date
+    policy_id: str
+    title: str
+    summary: str
+    severity: Severity
+    kind: Literal["breach", "risk"]
+    status: Status
+    auto_resolved: bool
+    assigned_to: str | None
+    assigned_to_name: str | None
+    investigated: bool = Field(description="A stored investigation case exists")
+    who_to_ask: Literal["worker", "supervisor", "hr"] | None
+    investigation_fallback: bool | None = Field(
+        description="True when the stored investigation is the engine template"
+    )
+    needs_your_decision: bool = Field(description="Escalated and assigned to the caller")
+    updated_at: datetime
+
+
+class AdminEmployeeOptionOut(ApiModel):
+    employee_id: str
+    name: str
+    team: str
+
+
+class AdminFilterOptionsOut(ApiModel):
+    statuses: list[Status]
+    policy_ids: list[str]
+    teams: list[str]
+    employees: list[AdminEmployeeOptionOut]
+    severities: list[Severity]
+
+
+class AdminOverviewOut(ApiModel):
+    counters: AdminCountersOut = Field(description="Whole database; filters never apply")
+    matched: int = Field(description="Exceptions matching the filters (before paging)")
+    limit: int
+    offset: int
+    items: list[AdminListItemOut]
+    filter_options: AdminFilterOptionsOut
+
+
+class AdminAuditEntryOut(ApiModel):
+    id: int
+    created_at: datetime
+    actor: ActorType
+    actor_id: str | None
+    actor_name: str | None
+    action: str
+    summary: str = Field(description="Built by code from the stored audit row")
+    reason: str | None
+    before_summary: str | None = Field(description="Status and assignee before, if recorded")
+    after_summary: str | None = Field(description="Status and assignee after, if recorded")
+
+
+class AdminToolCallOut(ApiModel):
+    run_id: str | None
+    step_no: int
+    call_no: int | None
+    tool_name: str
+    input: dict[str, Any] = Field(description="Tool arguments: IDs, dates and proposed changes")
+    ok: bool | None
+    error_code: str | None
+    duration_ms: float | None
+
+
+class AdminWorkerMessageOut(ApiModel):
+    id: int
+    sent_at: datetime
+    source: Literal["llm", "template"]
+    message: str
+    reply_prompt: str
+    confirmed: bool | None
+    reply_text: str | None = Field(description="The worker's own words, unchanged")
+    replied_at: datetime | None
+    needs_actual_time: bool
+    time_review: dict[str, Any] | None
+
+
+class AdminJobOut(ApiModel):
+    id: str
+    status: Literal["running", "completed", "failed"]
+    reason: str | None
+
+
+class AdminCaseOut(ApiModel):
+    exception_id: str
+    status: Status
+    assigned_to: str | None
+    assigned_to_name: str | None
+    needs_your_decision: bool
+    can_investigate: bool = Field(description="True while the case is open")
+    auto_resolved: bool
+    employee: CardEmployeeOut
+    date: date
+    policy_id: str
+    title: str
+    summary: str
+    severity: Severity
+    kind: Literal["breach", "risk"]
+    details: dict[str, Any]
+    policy: CardPolicyOut
+    evidence: list[dict[str, Any]]
+    options: list[CardOptionOut]
+    investigation: InvestigationCase | None
+    latest_job: AdminJobOut | None
+    worker_messages: list[AdminWorkerMessageOut]
+    recheck: WorkerRecheckOut | None
+    applied_fix: dict[str, Any] | None
+    audit_trail: list[AdminAuditEntryOut] = Field(description="Oldest first")
+    tool_calls: list[AdminToolCallOut]

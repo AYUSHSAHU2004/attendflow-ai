@@ -213,14 +213,17 @@ function EditForm({
 
 // ---------------------------------------------------------------- case card
 
-function CaseCard({
+/** The decision card. Also used by the payroll admin page for cases escalated to her. */
+export function CaseCard({
   id,
   onChanged,
   onClose,
+  actor = supervisorActor.id,
 }: {
   id: string
   onChanged: (message: string, closeCard: boolean) => void
   onClose: () => void
+  actor?: string
 }) {
   const [data, setData] = useState<SupervisorCase | null>(null)
   const [loadError, setLoadError] = useState('')
@@ -234,7 +237,7 @@ function CaseCard({
 
   useEffect(() => {
     const controller = new AbortController()
-    getCase(id, controller.signal)
+    getCase(id, controller.signal, actor)
       .then((body) => {
         if (controller.signal.aborted) return
         setData(body)
@@ -244,7 +247,7 @@ function CaseCard({
         if (!controller.signal.aborted) setLoadError(plainError(failure))
       })
     return () => controller.abort()
-  }, [id, reload])
+  }, [id, reload, actor])
 
   if (loadError) return <section className="panel case-card"><p role="alert" className="error">{loadError}</p></section>
   if (!data) return <p role="status" className="panel">Loading the case…</p>
@@ -286,7 +289,7 @@ function CaseCard({
     void act(async () => approvedMessage(await approveCase(data!.exception_id, {
       option_id: option.option_id,
       reason: option.note_field ? note.trim() : undefined,
-    })), false)
+    }, actor)), false)
   }
 
   function startApprove() {
@@ -301,7 +304,7 @@ function CaseCard({
       return
     }
     void act(async () => {
-      const result = await rejectCase(data!.exception_id, { reason: reason.trim() })
+      const result = await rejectCase(data!.exception_id, { reason: reason.trim() }, actor)
       return result.status === 'escalated'
         ? `Rejected. ${worker}'s case was sent to the payroll admin (${result.assigned_to}) with your reason.`
         : `Rejected. ${worker}'s case is closed with no change.`
@@ -438,7 +441,7 @@ function CaseCard({
               busy={busy}
               onCancel={() => setMode('idle')}
               onSubmit={(params, why) => void act(async () => approvedMessage(
-                await editCase(data.exception_id, { option_id: option.option_id, params, reason: why }),
+                await editCase(data.exception_id, { option_id: option.option_id, params, reason: why }, actor),
               ), false)}
             />
           )}

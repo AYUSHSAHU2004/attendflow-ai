@@ -304,6 +304,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/exceptions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Every exception, with counters (payroll admin only)
+         * @description Only the payroll admin may call this; everyone else gets 403 admin_only. Counters are counted by the database over every exception and ignore the filters. `q` matches the employee name or ID (case-insensitive). Default sort: severity (high first), then date, then ID. Read-only; never calls the LLM.
+         */
+        get: operations["admin_exceptions_api_admin_exceptions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/exceptions/{exception_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One case, read-only: evidence, investigation, worker reply, re-check, audit
+         * @description Payroll admin only. The full audit trail is oldest first. Tool calls are listed with their arguments and outcome only (no tool output, prompts or keys). To investigate, use POST /api/exceptions/{id}/investigate; to decide an escalated case, use the supervisor card and decision endpoints.
+         */
+        get: operations["admin_exception_api_admin_exceptions__exception_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/audit-log": {
         parameters: {
             query?: never;
@@ -342,6 +382,312 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AdminAuditEntryOut */
+        AdminAuditEntryOut: {
+            /** Id */
+            id: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Actor
+             * @enum {string}
+             */
+            actor: "system" | "agent" | "worker" | "supervisor" | "admin";
+            /** Actor Id */
+            actor_id: string | null;
+            /** Actor Name */
+            actor_name: string | null;
+            /** Action */
+            action: string;
+            /**
+             * Summary
+             * @description Built by code from the stored audit row
+             */
+            summary: string;
+            /** Reason */
+            reason: string | null;
+            /**
+             * Before Summary
+             * @description Status and assignee before, if recorded
+             */
+            before_summary: string | null;
+            /**
+             * After Summary
+             * @description Status and assignee after, if recorded
+             */
+            after_summary: string | null;
+        };
+        /** AdminCaseOut */
+        AdminCaseOut: {
+            /** Exception Id */
+            exception_id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "open" | "awaiting_worker" | "awaiting_supervisor" | "resolved" | "rejected" | "escalated";
+            /** Assigned To */
+            assigned_to: string | null;
+            /** Assigned To Name */
+            assigned_to_name: string | null;
+            /** Needs Your Decision */
+            needs_your_decision: boolean;
+            /**
+             * Can Investigate
+             * @description True while the case is open
+             */
+            can_investigate: boolean;
+            /** Auto Resolved */
+            auto_resolved: boolean;
+            employee: components["schemas"]["CardEmployeeOut"];
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Policy Id */
+            policy_id: string;
+            /** Title */
+            title: string;
+            /** Summary */
+            summary: string;
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "low" | "medium" | "high";
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "breach" | "risk";
+            /** Details */
+            details: {
+                [key: string]: unknown;
+            };
+            policy: components["schemas"]["CardPolicyOut"];
+            /** Evidence */
+            evidence: {
+                [key: string]: unknown;
+            }[];
+            /** Options */
+            options: components["schemas"]["CardOptionOut"][];
+            investigation: components["schemas"]["InvestigationCase"] | null;
+            latest_job: components["schemas"]["AdminJobOut"] | null;
+            /** Worker Messages */
+            worker_messages: components["schemas"]["AdminWorkerMessageOut"][];
+            recheck: components["schemas"]["WorkerRecheckOut"] | null;
+            /** Applied Fix */
+            applied_fix: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Audit Trail
+             * @description Oldest first
+             */
+            audit_trail: components["schemas"]["AdminAuditEntryOut"][];
+            /** Tool Calls */
+            tool_calls: components["schemas"]["AdminToolCallOut"][];
+        };
+        /** AdminCountersOut */
+        AdminCountersOut: {
+            /** Total */
+            total: number;
+            /** Open */
+            open: number;
+            /** Awaiting Worker */
+            awaiting_worker: number;
+            /** Awaiting Supervisor */
+            awaiting_supervisor: number;
+            /** Escalated */
+            escalated: number;
+            /** Resolved */
+            resolved: number;
+            /** Rejected */
+            rejected: number;
+            /**
+             * Auto Resolved
+             * @description Resolved by policy without a human (P2, P7 grace)
+             */
+            auto_resolved: number;
+        };
+        /** AdminEmployeeOptionOut */
+        AdminEmployeeOptionOut: {
+            /** Employee Id */
+            employee_id: string;
+            /** Name */
+            name: string;
+            /** Team */
+            team: string;
+        };
+        /** AdminFilterOptionsOut */
+        AdminFilterOptionsOut: {
+            /** Statuses */
+            statuses: ("open" | "awaiting_worker" | "awaiting_supervisor" | "resolved" | "rejected" | "escalated")[];
+            /** Policy Ids */
+            policy_ids: string[];
+            /** Teams */
+            teams: string[];
+            /** Employees */
+            employees: components["schemas"]["AdminEmployeeOptionOut"][];
+            /** Severities */
+            severities: ("low" | "medium" | "high")[];
+        };
+        /** AdminJobOut */
+        AdminJobOut: {
+            /** Id */
+            id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "running" | "completed" | "failed";
+            /** Reason */
+            reason: string | null;
+        };
+        /** AdminListItemOut */
+        AdminListItemOut: {
+            /** Exception Id */
+            exception_id: string;
+            /** Employee Id */
+            employee_id: string;
+            /** Employee Name */
+            employee_name: string;
+            /** Team */
+            team: string;
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Policy Id */
+            policy_id: string;
+            /** Title */
+            title: string;
+            /** Summary */
+            summary: string;
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "low" | "medium" | "high";
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "breach" | "risk";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "open" | "awaiting_worker" | "awaiting_supervisor" | "resolved" | "rejected" | "escalated";
+            /** Auto Resolved */
+            auto_resolved: boolean;
+            /** Assigned To */
+            assigned_to: string | null;
+            /** Assigned To Name */
+            assigned_to_name: string | null;
+            /**
+             * Investigated
+             * @description A stored investigation case exists
+             */
+            investigated: boolean;
+            /** Who To Ask */
+            who_to_ask: ("worker" | "supervisor" | "hr") | null;
+            /**
+             * Investigation Fallback
+             * @description True when the stored investigation is the engine template
+             */
+            investigation_fallback: boolean | null;
+            /**
+             * Needs Your Decision
+             * @description Escalated and assigned to the caller
+             */
+            needs_your_decision: boolean;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** AdminOverviewOut */
+        AdminOverviewOut: {
+            /** @description Whole database; filters never apply */
+            counters: components["schemas"]["AdminCountersOut"];
+            /**
+             * Matched
+             * @description Exceptions matching the filters (before paging)
+             */
+            matched: number;
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Items */
+            items: components["schemas"]["AdminListItemOut"][];
+            filter_options: components["schemas"]["AdminFilterOptionsOut"];
+        };
+        /** AdminToolCallOut */
+        AdminToolCallOut: {
+            /** Run Id */
+            run_id: string | null;
+            /** Step No */
+            step_no: number;
+            /** Call No */
+            call_no: number | null;
+            /** Tool Name */
+            tool_name: string;
+            /**
+             * Input
+             * @description Tool arguments: IDs, dates and proposed changes
+             */
+            input: {
+                [key: string]: unknown;
+            };
+            /** Ok */
+            ok: boolean | null;
+            /** Error Code */
+            error_code: string | null;
+            /** Duration Ms */
+            duration_ms: number | null;
+        };
+        /** AdminWorkerMessageOut */
+        AdminWorkerMessageOut: {
+            /** Id */
+            id: number;
+            /**
+             * Sent At
+             * Format: date-time
+             */
+            sent_at: string;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "llm" | "template";
+            /** Message */
+            message: string;
+            /** Reply Prompt */
+            reply_prompt: string;
+            /** Confirmed */
+            confirmed: boolean | null;
+            /**
+             * Reply Text
+             * @description The worker's own words, unchanged
+             */
+            reply_text: string | null;
+            /** Replied At */
+            replied_at: string | null;
+            /** Needs Actual Time */
+            needs_actual_time: boolean;
+            /** Time Review */
+            time_review: {
+                [key: string]: unknown;
+            } | null;
+        };
         /** ApproveIn */
         ApproveIn: {
             /**
@@ -2174,6 +2520,109 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SupervisorCaseOut"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    admin_exceptions_api_admin_exceptions_get: {
+        parameters: {
+            query?: {
+                status?: ("open" | "awaiting_worker" | "awaiting_supervisor" | "resolved" | "rejected" | "escalated") | null;
+                policy_id?: string | null;
+                team?: string | null;
+                employee_id?: string | null;
+                severity?: ("low" | "medium" | "high") | null;
+                q?: string | null;
+                sort?: "severity" | "date" | "employee" | "updated";
+                limit?: number;
+                offset?: number;
+            };
+            header: {
+                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
+                "X-Actor-Id": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminOverviewOut"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    admin_exception_api_admin_exceptions__exception_id__get: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
+                "X-Actor-Id": string;
+            };
+            path: {
+                exception_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminCaseOut"];
                 };
             };
             /** @description Forbidden */

@@ -33,4 +33,19 @@ describe('reviewer identity', () => {
     vi.resetModules()
     expect((await import('./actors')).supervisorActor.id).toBe('E102')
   })
+
+  it('acts as Priya on the admin page; ?as= only in a dev build', async () => {
+    window.history.replaceState({}, '', '/admin?as=E101')
+    vi.stubEnv('DEV', false)
+    vi.resetModules()
+    expect((await import('./actors')).adminActor.id).toBe('E201')
+
+    vi.stubEnv('DEV', true)
+    vi.resetModules()
+    expect((await import('./actors')).adminActor.id).toBe('E101')
+
+    window.history.replaceState({}, '', '/admin')
+    vi.resetModules()
+    expect((await import('./actors')).adminActor).toEqual({ id: 'E201', name: 'Priya Sharma' })
+  })
 })

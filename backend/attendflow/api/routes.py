@@ -15,6 +15,9 @@ from attendflow.api.schemas import (
     EMPLOYEE_ID,
     POLICY_ID,
     ActorType,
+    AdminCaseOut,
+    AdminOverviewOut,
+    AdminSort,
     ApproveIn,
     ApproveOut,
     AskWorkerIn,
@@ -30,6 +33,7 @@ from attendflow.api.schemas import (
     InvestigationJobOut,
     RejectIn,
     SeedOut,
+    Severity,
     SupervisorCaseOut,
     SupervisorQueueOut,
     ToolCallListOut,
@@ -39,7 +43,7 @@ from attendflow.api.schemas import (
     WorkerReplyOut,
     WorkerTimeIn,
 )
-from attendflow.cases import service, supervisor
+from attendflow.cases import admin, service, supervisor
 from attendflow.cases.transitions import Status
 from attendflow.clock import Clock
 from attendflow.config import Settings
@@ -483,6 +487,72 @@ def supervisor_case(
         return supervisor.case_card(
             session, policy, sections, exception_id=exception_id, actor_id=actor_id
         )
+
+
+# ---------------------------------------------------------------- payroll admin
+
+
+@router.get(
+    "/admin/exceptions",
+    response_model=AdminOverviewOut,
+    tags=["admin"],
+    summary="Every exception, with counters (payroll admin only)",
+    description="Only the payroll admin may call this; everyone else gets 403 admin_only. "
+    "Counters are counted by the database over every exception and ignore the filters. "
+    "`q` matches the employee name or ID (case-insensitive). Default sort: severity "
+    "(high first), then date, then ID. Read-only; never calls the LLM.",
+    responses=_errors(403, 422),
+)
+def admin_exceptions(
+    actor_id: ActorId,
+    session: SessionDep,
+    status: Status | None = None,
+    policy_id: Annotated[str | None, Query(pattern=POLICY_ID)] = None,
+    team: Annotated[str | None, Query(min_length=1, max_length=40)] = None,
+    employee_id: Annotated[str | None, Query(pattern=EMPLOYEE_ID)] = None,
+    severity: Severity | None = None,
+    q: Annotated[str | None, Query(max_length=60)] = None,
+    sort: AdminSort = "severity",
+    limit: Annotated[int, Query(ge=1, le=admin.MAX_LIMIT)] = admin.DEFAULT_LIMIT,
+    offset: Annotated[int, Query(ge=0)] = 0,
+):
+    with session.begin():
+        return admin.overview(
+            session,
+            actor_id,
+            status=status,
+            policy_id=policy_id,
+            team=team,
+            employee_id=employee_id,
+            severity=severity,
+            q=q,
+            sort=sort,
+            limit=limit,
+            offset=offset,
+        )
+
+
+@router.get(
+    "/admin/exceptions/{exception_id}",
+    response_model=AdminCaseOut,
+    tags=["admin"],
+    summary="One case, read-only: evidence, investigation, worker reply, re-check, audit",
+    description="Payroll admin only. The full audit trail is oldest first. Tool calls are "
+    "listed with their arguments and outcome only (no tool output, prompts or keys). To "
+    "investigate, use POST /api/exceptions/{id}/investigate; to decide an escalated case, "
+    "use the supervisor card and decision endpoints.",
+    responses=_errors(403, 404, 422),
+)
+def admin_exception(
+    exception_id: str,
+    actor_id: ActorId,
+    session: SessionDep,
+    policy: PolicyDep,
+    settings: Annotated[Settings, Depends(get_settings_dep)],
+):
+    sections = load_policy_text(settings.data_dir / "policy.md")
+    with session.begin():
+        return admin.detail(session, policy, sections, exception_id=exception_id, actor_id=actor_id)
 
 
 # ---------------------------------------------------------------- logs

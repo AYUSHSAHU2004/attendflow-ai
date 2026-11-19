@@ -1,5 +1,5 @@
 import type { components, paths } from './api.generated'
-import { supervisorActor, workerActor } from './actors'
+import { adminActor, supervisorActor, workerActor } from './actors'
 
 type Schemas = components['schemas']
 type ReplyInput = paths['/api/exceptions/{exception_id}/worker-reply']['post']['requestBody']['content']['application/json']
@@ -13,6 +13,12 @@ export type SupervisorCase = Schemas['SupervisorCaseOut']
 export type CaseOption = Schemas['CardOptionOut']
 export type ApproveResult = Schemas['ApproveOut']
 export type DecisionResult = Schemas['ExceptionDetailOut']
+
+export type AdminOverview = Schemas['AdminOverviewOut']
+export type AdminItem = Schemas['AdminListItemOut']
+export type AdminCase = Schemas['AdminCaseOut']
+export type AdminCounters = Schemas['AdminCountersOut']
+export type AdminFilters = NonNullable<paths['/api/admin/exceptions']['get']['parameters']['query']>
 
 const base = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '')
 
@@ -81,8 +87,8 @@ export async function submitManualTime(id: string, body: Schemas['WorkerTimeIn']
   })).body
 }
 
-export async function startInvestigation(id: string, signal: AbortSignal) {
-  const result = await request<InvestigationJob>(`${casePath(id)}/investigate`, supervisorActor.id, {
+export async function startInvestigation(id: string, signal: AbortSignal, actor = supervisorActor.id) {
+  const result = await request<InvestigationJob>(`${casePath(id)}/investigate`, actor, {
     method: 'POST', signal,
   })
   const path = result.response.headers.get('Location')
@@ -92,8 +98,8 @@ export async function startInvestigation(id: string, signal: AbortSignal) {
   return path
 }
 
-export async function pollInvestigation(path: string, signal: AbortSignal) {
-  return (await request<InvestigationJob>(path, supervisorActor.id, { signal })).body
+export async function pollInvestigation(path: string, signal: AbortSignal, actor = supervisorActor.id) {
+  return (await request<InvestigationJob>(path, actor, { signal })).body
 }
 
 export async function getInvestigation(id: string, signal: AbortSignal) {
@@ -117,26 +123,43 @@ export async function getQueue(signal?: AbortSignal) {
   )).body.items
 }
 
-export async function getCase(id: string, signal?: AbortSignal) {
+export async function getCase(id: string, signal?: AbortSignal, actor = supervisorActor.id) {
   return (await request<SupervisorCase>(
-    '/api/supervisor/cases/' + encodeURIComponent(id), supervisorActor.id, { signal },
+    '/api/supervisor/cases/' + encodeURIComponent(id), actor, { signal },
   )).body
 }
 
-export async function approveCase(id: string, body: Schemas['ApproveIn']) {
-  return (await request<ApproveResult>(`${casePath(id)}/approve`, supervisorActor.id, {
+export async function approveCase(id: string, body: Schemas['ApproveIn'], actor = supervisorActor.id) {
+  return (await request<ApproveResult>(`${casePath(id)}/approve`, actor, {
     method: 'POST', body: JSON.stringify(body),
   })).body
 }
 
-export async function editCase(id: string, body: Schemas['EditIn']) {
-  return (await request<ApproveResult>(`${casePath(id)}/edit`, supervisorActor.id, {
+export async function editCase(id: string, body: Schemas['EditIn'], actor = supervisorActor.id) {
+  return (await request<ApproveResult>(`${casePath(id)}/edit`, actor, {
     method: 'POST', body: JSON.stringify(body),
   })).body
 }
 
-export async function rejectCase(id: string, body: Schemas['RejectIn']) {
-  return (await request<DecisionResult>(`${casePath(id)}/reject`, supervisorActor.id, {
+export async function rejectCase(id: string, body: Schemas['RejectIn'], actor = supervisorActor.id) {
+  return (await request<DecisionResult>(`${casePath(id)}/reject`, actor, {
     method: 'POST', body: JSON.stringify(body),
   })).body
+}
+
+// ---------------------------------------------------------------- payroll admin
+
+export async function getAdminOverview(filters: AdminFilters, signal?: AbortSignal) {
+  // Built by hand: the Phase 22 check greps the bundle for URLSearchParams (dev-only ?as=).
+  const query = Object.entries(filters)
+    .filter(([, value]) => value !== undefined && value !== null && String(value) !== '')
+    .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`)
+  const suffix = query.length ? `?${query.join('&')}` : ''
+  return (await request<AdminOverview>('/api/admin/exceptions' + suffix, adminActor.id, { signal })).body
+}
+
+export async function getAdminCase(id: string, signal?: AbortSignal) {
+  return (await request<AdminCase>(
+    '/api/admin/exceptions/' + encodeURIComponent(id), adminActor.id, { signal },
+  )).body
 }

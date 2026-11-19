@@ -43,6 +43,8 @@ EXPECTED_PATHS = {
     ("get", "/api/worker/messages"),
     ("get", "/api/supervisor/queue"),
     ("get", "/api/supervisor/cases/{exception_id}"),
+    ("get", "/api/admin/exceptions"),
+    ("get", "/api/admin/exceptions/{exception_id}"),
 }
 
 

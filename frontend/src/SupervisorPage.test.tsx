@@ -183,7 +183,7 @@ describe('case card', () => {
     expect(approveCase).not.toHaveBeenCalled()
     vi.mocked(getCase).mockResolvedValue(makeCase({ status: 'resolved', applied_fix: { label: clockOut.label, approved_by: 'E101' } }))
     await user.click(within(confirm).getByRole('button', { name: 'Approve anyway' }))
-    expect(approveCase).toHaveBeenCalledWith(AMIT_P1, { option_id: clockOut.option_id, reason: undefined })
+    expect(approveCase).toHaveBeenCalledWith(AMIT_P1, { option_id: clockOut.option_id, reason: undefined }, 'E101')
     expect(await screen.findByRole('status')).toHaveTextContent('New exceptions opened: P3-E001-2026-04-14, P5-E001-2026-04-13.')
     expect(getQueue).toHaveBeenCalledTimes(2)
     expect(await screen.findByRole('region', { name: 'Decision' })).toHaveTextContent('by E101')
@@ -209,7 +209,7 @@ describe('case card', () => {
     expect(approve).toBeDisabled()
     await user.type(screen.getByLabelText(/reason \(required/), ' - bus strike')
     await user.click(approve)
-    expect(approveCase).toHaveBeenCalledWith(AMIT_P1, { option_id: 'accept_reason', reason: 'ok - bus strike' })
+    expect(approveCase).toHaveBeenCalledWith(AMIT_P1, { option_id: 'accept_reason', reason: 'ok - bus strike' }, 'E101')
   })
 
   it('edits P13 punch times with validation', async () => {
@@ -247,7 +247,7 @@ describe('case card', () => {
       option_id: 'edit_punches',
       params: { changes: [{ punch_id: 'P0065', timestamp: '2026-04-15T13:00' }] },
       reason: 'Farah left at 13:00',
-    })
+    }, 'E101')
     expect(await screen.findByText(/Some values are not valid: Input should be a valid datetime/)).toBeVisible()
 
     await user.click(within(form).getByRole('button', { name: 'Save and approve' }))
@@ -264,7 +264,7 @@ describe('case card', () => {
     expect(rejectCase).not.toHaveBeenCalled()
     await user.type(screen.getByLabelText(/Why are you rejecting/), ', camera shows 18:05')
     await user.click(screen.getByRole('button', { name: 'Send reject' }))
-    expect(rejectCase).toHaveBeenCalledWith(AMIT_P1, { reason: 'too short, camera shows 18:05' })
+    expect(rejectCase).toHaveBeenCalledWith(AMIT_P1, { reason: 'too short, camera shows 18:05' }, 'E101')
     expect(await screen.findByRole('status')).toHaveTextContent('sent to the payroll admin (E201)')
     expect(screen.queryByRole('heading', { name: /Amit Verma, / })).not.toBeInTheDocument()
   })

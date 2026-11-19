@@ -103,7 +103,8 @@ or a local Ollama model is a `.env` change. Licence notes: [docs/LLM_LICENCE.md]
 
 ## Status
 
-See [docs/PROGRESS.md](docs/PROGRESS.md).
+**Prototype complete (Phase 10).** See [docs/PROGRESS.md](docs/PROGRESS.md), and
+[docs/DEMO_WALKTHROUGH.md](docs/DEMO_WALKTHROUGH.md) for the click-by-click demo.
 
 ## Worker and supervisor demo pages
 
@@ -129,6 +130,12 @@ time field. Both Yes and confirmed clock-outs get the same server-side re-check.
 `LLM_DIAGNOSTICS=on` is for demo data. **Set `LLM_DIAGNOSTICS=off` in a real
 deployment** to suppress rejected extraction previews because worker text is
 personal data. Protect and retain the raw-reply audit according to your policy.
+
+`http://localhost:5173/supervisor` is Ravi's decision queue. `http://localhost:5173/admin`
+is Priya's page: counters, every exception with filters and a name search, a read-only
+case detail with the full audit trail, an **Investigate** button for open cases, and the
+decision card for cases escalated to her. The admin API (`GET /api/admin/exceptions`,
+`GET /api/admin/exceptions/{id}`) answers only E201; everyone else gets 403 `admin_only`.
 
 From `frontend/`, run `npm test`, `npm run typecheck`, and `npm run build`.
 Run `npm run api:generate` after backend API changes to refresh the generated

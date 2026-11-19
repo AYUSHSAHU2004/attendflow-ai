@@ -62,7 +62,8 @@ and CI, 10-minute demo video, 5 slides.
 ## Phase plan
 
 Done: 0 Setup + data + policy + LLM test; 1 Rule engine P1-P7, P15; 2 Rules P8-P14, P16, P17;
-3 Backend + DB + API; 4 Read-only tools + fix options for P3/P4/P6/P7; 5 LLM client + agent loop; 6 structured investigations and jobs; 7 worker messages and inbox; 8 worker clock-out extraction and re-check; 9 supervisor approval screen.
+3 Backend + DB + API; 4 Read-only tools + fix options for P3/P4/P6/P7; 5 LLM client + agent loop; 6 structured investigations and jobs; 7 worker messages and inbox; 8 worker clock-out extraction and re-check; 9 supervisor approval screen; 10 Priya's list +
+end-to-end tests (**prototype complete**).
 
 **Prototype (3-10)**
 3. Backend + DB + API
@@ -90,7 +91,7 @@ Done: 0 Setup + data + policy + LLM test; 1 Rule engine P1-P7, P15; 2 Rules P8-P
 23. Tests + evaluation
 24. Delivery
 
-**Next: Phase 10.**
+**Next: Phase 11.**
 
 **Carry-over notes**
 - Phase 5 Groq bug: `run_checks` advertised Pydantic's RFC 3339 `date-time` format for
@@ -112,6 +113,8 @@ Done: 0 Setup + data + policy + LLM test; 1 Rule engine P1-P7, P15; 2 Rules P8-P
     (`import.meta.env.DEV`); a test checks this. Confirm it is absent from the deployed
     bundle (`grep URLSearchParams frontend/dist/assets/*.js` finds nothing).
   - `X-Actor-Id` is not authentication. Add real login before going public.
+  - `GET /api/exceptions`, `/api/audit-log` and `/api/tool-calls` have no role check (used
+    by `/dev`). Restrict them to the payroll admin or remove them with `/dev`.
 
 ## Decisions so far (do not re-ask)
 
@@ -390,6 +393,37 @@ Done: 0 Setup + data + policy + LLM test; 1 Rule engine P1-P7, P15; 2 Rules P8-P
   `frontend/src/actors.ts`; in dev builds `?as=E102` or `?as=E201` switches it.
 - `.claude/launch.json` starts `api` and `web` for the Claude desktop preview.
 
+**Payroll admin view (Phase 10)**
+- Endpoints (payroll admin only; anyone else gets 403 `admin_only`, unknown IDs
+  `unknown_actor`):
+  - `GET /api/admin/exceptions`: every exception plus `counters` (total, open,
+    awaiting_worker, awaiting_supervisor, escalated, resolved, rejected, auto_resolved;
+    counted by the database, filters never apply), `matched`, and `filter_options`.
+    Filters: `status`, `policy_id`, `team`, `employee_id`, `severity`, `q` (name or ID).
+    `sort` = severity (default: severity, date, ID) | date | employee | updated.
+    `limit` 200 (max 500) + `offset`. Items carry `investigated`, `who_to_ask`,
+    `investigation_fallback` and `needs_your_decision` (escalated and assigned to caller).
+  - `GET /api/admin/exceptions/{id}`: read-only detail. Evidence is not redacted (payroll
+    sees all). Options reuse `card_options` (Phase 9 consequence note). It includes the
+    investigation, `latest_job`, every worker message, the re-check, and the audit trail
+    oldest first with a code-built `summary` and before/after status text. Tool calls show
+    arguments and outcome only (never output, prompts or keys; a test checks this).
+- Code: `cases/admin.py` (no LLM, no writes). Investigating reuses
+  `POST /api/exceptions/{id}/investigate`, which already allowed the payroll admin. Priya
+  does not ask workers.
+- Frontend `/admin` (`AdminPage.tsx`): counters, filters, debounced search, table, detail
+  panel, Investigate with polling. For a case escalated to Priya it embeds the exported
+  `CaseCard` with `actor=E201`. `adminActor` lives in `actors.ts` (`?as=` dev-only). The
+  admin query string is built without `URLSearchParams`, so the Phase 22 bundle grep stays
+  meaningful.
+- End-to-end tests: `tests/test_e2e_prototype.py` (main story with scripted models,
+  reject path, LLM down/invalid at every step, and a SQL write hook proving only
+  `fixes/apply.py` and the seed write source data and every fix write is audited).
+- Investigation audit rows per job: `structured_investigation_started`, then
+  `structured_model_failed` / `structured_draft_rejected` (on failure), then
+  `structured_investigation_finished`, then `investigation_case_stored`.
+- Demo script with live numbers: [docs/DEMO_WALKTHROUGH.md](docs/DEMO_WALKTHROUGH.md).
+
 ## Repo map
 
 ```
@@ -421,6 +455,7 @@ backend/attendflow/
   cases/service.py       run_detection (upsert), approve/edit, reject, ask_worker, worker_reply,
                          detect_after_fix
   cases/supervisor.py    supervisor queue, case card, consequence note, reviewer permission
+  cases/admin.py         payroll admin overview, counters, read-only case detail, audit summaries
   tools/models.py        tool inputs/outputs (Pydantic), ok/error envelope, ProposedChange
   tools/read_tools.py    get_schedule, get_leave, get_leave_balance, get_punches, get_policy
   tools/run_checks.py    run_checks: simulate a change, re-run the engine, diff the week
@@ -432,9 +467,9 @@ backend/attendflow/
   api/routes.py          /api endpoints;  api/schemas.py request/response models
   scripts/               generate_data, validate_data, llm_smoke_test, detect, tools_cli (CLIs)
 data/                    6 CSVs + policy.json (limits) + policy.md (plain-language, cited by agent)
-docs/                    PROGRESS.md, PLANTED_CASES.md, LLM_LICENCE.md
+docs/                    PROGRESS.md, PLANTED_CASES.md, LLM_LICENCE.md, DEMO_WALKTHROUGH.md
 tests/                   pytest suite
-frontend/                Vite React: worker inbox (/), supervisor page (/supervisor), dev page (/dev)
+frontend/                Vite React: worker inbox (/), supervisor (/supervisor), admin (/admin), dev (/dev)
 docker-compose.yml       PostgreSQL 16 (host port 5433); docker/initdb creates the test DB
 .github/workflows/ci.yml lint + validate + tests (with a Postgres service) on Python 3.12
 ```

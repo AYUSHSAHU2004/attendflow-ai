@@ -1,15 +1,17 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { supervisorActor, workerActor } from './actors'
+import { AdminPage } from './AdminPage'
+import { adminActor, supervisorActor, workerActor } from './actors'
 import { DevPage } from './DevPage'
 import { SupervisorPage } from './SupervisorPage'
 import { WorkerInbox } from './WorkerInbox'
 import './styles.css'
 
 const path = window.location.pathname
-const page = path === '/dev' ? 'dev' : path === '/supervisor' ? 'supervisor' : 'worker'
-const actor = page === 'worker' ? workerActor : supervisorActor
+const page = path === '/dev' ? 'dev' : path === '/supervisor' ? 'supervisor' : path === '/admin' ? 'admin' : 'worker'
+const actor = page === 'worker' ? workerActor : page === 'admin' ? adminActor : supervisorActor
 document.title = {
+  admin: 'AttendFlow | All exceptions',
   dev: 'AttendFlow | Dev tools',
   supervisor: 'AttendFlow | Decisions',
   worker: 'AttendFlow | Attendance inbox',
@@ -24,6 +26,9 @@ createRoot(document.getElementById('root')!).render(
       </a>
       <span className="identity">{actor.name}</span>
     </header>
-    {page === 'dev' ? <DevPage /> : page === 'supervisor' ? <SupervisorPage /> : <WorkerInbox />}
+    {page === 'dev' ? <DevPage />
+      : page === 'supervisor' ? <SupervisorPage />
+        : page === 'admin' ? <AdminPage />
+          : <WorkerInbox />}
   </StrictMode>,
 )

@@ -614,3 +614,79 @@ Seed, detect, investigate Amit's P1 and ask him on `/dev`. Answer No on `/` and 
 (Sunita sees none of Ravi's cases).
 
 **Next: Phase 10** gives Priya her plain list and adds the prototype integration test.
+
+## Phase 10: Priya's list, read-only detail, end-to-end tests (2026-11-19). Prototype complete
+
+**Built**
+- `GET /api/admin/exceptions` (payroll admin only, others 403 `admin_only`): every
+  exception with employee name and team, policy, severity, status, kind, auto-resolved,
+  assignee, summary, whether an investigation exists and its `who_to_ask`, and
+  `needs_your_decision` (escalated to the caller). Filters: status, policy, team, employee,
+  severity, `q` (name or ID, wildcards treated as text). Sort: severity, then date (default),
+  or date, employee, updated. `limit` (default 200, max 500) + `offset`, `matched` total.
+  The same response carries the counters (total, the six statuses, auto_resolved), counted
+  by the database over all rows, and the filter choices.
+- `GET /api/admin/exceptions/{id}`: read-only. Issue, cited policy, full evidence (not
+  redacted for payroll), fix options with the Phase 9 consequence note, the stored
+  investigation, the latest job, every worker message and reply, the stored re-check, the
+  applied fix, the full audit trail oldest first (actor name, a code-built summary,
+  reason, status/assignee before and after), and tool calls (arguments and outcome only:
+  no tool output, prompts or keys). No LLM calls.
+- `/admin` page: counter cards (click to filter), filters and a debounced name search,
+  table with status and severity badges and a "Needs your decision" marker, loading/empty/
+  error states, and a detail panel with an **Investigate** button (reuses the investigate
+  job and polling). Escalated cases assigned to Priya embed the Phase 9 decision card
+  (`CaseCard`, now exported and taking an `actor`).
+- `adminActor` in `actors.ts` (E201; `?as=` in dev builds only). The shared API calls
+  take an optional actor.
+- `docs/DEMO_WALKTHROUGH.md`: the click-by-click prototype demo with numbers from a live
+  run.
+
+**Decisions** (all defaults accepted)
+- Counters ride in the overview response and ignore filters. Search is server-side.
+- Priya only investigates from her page. Ask-worker stays with the assigned supervisor.
+- Acting on an escalated case reuses the supervisor card inside `/admin`. A link to
+  `/supervisor` would have needed the dev-only `?as=E201`.
+- The older open endpoints (`GET /api/exceptions`, `/api/audit-log`, `/api/tool-calls`)
+  stay unscoped for `/dev`. They go on the Phase 22 list.
+- No Playwright. The walkthrough doc plus the live check cover the browser path.
+
+**Checks**
+- 527 backend tests passed (2 opt-in real-LLM tests skipped; 27 new).
+- New backend tests: `test_admin.py` (21: permissions, counters equal raw SQL counts,
+  every filter, sort and paging, auto-resolved marks, escalation marker, detail audit
+  order and re-check, no key/prompt/tool output, investigate reuses the running job and
+  returns 202) and `test_e2e_prototype.py` (6). The e2e tests use the HTTP API only:
+  1. Amit's main story with scripted models at all three LLM steps. It asserts the exact
+     audit sequence, the correction punch, the new P3/P5, and Priya's counters before and
+     after.
+  2. The reject path, ending in Priya's final reject.
+  3. The LLM down / invalid at every step (2 runs). The template investigation, template
+     message and manual time are used, and the audit names each failure.
+  4. A data-safety test: a SQL hook records every write to timecards, schedule and leave
+     with the code that caused it. Only `fixes/apply.py` and the seed write, and every fix
+     write matches an approve/auto_resolve audit row that lists the change.
+  5. A test that this hook flags a rogue write.
+- Frontend: 33 tests (10 new: admin page counters, filters, search, empty/error/loading,
+  detail, investigate polling, escalated card as E201; admin actor). Four supervisor
+  tests now also assert the acting reviewer.
+- Ruff, type-check, production build and OpenAPI drift check pass. The production bundle
+  contains no `URLSearchParams` (the admin query string is built by hand to keep that
+  Phase 22 check meaningful).
+- Live check (dev DB reseeded, no LLM key): 17 found, 16 open, 1 auto-resolved. Amit's P1
+  went through investigate, ask, No + "7:30ish", manual 19:30 (9.5 h day, 41.5 h week),
+  and Ravi's approval, which opened P5-E001-2026-04-13 and P3-E001-2026-04-14 (19 all,
+  17 open, 2 resolved). Priya investigated Meena's P5 from `/admin`, Ravi rejected it
+  (then got 403), and Priya's reject made it final (16 open, 1 rejected, 0 escalated).
+  Two display fixes came from this check: model-failure audit rows now quote the stored
+  cause, and the page no longer labels a non-admin as "payroll admin".
+
+**Phase 22 checklist (added)**
+- Restrict `GET /api/exceptions`, `/api/audit-log` and `/api/tool-calls` to the payroll
+  admin (or remove them with `/dev`).
+
+**Verify:** start the DB, API and Vite, reseed and detect, then follow
+`docs/DEMO_WALKTHROUGH.md`. `python -m uv run pytest tests/test_e2e_prototype.py -v` runs
+the three end-to-end stories without a key.
+
+**Next: Phase 11** (mock punch API + scheduler) starts the full product.
