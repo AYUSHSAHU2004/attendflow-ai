@@ -12,20 +12,20 @@ Jump to: [Overview](#1-project-overview) · [Flow and diagrams](#2-project-flow-
 
 | What | Link |
 |---|---|
-| Demo video (max 10 minutes) | TBD: https://drive.google.com/file/d/17fjs_meoj21YX5_79ZmOxbu1q62uL71D/view?usp=drive_link |
-| Slides | TBD: https://docs.google.com/presentation/d/1Gr98qtUfpfETGP0iD6v2JVpKVr2OCoEv/edit?usp=drive_link&ouid=114416998967196537894&rtpof=true&sd=true |
+| Demo video | https://drive.google.com/file/d/17fjs_meoj21YX5_79ZmOxbu1q62uL71D/view?usp=drive_link |
+| Slides | https://docs.google.com/presentation/d/1Gr98qtUfpfETGP0iD6v2JVpKVr2OCoEv/edit?usp=drive_link&ouid=114416998967196537894&rtpof=true&sd=true |
 | Source code | https://github.com/AYUSHSAHU2004/attendflow-ai |
 
 ## Team
 
 | Member | Resume |
 |---|---|
-| Amarnath | TBD: https://drive.google.com/file/d/1UnyzzKv6jpk0sAWmTUNk93wO7YaUmbuC/view?usp=sharing |
-| Anurag | TBD: https://drive.google.com/file/d/16vB0Z9RhSRgNCL-spDMYH3f_6d8mjVqj/view?usp=sharing |
-| Ayush | TBD:  https://drive.google.com/file/d/1WraFvf-BwIz4MDNL-wn6UMYiV-IOoYv8/view?usp=drivesdk |
-| Maharshi | TBD:https://drive.google.com/file/d/1OIe6bFt7qmkIK-JWEWphJn5Eekw2KsL9/view?usp=drivesdk |
-| Saurav | TBD:  https://drive.google.com/file/d/1-iRw9F-VFXcj8D54RYSJXj_Ws2pjPcTk/view?usp=drivesdk|
-| Arnav | TBD: https://drive.google.com/file/d/1Uli4YYR_CCluq0EEJk2BT3IuYC6Ess2y/view?usp=sharing |
+| Amarnath | https://drive.google.com/file/d/1UnyzzKv6jpk0sAWmTUNk93wO7YaUmbuC/view?usp=sharing |
+| Anurag | https://drive.google.com/file/d/16vB0Z9RhSRgNCL-spDMYH3f_6d8mjVqj/view?usp=sharing |
+| Ayush | https://drive.google.com/file/d/1WraFvf-BwIz4MDNL-wn6UMYiV-IOoYv8/view?usp=drivesdk |
+| Maharshi | https://drive.google.com/file/d/1OIe6bFt7qmkIK-JWEWphJn5Eekw2KsL9/view?usp=drivesdk |
+| Saurav | https://drive.google.com/file/d/1-iRw9F-VFXcj8D54RYSJXj_Ws2pjPcTk/view?usp=drivesdk|
+| Arnav | https://drive.google.com/file/d/1Uli4YYR_CCluq0EEJk2BT3IuYC6Ess2y/view?usp=sharing |
 
 ## Run it locally
 
