@@ -14,7 +14,6 @@ Jump to: [Overview](#1-project-overview) · [Flow and diagrams](#2-project-flow-
 |---|---|
 | Demo video | https://drive.google.com/file/d/17fjs_meoj21YX5_79ZmOxbu1q62uL71D/view?usp=drive_link |
 | Slides | https://docs.google.com/presentation/d/1Gr98qtUfpfETGP0iD6v2JVpKVr2OCoEv/edit?usp=drive_link&ouid=114416998967196537894&rtpof=true&sd=true |
-| Source code | https://github.com/AYUSHSAHU2004/attendflow-ai |
 
 ## Team
 
