@@ -22,9 +22,10 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from attendflow import __version__, demo_clock
 from attendflow.agent.jobs import InvestigationJobs
+from attendflow.api import auth
 from attendflow.api.deployment import install_health, install_private_demo, log_secrets
 from attendflow.api.logging_setup import configure_logging, request_id_var
-from attendflow.api.routes import demo_reset_router, demo_router, router
+from attendflow.api.routes import demo_reset_router, demo_router, device_router, router
 from attendflow.clock import Clock, DemoClock
 from attendflow.config import REPO_ROOT, Settings, get_settings
 from attendflow.db.session import make_engine, make_session_factory
@@ -45,6 +46,7 @@ _HTTP_CODES = {
     409: "conflict",
     415: "unsupported_media_type",
     422: "validation_error",
+    429: "rate_limited",
 }
 
 
@@ -141,10 +143,12 @@ def create_app(
         description=(
             "Finds timecard exceptions with a deterministic rule engine and routes each one "
             "to a human for a decision. Fixes are applied by code only after approval, in "
-            "one transaction with the audit row. Acting endpoints need an `X-Actor-Id` header "
-            "(no login yet): E101 Ravi, E102 Sunita (supervisors), E201 Priya (payroll admin), "
-            "E001 Amit (worker)."
+            "one transaction with the audit row. Actor identity comes from an employee session "
+            "or the development-only `X-Actor-Id` header, depending on server configuration."
         ),
+        docs_url=None if settings.auth_mode == "session" else "/docs",
+        redoc_url=None if settings.auth_mode == "session" else "/redoc",
+        openapi_url=None if settings.auth_mode == "session" else "/openapi.json",
         openapi_tags=[
             {"name": "system", "description": "Health and demo reset"},
             {"name": "detection", "description": "Run the rule engine"},
@@ -165,6 +169,9 @@ def create_app(
         allow_headers=["X-Actor-Id", "Content-Type"],
         expose_headers=["Location"],
     )
+    if settings.auth_mode == "session":
+        app.state.login_throttle = auth.LoginThrottle(settings.session_secret)
+        auth.dummy_password_hash()
     app.state.settings = settings  # the server's values (env/.env), never overridden
     app.state.settings_reader = reader
     app.state.engine = engine
@@ -183,6 +190,11 @@ def create_app(
         status = 500
         try:
             response = await call_next(request)
+            path = request.url.path
+            if path.startswith("/api/auth/") or (
+                settings.auth_mode == "session" and path.startswith("/api/")
+            ):
+                response.headers["Cache-Control"] = "no-store"
             status = response.status_code
             response.headers["X-Request-ID"] = rid
             return response
@@ -195,14 +207,20 @@ def create_app(
                     "path": request.url.path,
                     "status": status,
                     "duration_ms": round((time.perf_counter() - start) * 1000, 1),
-                    "actor_id": request.headers.get("X-Actor-Id"),
+                    "actor_id": request.state.employee.id
+                    if hasattr(request.state, "employee")
+                    else request.headers.get("X-Actor-Id")
+                    if settings.auth_mode == "header"
+                    else None,
                 },
             )
             request_id_var.reset(token)
 
     _install_error_handlers(app)
     install_health(app)
+    app.include_router(auth.router)
     app.include_router(router)
+    app.include_router(device_router)
     if settings.demo_mode:
         if settings.demo_reset_enabled:
             app.include_router(demo_reset_router)
@@ -241,4 +259,5 @@ def main() -> None:
         port=args.port,
         reload=args.reload,
         log_config=None,
+        proxy_headers=False,
     )

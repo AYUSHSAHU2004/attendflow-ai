@@ -345,7 +345,7 @@ function activityError(error: unknown): string {
 
 export function ActivityPage() {
   const [tab, setTab] = useState<'feed' | 'autonomy'>('feed')
-  const admin = activityActor.id === 'E201'
+  const admin = activityActor.role ? activityActor.role === 'payroll_admin' : activityActor.id === 'E201'
   return (
     <main className="page wide activity" id="main">
       <h1>Activity</h1>

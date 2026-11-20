@@ -24,6 +24,9 @@ from tests.api_helpers import (
 )
 
 EXPECTED_PATHS = {
+    ("post", "/api/auth/login"),
+    ("post", "/api/auth/logout"),
+    ("get", "/api/auth/me"),
     ("get", "/api/health"),
     ("post", "/api/seed"),
     ("post", "/api/detection/run"),

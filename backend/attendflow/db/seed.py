@@ -7,14 +7,16 @@ server (ATTENDFLOW_ENABLE_SEED=false, Phase 22).
 
 from __future__ import annotations
 
+import re
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from attendflow.data.loader import Dataset, load_dataset
 from attendflow.data.schemas import Punch, ScheduleRow
+from attendflow.db.credentials import hash_password
 from attendflow.db.models import (
     Base,
     EmployeeRow,
@@ -63,7 +65,52 @@ def add_demo_week(ds: Dataset) -> None:
                 next_id += 1
 
 
-def seed_from_csv(session: Session, data_dir: Path, *, extra_week: bool = False) -> dict[str, int]:
+def _demo_email(name: str, employee_id: str, used: set[str]) -> str:
+    first = re.sub(r"[^a-z0-9]", "", name.split()[0].lower()) or employee_id.lower()
+    email = f"{first}@demo.attendflow.test"
+    if email in used:
+        email = f"{first}-{employee_id.lower()}@demo.attendflow.test"
+    used.add(email)
+    return email
+
+
+def seed_demo_once(
+    session: Session, data_dir: Path, *, extra_week: bool, demo_password: str
+) -> dict[str, int]:
+    """Bootstrap an empty demo, or provision missing credentials on matching synthetic data."""
+    session.execute(text("LOCK TABLE employees IN ACCESS EXCLUSIVE MODE"))
+    existing = {row.employee_id: row for row in session.scalars(select(EmployeeRow))}
+    if not existing:
+        return seed_from_csv(session, data_dir, extra_week=extra_week, demo_password=demo_password)
+    dataset = load_dataset(data_dir)
+    if set(existing) != {row.employee_id for row in dataset.employees} or any(
+        any(
+            getattr(existing[row.employee_id], key) != value
+            for key, value in row.model_dump().items()
+        )
+        for row in dataset.employees
+    ):
+        raise ValueError("Existing employees do not match the synthetic demo dataset")
+    used: set[str] = set()
+    provisioned = 0
+    for employee in sorted(dataset.employees, key=lambda row: row.employee_id):
+        row = existing[employee.employee_id]
+        email = _demo_email(row.name, row.employee_id, used)
+        if row.email is None:
+            row.email = email
+        if row.password_hash is None:
+            row.password_hash = hash_password(demo_password)
+            provisioned += 1
+    return {"employees": len(existing), "credentials_provisioned": provisioned}
+
+
+def seed_from_csv(
+    session: Session,
+    data_dir: Path,
+    *,
+    extra_week: bool = False,
+    demo_password: str | None = None,
+) -> dict[str, int]:
     """Validate the CSVs (all errors at once), then replace all data. Caller commits."""
     ds = load_dataset(data_dir)  # raises DataValidationError before anything is wiped
     if extra_week:
@@ -72,8 +119,13 @@ def seed_from_csv(session: Session, data_dir: Path, *, extra_week: bool = False)
 
     # Supervisors first, so the supervisor_id foreign key is always satisfied.
     employees = sorted(ds.employees, key=lambda e: (e.supervisor_id is not None, e.employee_id))
+    used: set[str] = set()
     for e in employees:
-        session.add(EmployeeRow(**e.model_dump()))
+        row = EmployeeRow(**e.model_dump())
+        if demo_password:
+            row.email = _demo_email(row.name, row.employee_id, used)
+            row.password_hash = hash_password(demo_password)
+        session.add(row)
         session.flush()
     session.add_all(PunchRow(**p.model_dump()) for p in ds.punches)
     session.add_all(ScheduleEntryRow(**s.model_dump()) for s in ds.schedule)

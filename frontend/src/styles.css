@@ -471,3 +471,8 @@ select { font: inherit; padding: 0.55rem 0.6rem; border: 1px solid #aebfb3; bord
 .badge.source-override { background: #fff1c7; color: #5c4400; }
 .badge.source-env { background: #e3eef8; color: #1e3d5c; }
 .badge.source-default { background: #edf2ef; color: #33433a; }
+
+.login-page { max-width: 32rem; margin-inline: auto; }
+.login-form { display: grid; gap: .75rem; }
+.login-form input { min-height: 2.75rem; width: 100%; }
+.session-badge { display: flex; align-items: center; gap: .65rem; flex-wrap: wrap; }

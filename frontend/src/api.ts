@@ -1,5 +1,5 @@
 import type { components, paths } from './api.generated'
-import { activityActor, adminActor, supervisorActor, workerActor } from './actors'
+import { activityActor, adminActor, sessionAuth, supervisorActor, workerActor } from './actors'
 
 type Schemas = components['schemas']
 type ReplyInput = paths['/api/exceptions/{exception_id}/worker-reply']['post']['requestBody']['content']['application/json']
@@ -62,10 +62,15 @@ async function request<T>(
   options: RequestInit = {},
 ): Promise<{ body: T; response: Response }> {
   const headers = new Headers(options.headers)
-  headers.set('X-Actor-Id', actor)
+  if (actor && !sessionAuth) headers.set('X-Actor-Id', actor)
   if (options.body) headers.set('Content-Type', 'application/json')
-  const response = await fetch(base + path, { ...options, headers })
+  const response = await fetch(base + path, { credentials: 'same-origin', ...options, headers })
   if (!response.ok) {
+    if (sessionAuth && response.status === 401 &&
+        path !== '/api/auth/login' && path !== '/api/auth/me' &&
+        window.location.pathname !== '/login') {
+      window.location.replace('/login')
+    }
     const problem = await response.json().catch(() => null) as Schemas['ErrorResponse'] | null
     throw new ApiError(
       response.status,
@@ -75,6 +80,20 @@ async function request<T>(
     )
   }
   return { body: await response.json() as T, response }
+}
+
+export async function getAuthState() {
+  return (await request<Schemas['AuthState']>('/api/auth/me', '')).body
+}
+
+export async function login(email: string, password: string) {
+  return (await request<Schemas['AuthState']>('/api/auth/login', '', {
+    method: 'POST', body: JSON.stringify({ email, password }),
+  })).body
+}
+
+export async function logout() {
+  await request<Schemas['LogoutOut']>('/api/auth/logout', '', { method: 'POST' })
 }
 
 function casePath(id: string): string {

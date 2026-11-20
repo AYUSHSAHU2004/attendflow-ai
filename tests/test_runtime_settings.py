@@ -411,6 +411,7 @@ def deployed_settings(base: Settings, *, guided: bool) -> Settings:
     return replace(
         base,
         deployed=True,
+        session_secret="profile-fixture-" + "x" * 32,
         demo_mode=guided,
         demo_reset_enabled=False,
         enable_seed=False,

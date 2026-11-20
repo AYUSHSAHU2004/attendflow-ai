@@ -114,11 +114,20 @@ class Settings:
     qa_max_llm_calls_per_day: int = 60  # all workers, real UTC day
     qa_llm_deadline_seconds: float = 15
     deployed: bool = False
+    auth_mode: str = "header"
+    session_secret: str | None = field(default=None, repr=False)
+    cookie_secure: bool = False
+    trusted_proxy: bool = False
     demo_password: str | None = field(default=None, repr=False)
     demo_reset_enabled: bool = True
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "database_url", normalize_database_url(self.database_url))
+        if self.auth_mode not in {"header", "session"}:
+            raise ValueError("ATTENDFLOW_AUTH_MODE must be header or session")
+        if self.deployed or self.auth_mode == "session":
+            if not self.session_secret or len(self.session_secret.encode()) < 32:
+                raise ValueError("ATTENDFLOW_SESSION_SECRET must contain at least 32 bytes")
         if self.deployed:
             self._validate_deployment()
         margin = self.overtime_warning_margin_hours
@@ -263,6 +272,10 @@ def get_settings(env_file: Path | None = REPO_ROOT / ".env") -> Settings:
         qa_max_llm_calls_per_day=int(os.getenv("QA_MAX_LLM_CALLS_PER_DAY") or 60),
         qa_llm_deadline_seconds=float(os.getenv("QA_LLM_DEADLINE_SECONDS") or 15),
         deployed=deployed,
+        auth_mode=os.getenv("ATTENDFLOW_AUTH_MODE", "header"),
+        session_secret=os.getenv("ATTENDFLOW_SESSION_SECRET") or None,
+        cookie_secure=_env_bool("ATTENDFLOW_COOKIE_SECURE", default=deployed),
+        trusted_proxy=_env_bool("ATTENDFLOW_TRUSTED_PROXY", default=False),
         demo_password=os.getenv("ATTENDFLOW_DEMO_PASSWORD") or None,
         demo_reset_enabled=_env_bool("ATTENDFLOW_DEMO_RESET_ENABLED", default=not deployed),
     )

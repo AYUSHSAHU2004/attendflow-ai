@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { payrollActor } from './actors'
+import { payrollActor, headerDemoLinks } from './actors'
 import { ApiError, getPayroll, reopenPayroll, signPayroll } from './api'
 import type { PayrollReadiness, ReadinessReason } from './api'
 
@@ -22,7 +22,7 @@ function ReasonList({ reasons, team, names }: {
   if (!reasons.length) return <span>None</span>
   const caseHref = (id: string) => {
     const path = team ? '/supervisor' : '/admin'
-    const actor = team && import.meta.env.DEV ? '&as=' + payrollActor.id : ''
+    const actor = team && headerDemoLinks() ? '&as=' + payrollActor.id : ''
     return path + '?case=' + encodeURIComponent(id) + actor
   }
   return <ul className="payroll-reasons">

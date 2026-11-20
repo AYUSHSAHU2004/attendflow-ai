@@ -1483,3 +1483,38 @@ pytest tests/test_qa_api.py tests/test_qa_golden.py` and section 14 of
 [DEMO_WALKTHROUGH.md](DEMO_WALKTHROUGH.md). **CI: pending** (not committed yet).
 
 **Next:** Phase 22 (deployment).
+
+## Phase A — Employee login and sessions (2026-11-20)
+
+**Built**
+
+- Email and password login with case-insensitive unique emails, Argon2 hashes, and roles
+  read from the employee record. Session mode uses signed, revocable eight-hour cookies
+  and ignores `X-Actor-Id`. Header mode remains the local and test default.
+- The frontend redirects workers, supervisors, and payroll admins to their role's home
+  page. The API enforces role and team boundaries, including worker Q&A. Logout revokes
+  the current session, and a password reset revokes all sessions for that employee.
+- Login throttles failed attempts by email and IP. Browser writes check the Origin host.
+  The Secure cookie flag and trust in Traefik's forwarded IP are set by configuration.
+  Login outcomes appear in the application log. The attendance activity trail excludes
+  authentication events.
+- Guided demo login offers email shortcuts. Demo reset recreates credentials from
+  `ATTENDFLOW_DEMO_PASSWORD`. Repeating the seed preserves existing credentials and cases.
+
+**Operator commands**
+
+```sh
+python -m uv run python -m attendflow.scripts.auth_cli seed-demo
+python -m uv run python -m attendflow.scripts.auth_cli set-password E001 --email amit@demo.attendflow.test
+python -m uv run python -m attendflow.scripts.auth_cli unlock --email amit@demo.attendflow.test
+python -m uv run python -m attendflow.scripts.auth_cli unlock --ip 192.0.2.10
+kubectl exec deploy/attendflow -- python -m attendflow.scripts.auth_cli seed-demo
+```
+
+**Local verification** — 1,080 backend tests passed against PostgreSQL, with 2 opt-in live
+model tests skipped. All 129 frontend tests passed. Type checking, the production build,
+OpenAPI drift, and the model-free deployment smoke test passed.
+
+**CI:** pending
+
+See [DEPLOY.md](DEPLOY.md) for local session setup and Kubernetes configuration.

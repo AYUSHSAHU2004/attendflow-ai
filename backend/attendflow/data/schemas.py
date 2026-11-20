@@ -90,6 +90,7 @@ YesNo = Annotated[
 ]
 EmployeeId = Annotated[str, Field(pattern=r"^E\d{3}$")]
 LeaveType = Literal["sick", "casual", "earned"]
+EmployeeRole = Literal["worker", "supervisor", "payroll_admin"]
 
 
 class CsvRow(BaseModel):
@@ -99,7 +100,7 @@ class CsvRow(BaseModel):
 class Employee(CsvRow):
     employee_id: EmployeeId
     name: str = Field(min_length=1)
-    role: Literal["worker", "supervisor", "payroll_admin"]
+    role: EmployeeRole
     team: str = Field(min_length=1)
     supervisor_id: Annotated[EmployeeId | None, BeforeValidator(_empty_to_none)] = None
 

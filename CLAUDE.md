@@ -114,6 +114,32 @@ and a live payroll page check. The payroll test's scheduler response lookup and 
 read-only dataset guard failure are fixed. Phase 16.5 prepares a private synthetic demo
 deploy. See [docs/PROGRESS.md](docs/PROGRESS.md) for verification status.
 
+**Phase A — Employee login and sessions**
+
+- Session mode resolves the employee and role from PostgreSQL, using a signed,
+  revocable eight-hour cookie. The API ignores `X-Actor-Id` in session mode and enforces
+  role, team, and worker scope. Local development and tests default to header mode.
+- Employees sign in with case-insensitive email and an Argon2-backed password. Login
+  enforces email and IP lockouts and browser writes check the Origin host. Authentication
+  outcomes go to the application log. The attendance activity trail excludes them.
+- Guided demo login offers email shortcuts. Demo reset restores synthetic credentials
+  from `ATTENDFLOW_DEMO_PASSWORD`. Repeating the seed preserves passwords and cases.
+- Local checks passed for 1,080 backend tests and 129 frontend tests, with 2 opt-in live
+  model tests skipped. OpenAPI drift, type checking, production build, and the model-free
+  deployment smoke test passed.
+
+**CI:** pending
+
+```sh
+python -m uv run python -m attendflow.scripts.auth_cli seed-demo
+python -m uv run python -m attendflow.scripts.auth_cli set-password E001 --email amit@demo.attendflow.test
+python -m uv run python -m attendflow.scripts.auth_cli unlock --email amit@demo.attendflow.test
+python -m uv run python -m attendflow.scripts.auth_cli unlock --ip 192.0.2.10
+kubectl exec deploy/attendflow -- python -m attendflow.scripts.auth_cli seed-demo
+```
+
+Setup and Traefik configuration are in [docs/DEPLOY.md](docs/DEPLOY.md).
+
 **Carry-over notes**
 - Phase 5 Groq bug: `run_checks` advertised Pydantic's RFC 3339 `date-time` format for
   timezone-free local timestamps. Groq rejected minute-precision values with HTTP 400.
@@ -125,6 +151,9 @@ deploy. See [docs/PROGRESS.md](docs/PROGRESS.md) for verification status.
 - Any phase that adds an audit action: add its row to `activity/autonomy.py` first (tests
   fail otherwise), then `python -m uv run attendflow-autonomy --write-readme`.
 - **Phase 22 checklist (deployment):**
+  - Phase A resolves the historical actor-binding items below for session mode. Employee
+    login supersedes the proposed persona switcher. Use the [deployment guide](docs/DEPLOY.md)
+    for current session and seed settings.
   - `POST /api/seed` wipes every table. Disable it (`ATTENDFLOW_ENABLE_SEED=false`) or
     protect it.
   - Review or remove the `/dev` page and its fixed demo actors.

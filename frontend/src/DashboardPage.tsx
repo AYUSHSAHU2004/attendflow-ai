@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { dashboardActor, supervisorDashboardPath } from './actors'
+import { dashboardActor, supervisorDashboardPath, headerDemoLinks } from './actors'
 import { adminListHref, getDashboard, type AdminFilters, type Dashboard, type DashboardFilters } from './api'
 import { AutoResolveSummary } from './AutoFix'
 import { plainError } from './SupervisorPage'
@@ -205,7 +205,7 @@ export function DashboardPage() {
     setDates(next)
   }
 
-  const supervisorHref = import.meta.env.DEV ? `/supervisor?as=${dashboardActor.id}` : '/supervisor'
+  const supervisorHref = headerDemoLinks() ? `/supervisor?as=${dashboardActor.id}` : '/supervisor'
   const team = data?.scope === 'team' || (
     data === null && typeof window !== 'undefined' && window.location.pathname === supervisorDashboardPath
   )
@@ -216,7 +216,7 @@ export function DashboardPage() {
         ? <>Your team · <a href={supervisorHref}>Decision queue</a></>
         : <>All teams · <a href="/admin">All exceptions</a></>}
         {' · '}<a href={team
-          ? import.meta.env.DEV ? `/supervisor/payroll?as=${dashboardActor.id}` : '/supervisor/payroll'
+          ? headerDemoLinks() ? `/supervisor/payroll?as=${dashboardActor.id}` : '/supervisor/payroll'
           : '/payroll'}>Payroll readiness</a>
       </p>
       <form className="filters" aria-label="Exception dates" onSubmit={(event) => {

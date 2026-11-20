@@ -31,6 +31,7 @@ from sqlalchemy import (
     Text,
     Time,
     UniqueConstraint,
+    func,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -82,6 +83,22 @@ class EmployeeRow(Base):
     role: Mapped[str] = mapped_column(String(20))
     team: Mapped[str] = mapped_column(String(50))
     supervisor_id: Mapped[str | None] = mapped_column(ForeignKey("employees.employee_id"))
+
+    email: Mapped[str | None] = mapped_column(String(254), deferred=True)
+    password_hash: Mapped[str | None] = mapped_column(Text, deferred=True)
+
+
+Index("uq_employees_email_lower", func.lower(EmployeeRow.email), unique=True)
+
+
+class AuthSessionRow(Base):
+    __tablename__ = "auth_sessions"
+
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    employee_id: Mapped[str] = mapped_column(
+        ForeignKey("employees.employee_id", ondelete="CASCADE"), index=True
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
 
 
 class PunchRow(Base):

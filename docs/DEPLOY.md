@@ -1,12 +1,10 @@
-# Phase 16.5 private demo deploy
+# Deploy AttendFlow with employee sessions
 
-Use a disposable PostgreSQL database and the synthetic CSVs in this repository.
-The shared HTTPS password protects the frontend, assets, API and API docs. The
-only public application route is the minimal read-only `/healthz`. Sign in as
-`demo` with the password from the operator. Anyone who knows that password can
-choose a demo actor with `X-Actor-Id`. Share it separately from the URL and rotate
-it after the rehearsal. The hosted app uses the existing fixed actors by page.
-How judges switch among Priya, Ravi, Amit and Neha remains open for Phase 22.
+Use a disposable PostgreSQL database and the synthetic CSVs for demos. Employees
+sign in with their email and the password supplied by the operator. The database
+determines each employee's role. Session-mode API requests ignore `X-Actor-Id`.
+`/healthz`, the sign-in page, and its frontend assets are public. The API docs
+and schema URLs are disabled in session mode.
 
 ## Hosting options
 
@@ -28,8 +26,8 @@ in PostgreSQL.
 ## Settings profiles
 
 Use **Locked** for the first deployment and baseline smoke test. Both profiles
-require the same strong password, use same-origin URLs, keep diagnostics off and
-use synthetic data.
+use employee sessions, same-origin URLs, and synthetic data. Keep diagnostics
+off. Generate a separate strong demo password and session signing secret.
 
 | Setting | Locked | Guided demo |
 | --- | --- | --- |
@@ -39,7 +37,9 @@ use synthetic data.
 | `ATTENDFLOW_DEMO_EXTRA_WEEK` | `false` | `true` |
 | `DEVICE_API_KEY` | Unset | Unset |
 
-Guided mode enables the simulator, demo clock and gated reset. After reset, the
+Guided mode enables the simulator, demo clock, admin reset and email-fill buttons
+for Amit, Ravi, and Priya. Reset recreates all demo credentials from the configured
+password and revokes existing sessions. Sign in again after a reset. After reset, the
 extra week is available for the payroll sign-off demo. Moving the workflow clock
 leaves the attendance cutoff fixed. Locked mode alone does not undo any simulated
 changes or delete previously seeded synthetic records.
@@ -50,10 +50,14 @@ changes or delete previously seeded synthetic records.
 | --- | --- | --- |
 | `DATABASE_URL` | Required runtime URL. Use Render's internal URL or Neon's direct URL including `sslmode=require`. Both `postgres://` and `postgresql://` normalize to `postgresql+psycopg://`. | Yes |
 | `ATTENDFLOW_DEPLOYED` | `true`, enforced by the container launcher. | No |
-| `ATTENDFLOW_DEMO_PASSWORD` | Required. Generate with `openssl rand -hex 24`. | Yes |
+| `ATTENDFLOW_AUTH_MODE` | `session`. Local development defaults to `header`. An explicit deployed `header` configuration retains the legacy Basic Auth gate. | No |
+| `ATTENDFLOW_SESSION_SECRET` | Required in deployed and session modes, at least 32 bytes. Generate independently with `openssl rand -hex 32`. Changing it invalidates existing cookies. | Yes |
+| `ATTENDFLOW_DEMO_PASSWORD` | Required for deployed demo seeding and reset. Generate with `openssl rand -hex 24`. | Yes |
+| `ATTENDFLOW_COOKIE_SECURE` | `true` for a public HTTPS URL. For loopback HTTP development only, set `false`. | No |
+| `ATTENDFLOW_TRUSTED_PROXY` | `false` by default. Set `true` for a single trusted Traefik hop with direct client access to the app blocked. | No |
 | `PORT` | Provider-assigned HTTP port, default `10000`. Published HTTPS is terminated by the provider. | No |
-| `ATTENDFLOW_ENABLE_SEED`, `ATTENDFLOW_DEMO_MODE`, `ATTENDFLOW_DEMO_RESET_ENABLED`, `ATTENDFLOW_DEMO_EXTRA_WEEK` | Use the profile above. Seed and reset wipe the DB. Enable seed only to load a disposable synthetic DB. | No |
-| `DEVICE_API_KEY` | Leave unset in both profiles. To enable external punch ingestion deliberately, use a separate random value and send both demo Basic Auth and `X-Device-Key`. | Yes, if used |
+| `ATTENDFLOW_ENABLE_SEED`, `ATTENDFLOW_DEMO_MODE`, `ATTENDFLOW_DEMO_RESET_ENABLED`, `ATTENDFLOW_DEMO_EXTRA_WEEK` | Use the profile above. Reset wipes the DB. Enable API seed only when provisioning a disposable synthetic DB. | No |
+| `DEVICE_API_KEY` | Leave unset in both profiles. To enable external punch ingestion deliberately, use a separate random value sent in `X-Device-Key`. | Yes, if used |
 | `DEVICE_MAX_BACKDATE_DAYS` | `7`. | No |
 | `ATTENDFLOW_AS_OF` | `2026-04-16T08:00:00` (local wall time without offset). Preserves the fixtures. | No |
 | `ATTENDFLOW_DATA_DIR` | Unset. The image contains the synthetic `/app/data`. | No |
@@ -78,63 +82,75 @@ only the build inputs. For Groq use **Environment → Secret Files**, never a Re
 build argument or a `VITE_*` variable. The Dockerfile does not mount secrets in any
 build step. See [Render Docker secrets](https://render.com/docs/docker-secrets).
 
-## Deploy on Render
+## Bootstrap and operate a deployment
 
-1. Commit and push this phase to the Git branch you want to deploy. Sign into Render,
-   connect that Git provider, and choose **New → Blueprint**.
-2. Select the repo and branch with the root `render.yaml`. Review the proposed
-   **Free** Docker web service and **Free** PostgreSQL database in the same region.
-   Supply a new `ATTENDFLOW_DEMO_PASSWORD` in the Blueprint prompt, then click
-   **Deploy Blueprint**. Leave Groq unset. See [Render Blueprint setup](https://render.com/docs/infrastructure-as-code).
-3. Open **Web Services → attendflow-demo → Events/Logs**. Check that Alembic and
-   Uvicorn start, that the plan is Free, and that the health check path is `/healthz`.
-   Use the assigned HTTPS URL. `/healthz` should return `{"status":"ok"}`; visiting
-   `/dashboard` should prompt for Basic Auth. The initial database has schema only.
-4. To populate it, use the synthetic seed. On the first empty database, skip the
-   pause command because the scheduler API needs seeded actors and there are no
-   cases to process. With an existing seeded database, pause the scheduler before
-   each environment redeploy:
+Run the CLI in the app container or from a trusted operator terminal with the
+same app version and database configuration. The container entrypoint migrates
+before starting the API. If running the CLI from a local checkout against a
+managed database, export the deployment's runtime values and use an operator
+connection with access to that database. Keep the database credentials and
+signing secret out of the repository.
 
-   ```sh
-   URL=https://your-service.onrender.com
-   curl -fsS --user demo -H 'X-Actor-Id: E201' -X POST "$URL/api/admin/scheduler/stop"
-   curl -fsS --user demo -H 'X-Actor-Id: E201' "$URL/api/admin/scheduler"
-   ```
+```sh
+python -m attendflow.scripts.auth_cli seed-demo
+```
 
-   Each curl prompts for the password. In **Environment**, set
-   `ATTENDFLOW_ENABLE_SEED=true`, save and deploy, then run:
+The command loads the synthetic data on an empty DB and populates missing
+credentials on an existing matching demo dataset. Repeating it preserves
+existing passwords and case decisions. Bootstrap works while HTTP seeding is
+disabled. If the host has no shell, run it from the operator terminal using a
+database URL that the terminal can reach. When using the local virtualenv, use
+`uv run python -m attendflow.scripts.auth_cli seed-demo`.
 
-   ```sh
-   curl -fsS --user demo -X POST "$URL/api/seed"
-   ```
+Open `/login`. The operator can sign in as `priya@demo.attendflow.test`,
+`ravi@demo.attendflow.test`, or `amit@demo.attendflow.test` using the demo password.
+Share the password separately from the URL. The Locked profile omits the email
+shortcuts.
 
-   This seeds a disposable database and wipes any previous contents. Once it succeeds,
-   stop the scheduler and confirm the cycle has finished. Set
-   `ATTENDFLOW_ENABLE_SEED=false` and save and deploy again. Keep the other Locked
-   values. The smoke cycle generates the initial findings if it runs before the timer.
-5. From the repo root run `python3 scripts/smoke-deployed.py "$URL"` and enter the demo
-   password. It checks the public health probe, unauthenticated refusals, built
-   frontend and JavaScript, Priya's dashboard, Amit's inbox, and one scheduler cycle.
-   That cycle skips investigations and messaging even with a Groq key. It still runs
-   detection and the no-reply ladder. An independently enabled periodic cycle can
-   still do normal model work. Exit zero means every check printed PASS.
-6. For a guided rehearsal, pause the scheduler before switching the three profile flags
-   in **Environment** and deploying. With seeded actors, run
-   `python3 scripts/smoke-deployed.py "$URL" --initialize reset` only if you want to
-   wipe and reload the synthetic data. On an empty replacement DB, arm and run seed
-   first. Return to Locked after the rehearsal.
-7. After the baseline is working, optionally add the key in **Environment → Secret
-   Files → Add Secret File**, name it `groq-api-key`, and save the key as its contents.
-   Set `LLM_API_KEY_FILE=/etc/secrets/groq-api-key` and redeploy with diagnostics off.
-   Phase 16.5 smoke does not verify Groq connectivity. Share the demo URL and password
-   over separate channels.
+```sh
+python3 scripts/smoke-deployed.py "$URL"
+# Guided demo only. Wipes the synthetic DB, then signs in again.
+python3 scripts/smoke-deployed.py "$URL" --initialize reset
+```
 
-If the database expires, follow Render's replacement instructions, confirm the
-web service points to the new internal URL, and repeat the bootstrap. On cold
-starts the smoke script waits for health. For startup failure, check the deploy
-logs, connection URL/region, binding to `PORT`, secret values, and migration
-permissions. Docker migration failures report a safe error category. If the
-cycle is busy, wait for it to finish and rerun the locked smoke.
+The smoke script signs in, checks the authorization boundaries and frontend,
+and runs one explicitly model-free scheduler cycle. For a smoke run with zero
+model calls across the service, leave the model key unset or pause the periodic
+scheduler. After bootstrap, the manual run works even with the periodic scheduler
+off.
+
+### Kubernetes behind Traefik
+
+Use [the ConfigMap and Secret example](../deploy/k8s/auth.example.yaml) as
+`envFrom` inputs for the existing workload. Populate the Secret out of band.
+Keep one replica, one Uvicorn worker, and a writable temporary directory shared
+by the app and CLI in the same container. Terminate HTTPS in Traefik, preserve
+the original Host, and restrict app ingress to the trusted proxy. With
+`ATTENDFLOW_TRUSTED_PROXY=true`, the app uses the rightmost IP supplied by this
+single proxy hop. Otherwise it uses the socket IP. The browser Origin must
+match the Host, including an explicit port if present. The public HTTPS
+scheme is represented by the configured Secure cookie flag.
+
+```sh
+kubectl exec deploy/attendflow -- python -m attendflow.scripts.auth_cli seed-demo
+kubectl exec -it deploy/attendflow -- python -m attendflow.scripts.auth_cli set-password E001
+kubectl exec deploy/attendflow -- python -m attendflow.scripts.auth_cli unlock --email amit@demo.attendflow.test
+kubectl exec deploy/attendflow -- python -m attendflow.scripts.auth_cli unlock --ip 192.0.2.10
+```
+
+Add `--email employee@example.com` when setting credentials for someone without
+an email. The password command prompts without echo and revokes that employee's
+sessions. Unlock runs in the same container as the API. If both the email and
+IP are locked, clear both. Login and logout are outside the attendance activity
+trail. Successful and failed logins appear in the ordinary application log.
+
+### Render
+
+Deploy the Locked profile from `render.yaml` and supply the two independent
+secrets when prompted. Leave the model key unset for initial verification. After
+the app reports a healthy `/healthz`, run the CLI bootstrap with access to its
+database and run the smoke script against the public HTTPS URL. When switching
+profiles, wait for any running scheduler cycle to complete before redeploying.
 
 ## Fallback on Koyeb and Neon
 
@@ -148,14 +164,13 @@ cycle is busy, wait for it to finish and rerun the locked smoke.
    (add registry credentials in **Secrets** if private), choose the Free instance,
    and set HTTP port `10000` at path `/` with HTTP health check `/healthz`.
    Keep one replica. Confirm only free resources are selected before deploying.
-4. In the service's environment variables assign the Neon URL and demo password
+4. In the service's environment variables assign the Neon URL, session signing secret, and demo password
    as secrets. Apply the Locked values and shared scheduler settings above. Deploy,
    then repeat the bootstrap and smoke steps using the Koyeb HTTPS URL. Leave Groq
    unset until after the smoke check. See [Koyeb registry deploy](https://www.koyeb.com/docs/build-and-deploy/prebuilt-docker-images).
 
 ## Verify the image locally on a Mac
 
-The image build and container runtime are **unverified** until these commands run.
 Open Docker Desktop and use a shell from the repo root. These names are for an
 isolated test stack. PostgreSQL has no published host port and the web port binds
 only to loopback.
@@ -166,33 +181,27 @@ docker network create attendflow-dryrun
 export POSTGRES_PASSWORD="$(openssl rand -hex 24)"
 export DATABASE_URL="postgres://demo:${POSTGRES_PASSWORD}@attendflow-dryrun-db:5432/attendflow_demo"
 export ATTENDFLOW_DEMO_PASSWORD="$(openssl rand -hex 24)"
+export ATTENDFLOW_SESSION_SECRET="$(openssl rand -hex 32)"
 docker run -d --name attendflow-dryrun-db --network attendflow-dryrun \
   -e POSTGRES_USER=demo -e POSTGRES_DB=attendflow_demo -e POSTGRES_PASSWORD postgres:16
 until docker exec attendflow-dryrun-db pg_isready -h 127.0.0.1 -U demo -d attendflow_demo; do
   sleep 2
 done
 
-start_dryrun() {
-  docker run -d --name attendflow-dryrun-app --network attendflow-dryrun \
+docker run -d --name attendflow-dryrun-app --network attendflow-dryrun \
     -p 127.0.0.1:8016:10000 -e DATABASE_URL -e ATTENDFLOW_DEMO_PASSWORD \
-    -e "ATTENDFLOW_ENABLE_SEED=$1" -e ATTENDFLOW_DEMO_MODE=false \
+    -e ATTENDFLOW_SESSION_SECRET -e ATTENDFLOW_COOKIE_SECURE=false \
+    -e ATTENDFLOW_ENABLE_SEED=false -e ATTENDFLOW_DEMO_MODE=false \
     -e ATTENDFLOW_DEMO_RESET_ENABLED=false -e ATTENDFLOW_DEMO_EXTRA_WEEK=false \
     -e LLM_DIAGNOSTICS=off -e SCHEDULER_ENABLED=true attendflow-demo:16.5
-}
-start_dryrun false
 docker logs attendflow-dryrun-app
 curl --retry 10 --retry-connrefused --retry-delay 2 -fsS http://localhost:8016/healthz
 ```
 
-To seed once and then verify in Locked mode:
+To bootstrap and verify in Locked mode:
 
 ```sh
-docker rm -f attendflow-dryrun-app
-start_dryrun true
-curl --retry 10 --retry-connrefused --retry-delay 2 -fsS http://localhost:8016/healthz
-curl -fsS --user demo -X POST http://localhost:8016/api/seed
-docker rm -f attendflow-dryrun-app
-start_dryrun false
+docker exec attendflow-dryrun-app python -m attendflow.scripts.auth_cli seed-demo
 python3 scripts/smoke-deployed.py http://localhost:8016
 ```
 
@@ -202,5 +211,32 @@ Use the generated password from the shell if prompted. Once finished:
 ```sh
 docker rm -f attendflow-dryrun-app attendflow-dryrun-db
 docker network rm attendflow-dryrun
-unset POSTGRES_PASSWORD DATABASE_URL ATTENDFLOW_DEMO_PASSWORD
+unset POSTGRES_PASSWORD DATABASE_URL ATTENDFLOW_DEMO_PASSWORD ATTENDFLOW_SESSION_SECRET
 ```
+
+
+## Run session mode locally
+
+Set `DATABASE_URL` to a local disposable PostgreSQL database. From the repo root:
+
+```sh
+uv sync --locked
+export ATTENDFLOW_AUTH_MODE=session ATTENDFLOW_COOKIE_SECURE=false
+export ATTENDFLOW_DEMO_MODE=true ATTENDFLOW_DEMO_RESET_ENABLED=true
+export ATTENDFLOW_SESSION_SECRET="$(openssl rand -hex 32)"
+export ATTENDFLOW_DEMO_PASSWORD="$(openssl rand -hex 24)"
+uv run alembic upgrade head
+uv run python -m attendflow.scripts.auth_cli seed-demo
+uv run attendflow-api --port 8011
+```
+
+From a second terminal:
+
+```sh
+npm --prefix frontend ci
+ATTENDFLOW_VITE_PROXY=http://127.0.0.1:8011 VITE_API_BASE_URL=/ npm --prefix frontend run dev -- --port 5181
+```
+
+Open `http://localhost:5181/login`. To use a human-selected local password, run
+`uv run python -m attendflow.scripts.auth_cli set-password E001 --email amit@demo.attendflow.test`
+with the same database environment and follow the prompts.

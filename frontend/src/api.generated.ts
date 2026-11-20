@@ -1,5 +1,56 @@
 // Generated from FastAPI OpenAPI. Run npm run api:generate.
 export interface paths {
+    "/api/auth/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Login */
+        post: operations["login_api_auth_login_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Me */
+        get: operations["me_api_auth_me_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Logout */
+        post: operations["logout_api_auth_logout_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/health": {
         parameters: {
             query?: never;
@@ -27,8 +78,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Reset the demo: wipe all tables and reload the CSVs
-         * @description Destructive. Disabled when ATTENDFLOW_ENABLE_SEED=false (must be off or protected on a deployed server).
+         * Load synthetic demo data
+         * @description Session mode seeds an empty database or provisions missing credentials. Header mode wipes the database and reloads the CSVs. Disabled when ATTENDFLOW_ENABLE_SEED=false.
          */
         post: operations["seed_api_seed_post"];
         delete?: never;
@@ -783,26 +834,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/punches": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Mock attendance device: record one punch
-         * @description Authenticated by the `X-Device-Key` header (DEVICE_API_KEY), not by an actor. The timestamp is local time with no timezone and may not be after the as-of time. An exact duplicate is 409. The punch is written by the ingest module with a `punch_ingested` audit row; detection then runs for that worker's week. Uses no LLM.
-         */
-        post: operations["receive_punch_api_punches_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/admin/scheduler": {
         parameters: {
             query?: never;
@@ -871,6 +902,26 @@ export interface paths {
         put?: never;
         /** Stop the timer (a running cycle finishes first) */
         post: operations["scheduler_stop_api_admin_scheduler_stop_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/punches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mock attendance device: record one punch
+         * @description Authenticated by the `X-Device-Key` header (DEVICE_API_KEY), not by an actor. The timestamp is local time with no timezone and may not be after the as-of time. An exact duplicate is 409. The punch is written by the ingest module with a `punch_ingested` audit row; detection then runs for that worker's week. Uses no LLM.
+         */
+        post: operations["receive_punch_api_punches_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1796,6 +1847,17 @@ export interface components {
             /** Items */
             items: components["schemas"]["AuditEntryOut"][];
         };
+        /** AuthState */
+        AuthState: {
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "header" | "session";
+            employee: components["schemas"]["EmployeeIdentity"] | null;
+            /** Demo Accounts */
+            demo_accounts: boolean;
+        };
         /**
          * AutoFixOut
          * @description An auto-resolve as people see it. Every text is stored data or built by code.
@@ -2548,6 +2610,18 @@ export interface components {
              */
             confirm_time_without_worker: boolean;
         };
+        /** EmployeeIdentity */
+        EmployeeIdentity: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "worker" | "supervisor" | "payroll_admin";
+        };
         /** ErrorBody */
         ErrorBody: {
             /**
@@ -2938,6 +3012,21 @@ export interface components {
             duration_ms: number | null;
             /** Reason */
             reason: string | null;
+        };
+        /** LoginIn */
+        LoginIn: {
+            /** Email */
+            email: string;
+            /**
+             * Password
+             * Format: password
+             */
+            password: string;
+        };
+        /** LogoutOut */
+        LogoutOut: {
+            /** Ok */
+            ok: boolean;
         };
         /** MetricPolicyOut */
         MetricPolicyOut: {
@@ -4126,6 +4215,79 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    login_api_auth_login_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LoginIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthState"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    me_api_auth_me_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthState"];
+                };
+            };
+        };
+    };
+    logout_api_auth_logout_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LogoutOut"];
+                };
+            };
+        };
+    };
     health_api_health_get: {
         parameters: {
             query?: never;
@@ -4173,8 +4335,26 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Unprocessable Entity */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4290,9 +4470,9 @@ export interface operations {
     start_investigation_api_exceptions__exception_id__investigate_post: {
         parameters: {
             query?: never;
-            header: {
-                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
-                "X-Actor-Id": string;
+            header?: {
+                /** @description Employee ID for header-mode requests only */
+                "X-Actor-Id"?: string | null;
             };
             path: {
                 exception_id: string;
@@ -4342,9 +4522,9 @@ export interface operations {
     poll_investigation_api_exceptions__exception_id__investigate__job_id__get: {
         parameters: {
             query?: never;
-            header: {
-                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
-                "X-Actor-Id": string;
+            header?: {
+                /** @description Employee ID for header-mode requests only */
+                "X-Actor-Id"?: string | null;
             };
             path: {
                 exception_id: string;
@@ -4395,9 +4575,9 @@ export interface operations {
     approve_api_exceptions__exception_id__approve_post: {
         parameters: {
             query?: never;
-            header: {
-                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
-                "X-Actor-Id": string;
+            header?: {
+                /** @description Employee ID for header-mode requests only */
+                "X-Actor-Id"?: string | null;
             };
             path: {
                 exception_id: string;
@@ -4460,9 +4640,9 @@ export interface operations {
     edit_api_exceptions__exception_id__edit_post: {
         parameters: {
             query?: never;
-            header: {
-                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
-                "X-Actor-Id": string;
+            header?: {
+                /** @description Employee ID for header-mode requests only */
+                "X-Actor-Id"?: string | null;
             };
             path: {
                 exception_id: string;
@@ -4525,9 +4705,9 @@ export interface operations {
     reject_api_exceptions__exception_id__reject_post: {
         parameters: {
             query?: never;
-            header: {
-                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
-                "X-Actor-Id": string;
+            header?: {
+                /** @description Employee ID for header-mode requests only */
+                "X-Actor-Id"?: string | null;
             };
             path: {
                 exception_id: string;
@@ -4590,9 +4770,9 @@ export interface operations {
     escalate_api_exceptions__exception_id__escalate_post: {
         parameters: {
             query?: never;
-            header: {
-                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
-                "X-Actor-Id": string;
+            header?: {
+                /** @description Employee ID for header-mode requests only */
+                "X-Actor-Id"?: string | null;
             };
             path: {
                 exception_id: string;
@@ -4655,9 +4835,9 @@ export interface operations {
     undo_api_exceptions__exception_id__undo_post: {
         parameters: {
             query?: never;
-            header: {
-                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
-                "X-Actor-Id": string;
+            header?: {
+                /** @description Employee ID for header-mode requests only */
+                "X-Actor-Id"?: string | null;
             };
             path: {
                 exception_id: string;
@@ -4720,9 +4900,9 @@ export interface operations {
     ask_worker_api_exceptions__exception_id__ask_worker_post: {
         parameters: {
             query?: never;
-            header: {
-                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
-                "X-Actor-Id": string;
+            header?: {
+                /** @description Employee ID for header-mode requests only */
+                "X-Actor-Id"?: string | null;
             };
             path: {
                 exception_id: string;
@@ -4785,9 +4965,9 @@ export interface operations {
     worker_reply_api_exceptions__exception_id__worker_reply_post: {
         parameters: {
             query?: never;
-            header: {
-                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
-                "X-Actor-Id": string;
+            header?: {
+                /** @description Employee ID for header-mode requests only */
+                "X-Actor-Id"?: string | null;
             };
             path: {
                 exception_id: string;
@@ -4850,9 +5030,9 @@ export interface operations {
     worker_confirm_time_api_exceptions__exception_id__worker_confirm_time_post: {
         parameters: {
             query?: never;
-            header: {
-                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
-                "X-Actor-Id": string;
+            header?: {
+                /** @description Employee ID for header-mode requests only */
+                "X-Actor-Id"?: string | null;
             };
             path: {
                 exception_id: string;
@@ -4911,9 +5091,9 @@ export interface operations {
     worker_manual_time_api_exceptions__exception_id__worker_manual_time_post: {
         parameters: {
             query?: never;
-            header: {
-                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
-                "X-Actor-Id": string;
+            header?: {
+                /** @description Employee ID for header-mode requests only */
+                "X-Actor-Id"?: string | null;
             };
             path: {
                 exception_id: string;
@@ -4976,9 +5156,9 @@ export interface operations {
     worker_messages_api_worker_messages_get: {
         parameters: {
             query?: never;
-            header: {
-                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
-                "X-Actor-Id": string;
+            header?: {
+                /** @description Employee ID for header-mode requests only */
+                "X-Actor-Id"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -5017,9 +5197,9 @@ export interface operations {
     worker_history_api_worker_history_get: {
         parameters: {
             query?: never;
-            header: {
-                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
-                "X-Actor-Id": string;
+            header?: {
+                /** @description Employee ID for header-mode requests only */
+                "X-Actor-Id"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -5058,9 +5238,9 @@ export interface operations {
     worker_ask_api_worker_ask_post: {
         parameters: {
             query?: never;
-            header: {
-                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
-                "X-Actor-Id": string;
+            header?: {
+                /** @description Employee ID for header-mode requests only */
+                "X-Actor-Id"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -5123,9 +5303,9 @@ export interface operations {
             query?: {
                 limit?: number;
             };
-            header: {
-                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
-                "X-Actor-Id": string;
+            header?: {
+                /** @description Employee ID for header-mode requests only */
+                "X-Actor-Id"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -5168,9 +5348,9 @@ export interface operations {
                 limit?: number;
                 offset?: number;
             };
-            header: {
-                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
-                "X-Actor-Id": string;
+            header?: {
+                /** @description Employee ID for header-mode requests only */
+                "X-Actor-Id"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -5209,9 +5389,9 @@ export interface operations {
     get_briefing_api_briefing_get: {
         parameters: {
             query?: never;
-            header: {
-                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
-                "X-Actor-Id": string;
+            header?: {
+                /** @description Employee ID for header-mode requests only */
+                "X-Actor-Id"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -5250,9 +5430,9 @@ export interface operations {
     refresh_briefing_api_briefing_refresh_post: {
         parameters: {
             query?: never;
-            header: {
-                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
-                "X-Actor-Id": string;
+            header?: {
+                /** @description Employee ID for header-mode requests only */
+                "X-Actor-Id"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -5309,9 +5489,9 @@ export interface operations {
     supervisor_queue_api_supervisor_queue_get: {
         parameters: {
             query?: never;
-            header: {
-                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
-                "X-Actor-Id": string;
+            header?: {
+                /** @description Employee ID for header-mode requests only */
+                "X-Actor-Id"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -5350,9 +5530,9 @@ export interface operations {
     supervisor_case_api_supervisor_cases__exception_id__get: {
         parameters: {
             query?: never;
-            header: {
-                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
-                "X-Actor-Id": string;
+            header?: {
+                /** @description Employee ID for header-mode requests only */
+                "X-Actor-Id"?: string | null;
             };
             path: {
                 exception_id: string;
@@ -5402,9 +5582,9 @@ export interface operations {
     supervisor_auto_resolved_api_supervisor_auto_resolved_get: {
         parameters: {
             query?: never;
-            header: {
-                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
-                "X-Actor-Id": string;
+            header?: {
+                /** @description Employee ID for header-mode requests only */
+                "X-Actor-Id"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -5446,9 +5626,9 @@ export interface operations {
                 date_from?: string | null;
                 date_to?: string | null;
             };
-            header: {
-                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
-                "X-Actor-Id": string;
+            header?: {
+                /** @description Employee ID for header-mode requests only */
+                "X-Actor-Id"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -5490,9 +5670,9 @@ export interface operations {
                 date_from?: string | null;
                 date_to?: string | null;
             };
-            header: {
-                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
-                "X-Actor-Id": string;
+            header?: {
+                /** @description Employee ID for header-mode requests only */
+                "X-Actor-Id"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -5533,9 +5713,9 @@ export interface operations {
             query?: {
                 week_start?: string | null;
             };
-            header: {
-                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
-                "X-Actor-Id": string;
+            header?: {
+                /** @description Employee ID for header-mode requests only */
+                "X-Actor-Id"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -5574,9 +5754,9 @@ export interface operations {
     payroll_sign_off_api_payroll__week_start__sign_off_post: {
         parameters: {
             query?: never;
-            header: {
-                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
-                "X-Actor-Id": string;
+            header?: {
+                /** @description Employee ID for header-mode requests only */
+                "X-Actor-Id"?: string | null;
             };
             path: {
                 week_start: string;
@@ -5630,9 +5810,9 @@ export interface operations {
     payroll_reopen_api_payroll__week_start__reopen_post: {
         parameters: {
             query?: never;
-            header: {
-                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
-                "X-Actor-Id": string;
+            header?: {
+                /** @description Employee ID for header-mode requests only */
+                "X-Actor-Id"?: string | null;
             };
             path: {
                 week_start: string;
@@ -5703,9 +5883,9 @@ export interface operations {
                 limit?: number;
                 offset?: number;
             };
-            header: {
-                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
-                "X-Actor-Id": string;
+            header?: {
+                /** @description Employee ID for header-mode requests only */
+                "X-Actor-Id"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -5744,9 +5924,9 @@ export interface operations {
     admin_exception_api_admin_exceptions__exception_id__get: {
         parameters: {
             query?: never;
-            header: {
-                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
-                "X-Actor-Id": string;
+            header?: {
+                /** @description Employee ID for header-mode requests only */
+                "X-Actor-Id"?: string | null;
             };
             path: {
                 exception_id: string;
@@ -5796,9 +5976,9 @@ export interface operations {
     get_runtime_settings_api_settings_get: {
         parameters: {
             query?: never;
-            header: {
-                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
-                "X-Actor-Id": string;
+            header?: {
+                /** @description Employee ID for header-mode requests only */
+                "X-Actor-Id"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -5841,9 +6021,9 @@ export interface operations {
                 before_id?: number | null;
                 limit?: number;
             };
-            header: {
-                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
-                "X-Actor-Id": string;
+            header?: {
+                /** @description Employee ID for header-mode requests only */
+                "X-Actor-Id"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -5882,9 +6062,9 @@ export interface operations {
     put_setting_api_settings__key__put: {
         parameters: {
             query?: never;
-            header: {
-                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
-                "X-Actor-Id": string;
+            header?: {
+                /** @description Employee ID for header-mode requests only */
+                "X-Actor-Id"?: string | null;
             };
             path: {
                 /** @description Setting key */
@@ -5948,9 +6128,9 @@ export interface operations {
     reset_setting_api_settings__key__reset_post: {
         parameters: {
             query?: never;
-            header: {
-                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
-                "X-Actor-Id": string;
+            header?: {
+                /** @description Employee ID for header-mode requests only */
+                "X-Actor-Id"?: string | null;
             };
             path: {
                 /** @description Setting key */
@@ -6028,9 +6208,9 @@ export interface operations {
                 before_id?: number | null;
                 limit?: number;
             };
-            header: {
-                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
-                "X-Actor-Id": string;
+            header?: {
+                /** @description Employee ID for header-mode requests only */
+                "X-Actor-Id"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -6075,9 +6255,9 @@ export interface operations {
                 date_from?: string | null;
                 date_to?: string | null;
             };
-            header: {
-                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
-                "X-Actor-Id": string;
+            header?: {
+                /** @description Employee ID for header-mode requests only */
+                "X-Actor-Id"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -6116,9 +6296,9 @@ export interface operations {
     autonomy_table_api_autonomy_get: {
         parameters: {
             query?: never;
-            header: {
-                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
-                "X-Actor-Id": string;
+            header?: {
+                /** @description Employee ID for header-mode requests only */
+                "X-Actor-Id"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -6220,6 +6400,181 @@ export interface operations {
             };
         };
     };
+    scheduler_status_api_admin_scheduler_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Employee ID for header-mode requests only */
+                "X-Actor-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SchedulerStatusOut"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    scheduler_run_now_api_admin_scheduler_run_now_post: {
+        parameters: {
+            query?: {
+                model_free?: boolean;
+            };
+            header?: {
+                /** @description Employee ID for header-mode requests only */
+                "X-Actor-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SchedulerCycleOut"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    scheduler_start_api_admin_scheduler_start_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Employee ID for header-mode requests only */
+                "X-Actor-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SchedulerStatusOut"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    scheduler_stop_api_admin_scheduler_stop_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Employee ID for header-mode requests only */
+                "X-Actor-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SchedulerStatusOut"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     receive_punch_api_punches_post: {
         parameters: {
             query?: never;
@@ -6282,187 +6637,12 @@ export interface operations {
             };
         };
     };
-    scheduler_status_api_admin_scheduler_get: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
-                "X-Actor-Id": string;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SchedulerStatusOut"];
-                };
-            };
-            /** @description Forbidden */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Unprocessable Entity */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    scheduler_run_now_api_admin_scheduler_run_now_post: {
-        parameters: {
-            query?: {
-                model_free?: boolean;
-            };
-            header: {
-                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
-                "X-Actor-Id": string;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SchedulerCycleOut"];
-                };
-            };
-            /** @description Forbidden */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Unprocessable Entity */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    scheduler_start_api_admin_scheduler_start_post: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
-                "X-Actor-Id": string;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SchedulerStatusOut"];
-                };
-            };
-            /** @description Forbidden */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Unprocessable Entity */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    scheduler_stop_api_admin_scheduler_stop_post: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
-                "X-Actor-Id": string;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SchedulerStatusOut"];
-                };
-            };
-            /** @description Forbidden */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Unprocessable Entity */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
     demo_reset_api_admin_demo_reset_post: {
         parameters: {
             query?: never;
-            header: {
-                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
-                "X-Actor-Id": string;
+            header?: {
+                /** @description Employee ID for header-mode requests only */
+                "X-Actor-Id"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -6510,9 +6690,9 @@ export interface operations {
     demo_punch_api_admin_demo_punch_post: {
         parameters: {
             query?: never;
-            header: {
-                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
-                "X-Actor-Id": string;
+            header?: {
+                /** @description Employee ID for header-mode requests only */
+                "X-Actor-Id"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -6564,9 +6744,9 @@ export interface operations {
     demo_clock_get_api_admin_demo_clock_get: {
         parameters: {
             query?: never;
-            header: {
-                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
-                "X-Actor-Id": string;
+            header?: {
+                /** @description Employee ID for header-mode requests only */
+                "X-Actor-Id"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -6605,9 +6785,9 @@ export interface operations {
     demo_clock_move_api_admin_demo_clock_post: {
         parameters: {
             query?: never;
-            header: {
-                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
-                "X-Actor-Id": string;
+            header?: {
+                /** @description Employee ID for header-mode requests only */
+                "X-Actor-Id"?: string | null;
             };
             path?: never;
             cookie?: never;

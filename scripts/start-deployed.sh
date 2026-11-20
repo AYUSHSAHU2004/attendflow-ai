@@ -1,8 +1,9 @@
 #!/bin/sh
 set -eu
 
-# This image always uses the deployment checks and shared-password gate.
+# Run deployment checks and default hosted services to employee sessions.
 export ATTENDFLOW_DEPLOYED=true
+export ATTENDFLOW_AUTH_MODE="${ATTENDFLOW_AUTH_MODE:-session}"
 python - <<'PY'
 from alembic import command
 from alembic.config import Config
@@ -26,4 +27,4 @@ except Exception as error:
     ) from None
 PY
 exec uvicorn attendflow.api.app:create_app --factory --host 0.0.0.0 \
-  --port "${PORT:-10000}" --workers 1 --no-access-log
+  --port "${PORT:-10000}" --workers 1 --no-access-log --no-proxy-headers

@@ -1,5 +1,14 @@
 // Local demo identity: the one place that says who is acting.
-export type Actor = { id: string; name: string }
+import type { components } from './api.generated'
+
+export type EmployeeIdentity = components['schemas']['EmployeeIdentity']
+export type Actor = { id: string; name: string; role?: EmployeeIdentity['role'] }
+
+export let sessionAuth = false
+
+export function enableSessionAuth() {
+  sessionAuth = true
+}
 
 const defaultWorker: Actor = { id: 'E001', name: 'Amit Verma' }
 
@@ -35,7 +44,7 @@ export function linkedCase(): string | null {
   return id && /^P\d{1,2}-E\d{3}-[\w-]{1,70}$/.test(id) ? id : null
 }
 
-export const supervisorActor: Actor = import.meta.env.DEV
+export let supervisorActor: Actor = import.meta.env.DEV
   ? reviewerFor(search, true)
   : defaultReviewer
 
@@ -43,7 +52,7 @@ export const supervisorActor: Actor = import.meta.env.DEV
 // page refuses anyone else (the API answers 403 admin_only).
 const defaultAdmin = reviewers.E201
 
-export const adminActor: Actor = import.meta.env.DEV
+export let adminActor: Actor = import.meta.env.DEV
   ? reviewerFor(search, true, defaultAdmin)
   : defaultAdmin
 
@@ -55,24 +64,34 @@ export function workerFor(search: string, dev: boolean): Actor {
   return workers[wanted] ?? defaultWorker
 }
 
-export const workerActor: Actor = import.meta.env.DEV ? workerFor(search, true) : defaultWorker
+export let workerActor: Actor = import.meta.env.DEV ? workerFor(search, true) : defaultWorker
 
 // The Activity Center (/activity, Phase 14) acts as Priya, who sees everything. Dev builds
 // only: `?as=E101` (or E102) shows a supervisor's team-only view. The API enforces the scope.
-export const activityActor: Actor = adminActor
+export let activityActor: Actor = adminActor
 
 export const supervisorDashboardPath = '/supervisor/dashboard'
-export const dashboardActor: Actor =
+export let dashboardActor: Actor =
   typeof window !== 'undefined' && window.location.pathname === supervisorDashboardPath
     ? supervisorActor
     : adminActor
 
-export const teamDashboardHref = import.meta.env.DEV
+export let teamDashboardHref = import.meta.env.DEV
   ? `${supervisorDashboardPath}?as=${supervisorActor.id}`
   : supervisorDashboardPath
 
 export const supervisorPayrollPath = '/supervisor/payroll'
-export const payrollActor: Actor =
+export let payrollActor: Actor =
   typeof window !== 'undefined' && window.location.pathname === supervisorPayrollPath
     ? supervisorActor
     : adminActor
+
+
+export function setSessionEmployee(employee: EmployeeIdentity) {
+  supervisorActor = adminActor = workerActor = activityActor = dashboardActor = payrollActor = employee
+  teamDashboardHref = supervisorDashboardPath
+}
+
+export function headerDemoLinks(): boolean {
+  return import.meta.env.DEV && !sessionAuth
+}

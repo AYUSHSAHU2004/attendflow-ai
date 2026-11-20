@@ -15,6 +15,15 @@ from sqlalchemy.orm import Session
 
 from attendflow import __version__, demo_clock, runtime_settings
 from attendflow.activity import feed as activity
+from attendflow.api.auth import (
+    ADMIN,
+    REVIEWERS,
+    SUPERVISOR,
+    WORKER,
+    ActorId,
+    require_roles,
+    require_session,
+)
 from attendflow.api.schemas import (
     EMPLOYEE_ID,
     POLICY_ID,
@@ -89,7 +98,7 @@ from attendflow.clock import Clock
 from attendflow.config import Settings
 from attendflow.data.loader import DataValidationError
 from attendflow.db.models import AuditLogRow, EmployeeRow, ExceptionRow, ToolCallRow
-from attendflow.db.seed import seed_from_csv
+from attendflow.db.seed import seed_demo_once, seed_from_csv
 from attendflow.errors import (
     AppError,
     ConflictError,
@@ -104,11 +113,16 @@ from attendflow.qa import service as qa_service
 from attendflow.scheduler.cycle import set_watermark
 from attendflow.scheduler.runner import Scheduler
 
-router = APIRouter(prefix="/api")
+router = APIRouter(prefix="/api", dependencies=[Depends(require_session)])
+device_router = APIRouter(prefix="/api")
 # DEMO_MODE only: create_app() includes this router only when ATTENDFLOW_DEMO_MODE=true, so
 # with demo mode off these endpoints do not exist at all (404). Phase 22 checklist.
-demo_router = APIRouter(prefix="/api/admin/demo", tags=["demo"])
-demo_reset_router = APIRouter(prefix="/api/admin/demo", tags=["demo"])
+demo_router = APIRouter(
+    prefix="/api/admin/demo", tags=["demo"], dependencies=[Depends(require_session)]
+)
+demo_reset_router = APIRouter(
+    prefix="/api/admin/demo", tags=["demo"], dependencies=[Depends(require_session)]
+)
 
 
 def _errors(*codes: int) -> dict:
@@ -154,20 +168,17 @@ def get_server_settings(request: Request) -> Settings:
 SessionDep = Annotated[Session, Depends(get_session)]
 PolicyDep = Annotated[PolicyConfig, Depends(get_policy)]
 ClockDep = Annotated[Clock, Depends(get_clock)]
-ActorId = Annotated[
-    str,
-    Header(
-        alias="X-Actor-Id",
-        pattern=EMPLOYEE_ID,
-        description="Employee ID of the person acting (no login yet), e.g. E101 for Ravi",
-    ),
-]
 
 
 # ---------------------------------------------------------------- system
 
 
-@router.get("/health", response_model=HealthOut, tags=["system"], summary="Health check")
+@router.get(
+    "/health",
+    response_model=HealthOut,
+    tags=["system"],
+    summary="Health check",
+)
 def health(request: Request, session: SessionDep, clock: ClockDep, policy: PolicyDep):
     try:
         session.execute(text("SELECT 1"))
@@ -186,28 +197,56 @@ def health(request: Request, session: SessionDep, clock: ClockDep, policy: Polic
     return body
 
 
+def _seed_password(settings: Settings) -> str | None:
+    if settings.auth_mode == "session" and not settings.demo_password:
+        raise ServiceUnavailableError(
+            "Set ATTENDFLOW_DEMO_PASSWORD before seeding", code="demo_password_required"
+        )
+    return settings.demo_password
+
+
 @router.post(
     "/seed",
     response_model=SeedOut,
     tags=["system"],
-    summary="Reset the demo: wipe all tables and reload the CSVs",
-    description="Destructive. Disabled when ATTENDFLOW_ENABLE_SEED=false "
-    "(must be off or protected on a deployed server).",
-    responses=_errors(403, 422),
+    summary="Load synthetic demo data",
+    description="Session mode seeds an empty database or provisions missing credentials. "
+    "Header mode wipes the database and reloads the CSVs. "
+    "Disabled when ATTENDFLOW_ENABLE_SEED=false.",
+    responses=_errors(403, 409, 422, 503),
+    dependencies=[require_roles(ADMIN)],
 )
 def seed(
     request: Request, session: SessionDep, settings: Annotated[Settings, Depends(get_settings_dep)]
 ):
     if not settings.enable_seed:
         raise ForbiddenError("seeding is disabled on this server", code="seed_disabled")
+    password = _seed_password(settings)
     try:
         with session.begin():
-            counts = seed_from_csv(session, settings.data_dir, extra_week=settings.demo_extra_week)
+            if settings.auth_mode == "session":
+                counts = seed_demo_once(
+                    session,
+                    settings.data_dir,
+                    extra_week=settings.demo_extra_week,
+                    demo_password=password,
+                )
+            else:
+                counts = seed_from_csv(
+                    session,
+                    settings.data_dir,
+                    extra_week=settings.demo_extra_week,
+                    demo_password=password,
+                )
     except DataValidationError as exc:
         raise AppError(
             "the demo CSVs are invalid; nothing was changed",
             code="invalid_data",
             details=exc.errors,
+        ) from exc
+    except ValueError as exc:
+        raise ConflictError(
+            "Cannot provision accounts on this dataset", code="not_demo_data"
         ) from exc
     request.app.state.logger.info("demo data seeded", extra={"event": "seed", **counts})
     return SeedOut(message="Demo data loaded. Run detection next.", counts=counts)
@@ -220,6 +259,7 @@ def seed(
     summary="Run the rule engine on the database and save the exceptions",
     description="Idempotent: exceptions are upserted by their stable ID.",
     responses=_errors(409),
+    dependencies=[require_roles(ADMIN)],
 )
 def run_detection(
     session: SessionDep,
@@ -241,6 +281,7 @@ def run_detection(
     response_model=ExceptionListOut,
     tags=["exceptions"],
     summary="List exceptions",
+    dependencies=[require_roles(ADMIN)],
 )
 def list_exceptions(
     session: SessionDep,
@@ -289,6 +330,7 @@ def _detail(session: Session, row: ExceptionRow) -> ExceptionDetailOut:
     tags=["exceptions"],
     summary="One exception with its audit trail",
     responses=_errors(404),
+    dependencies=[require_roles(ADMIN)],
 )
 def get_exception(exception_id: str, session: SessionDep):
     row = session.get(ExceptionRow, exception_id)
@@ -303,6 +345,7 @@ def get_exception(exception_id: str, session: SessionDep):
     status_code=202,
     tags=["exceptions"],
     responses=_errors(403, 404, 422),
+    dependencies=[require_roles(*REVIEWERS)],
 )
 def start_investigation(
     exception_id: str,
@@ -324,6 +367,7 @@ def start_investigation(
     response_model=InvestigationJobOut,
     tags=["exceptions"],
     responses=_errors(403, 404, 422),
+    dependencies=[require_roles(*REVIEWERS)],
 )
 def poll_investigation(exception_id: str, job_id: str, actor: ActorId, request: Request):
     return request.app.state.investigation_jobs.get(exception_id, job_id, actor)
@@ -353,6 +397,7 @@ def _approved(
     description="Supervisors and the payroll admin only, and only the assignee. After a fix "
     "that changed data, detection re-runs so new exceptions it created appear as open cases.",
     responses=_DECISION_ERRORS,
+    dependencies=[require_roles(*REVIEWERS)],
 )
 def approve(
     exception_id: str,
@@ -383,6 +428,7 @@ def approve(
     tags=["decisions"],
     summary="Approve a fix option with changed params (validated before anything is saved)",
     responses=_DECISION_ERRORS,
+    dependencies=[require_roles(*REVIEWERS)],
 )
 def edit(
     exception_id: str,
@@ -415,6 +461,7 @@ def edit(
     summary="Reject: a supervisor's reject escalates to the payroll admin; "
     "the admin's reject is final",
     responses=_DECISION_ERRORS,
+    dependencies=[require_roles(*REVIEWERS)],
 )
 def reject(
     exception_id: str, body: RejectIn, actor_id: ActorId, session: SessionDep, clock: ClockDep
@@ -435,6 +482,7 @@ def reject(
     "No data changes. Used after the no-reply ladder brought the supervisor in (Phase 13), "
     "or whenever the supervisor cannot decide.",
     responses=_DECISION_ERRORS,
+    dependencies=[require_roles(SUPERVISOR)],
 )
 def escalate(
     exception_id: str, body: EscalateIn, actor_id: ActorId, session: SessionDep, clock: ClockDep
@@ -459,6 +507,7 @@ def escalate(
     "becomes open with the worker's supervisor and is never auto-resolved or handled by "
     "the scheduler again.",
     responses=_errors(403, 404, 409, 422),
+    dependencies=[require_roles(*REVIEWERS)],
 )
 def undo(
     exception_id: str,
@@ -493,6 +542,7 @@ def undo(
     tags=["decisions"],
     summary="Hand the case to the worker to confirm what happened",
     responses=_DECISION_ERRORS,
+    dependencies=[require_roles(*REVIEWERS)],
 )
 def ask_worker(
     exception_id: str,
@@ -515,6 +565,7 @@ def ask_worker(
     tags=["decisions"],
     summary="Record the worker's Yes or No and return a receipt",
     responses=_DECISION_ERRORS,
+    dependencies=[require_roles(WORKER)],
 )
 def worker_reply(
     exception_id: str,
@@ -544,6 +595,7 @@ def worker_reply(
     response_model_exclude_none=True,
     tags=["worker"],
     responses=_DECISION_ERRORS,
+    dependencies=[require_roles(WORKER)],
 )
 def worker_confirm_time(
     exception_id: str, actor_id: ActorId, session: SessionDep, clock: ClockDep, policy: PolicyDep
@@ -559,6 +611,7 @@ def worker_confirm_time(
     response_model_exclude_none=True,
     tags=["worker"],
     responses=_DECISION_ERRORS,
+    dependencies=[require_roles(WORKER)],
 )
 def worker_manual_time(
     exception_id: str,
@@ -586,6 +639,7 @@ def worker_manual_time(
     tags=["worker"],
     summary="Questions and pending follow-ups for the worker",
     responses=_errors(403, 422),
+    dependencies=[require_roles(WORKER)],
 )
 def worker_messages(actor_id: ActorId, session: SessionDep, clock: ClockDep):
     with session.begin():
@@ -600,6 +654,7 @@ def worker_messages(actor_id: ActorId, session: SessionDep, clock: ClockDep):
     description="Worker-only and scoped to the caller's own cases (others get 403 "
     "worker_inbox_only). Outcome texts are built by code; no LLM, no writes.",
     responses=_errors(403, 422),
+    dependencies=[require_roles(WORKER)],
 )
 def worker_history(actor_id: ActorId, session: SessionDep):
     with session.begin():
@@ -623,6 +678,7 @@ def worker_history(actor_id: ActorId, session: SessionDep):
     "question_too_long, 429 qa_rate_limited (QA_QUESTIONS_PER_HOUR), 409 qa_busy. Changes "
     "no timecard, schedule or leave.",
     responses=_errors(403, 409, 422, 429),
+    dependencies=[require_roles(WORKER)],
 )
 def worker_ask(
     body: AskIn,
@@ -644,6 +700,7 @@ def worker_ask(
     summary="My last questions and the answers I was shown",
     description="Worker-only and scoped to the caller. Never calls the LLM and writes nothing.",
     responses=_errors(403, 422),
+    dependencies=[require_roles(WORKER)],
 )
 def worker_ask_history(
     actor_id: ActorId,
@@ -661,6 +718,7 @@ def worker_ask_history(
     tags=["admin"],
     summary="Questions workers asked the employee Q&A (payroll admin only, read-only)",
     responses=_errors(403, 422),
+    dependencies=[require_roles(ADMIN)],
 )
 def admin_worker_questions(
     actor_id: ActorId,
@@ -687,6 +745,7 @@ def admin_worker_questions(
     "the facts are unchanged, else a template built from the current facts with "
     "stale=true. Workers get 403.",
     responses=_errors(403, 422),
+    dependencies=[require_roles(*REVIEWERS)],
 )
 def get_briefing(
     actor_id: ActorId,
@@ -711,6 +770,7 @@ def get_briefing(
     "this scope, 429 briefing_daily_cap when the daily call budget is used up, 409 "
     "briefing_busy while one is being written. Changes no timecard, schedule or leave.",
     responses=_errors(403, 409, 422, 429),
+    dependencies=[require_roles(*REVIEWERS)],
 )
 def refresh_briefing(
     actor_id: ActorId,
@@ -740,6 +800,7 @@ def refresh_briefing(
     "has been silent). Workers get 403. "
     "Sorted by severity (high first), then date, then ID.",
     responses=_errors(403, 422),
+    dependencies=[require_roles(*REVIEWERS)],
 )
 def supervisor_queue(actor_id: ActorId, session: SessionDep, clock: ClockDep):
     with session.begin():
@@ -756,6 +817,7 @@ def supervisor_queue(actor_id: ActorId, session: SessionDep, clock: ClockDep):
     "rows of other workers are left out and their names are redacted. Every text is stored "
     "data or built by code; this endpoint never calls the LLM.",
     responses=_errors(403, 404, 422),
+    dependencies=[require_roles(*REVIEWERS)],
 )
 def supervisor_case(
     exception_id: str,
@@ -786,6 +848,7 @@ def supervisor_case(
     "says what was fixed, why code was allowed to close it, the policy text, and whether "
     "the caller may undo it. Workers get 403. Read-only; never calls the LLM.",
     responses=_errors(403, 422),
+    dependencies=[require_roles(*REVIEWERS)],
 )
 def supervisor_auto_resolved(
     actor_id: ActorId,
@@ -811,6 +874,7 @@ def supervisor_auto_resolved(
     "the data changed (no_longer_detected), which are returned as closed_by_data_change. "
     "Optional date_from/date_to filter on the exception date.",
     responses=_errors(403, 422),
+    dependencies=[require_roles(ADMIN)],
 )
 def auto_resolve_metric(
     actor_id: ActorId,
@@ -839,6 +903,7 @@ def auto_resolve_metric(
     description="Supervisors only see their own team. Optional dates filter exception dates. "
     "Overtime always covers the engine's current week.",
     responses=_errors(403, 422),
+    dependencies=[require_roles(*REVIEWERS)],
 )
 def operations_dashboard(
     actor_id: ActorId,
@@ -862,6 +927,7 @@ def operations_dashboard(
     tags=["payroll"],
     summary="Attendance readiness for one Monday-to-Sunday period",
     responses=_errors(403, 422),
+    dependencies=[require_roles(*REVIEWERS)],
 )
 def payroll_readiness(
     actor_id: ActorId,
@@ -888,6 +954,7 @@ def _lock_payroll_decision(session: Session) -> None:
     tags=["payroll"],
     summary="Record a human sign-off for a closed, blocker-free week",
     responses=_errors(403, 409, 422),
+    dependencies=[require_roles(ADMIN)],
 )
 def payroll_sign_off(
     week_start: date,
@@ -908,6 +975,7 @@ def payroll_sign_off(
     tags=["payroll"],
     summary="Reopen a signed-off week with a human reason",
     responses=_errors(403, 409, 422),
+    dependencies=[require_roles(ADMIN)],
 )
 def payroll_reopen(
     week_start: date,
@@ -932,6 +1000,7 @@ def payroll_reopen(
     "`q` matches the employee name or ID (case-insensitive). Default sort: severity "
     "(high first), then date, then ID. Read-only; never calls the LLM.",
     responses=_errors(403, 422),
+    dependencies=[require_roles(ADMIN)],
 )
 def admin_exceptions(
     actor_id: ActorId,
@@ -992,6 +1061,7 @@ def admin_exceptions(
     "investigate, use POST /api/exceptions/{id}/investigate; to decide an escalated case, "
     "use the supervisor card and decision endpoints.",
     responses=_errors(403, 404, 422),
+    dependencies=[require_roles(ADMIN)],
 )
 def admin_exception(
     exception_id: str,
@@ -1033,6 +1103,7 @@ def _setting_item(session: Session, request: Request, actor_id: str, key: str) -
     "its source (default / env / override), the allowed range and the last change. "
     "Payroll admin only (403 admin_only). Works in every profile.",
     responses=_errors(403),
+    dependencies=[require_roles(ADMIN)],
 )
 def get_runtime_settings(actor_id: ActorId, request: Request, session: SessionDep):
     with session.begin():
@@ -1045,6 +1116,7 @@ def get_runtime_settings(actor_id: ActorId, request: Request, session: SessionDe
     tags=["settings"],
     summary="Settings changes and resets, newest first (payroll admin only)",
     responses=_errors(403, 422),
+    dependencies=[require_roles(ADMIN)],
 )
 def get_settings_history(
     actor_id: ActorId,
@@ -1073,6 +1145,7 @@ def get_settings_history(
     "new value at its next cycle and running no-reply waits keep their limits. Audited "
     "as settings_changed.",
     responses=_errors(403, 404, 409, 422),
+    dependencies=[require_roles(ADMIN)],
 )
 def put_setting(
     key: SettingKey,
@@ -1106,6 +1179,7 @@ def put_setting(
     description="Needs a reason of 10+ characters; 409 no_override when nothing is "
     "overridden. Refused in the deployed Locked profile. Audited as settings_reset.",
     responses=_errors(403, 404, 409, 422),
+    dependencies=[require_roles(ADMIN)],
 )
 def reset_setting(
     key: SettingKey,
@@ -1140,6 +1214,7 @@ ACTIVITY_SCOPE = (
     "per row from fixed templates (no LLM). Never returns before/after data, tool "
     "outputs, prompts or model diagnostics. Page with `before_id` = `next_before_id`.",
     responses=_errors(403, 422),
+    dependencies=[require_roles(*REVIEWERS)],
 )
 def activity_feed(
     actor_id: ActorId,
@@ -1181,6 +1256,7 @@ def activity_feed(
     "autonomous/human do not apply). `definitions` lists the audit actions behind each "
     "count.",
     responses=_errors(403, 422),
+    dependencies=[require_roles(*REVIEWERS)],
 )
 def activity_summary(
     actor_id: ActorId,
@@ -1211,6 +1287,7 @@ def activity_summary(
     description="Generated from the registry in activity/autonomy.py (the README section is "
     "generated from the same registry). Supervisors and the payroll admin; workers get 403.",
     responses=_errors(403, 422),
+    dependencies=[require_roles(*REVIEWERS)],
 )
 def autonomy_table(actor_id: ActorId, session: SessionDep):
     with session.begin():
@@ -1220,7 +1297,13 @@ def autonomy_table(actor_id: ActorId, session: SessionDep):
 # ---------------------------------------------------------------- logs
 
 
-@router.get("/audit-log", response_model=AuditListOut, tags=["logs"], summary="Audit log")
+@router.get(
+    "/audit-log",
+    response_model=AuditListOut,
+    tags=["logs"],
+    summary="Audit log",
+    dependencies=[require_roles(ADMIN)],
+)
 def audit_log(
     session: SessionDep,
     exception_id: str | None = None,
@@ -1245,6 +1328,7 @@ def audit_log(
     response_model=ToolCallListOut,
     tags=["logs"],
     summary="Agent tool calls (filled from Phase 5)",
+    dependencies=[require_roles(ADMIN)],
 )
 def tool_calls(
     session: SessionDep,
@@ -1299,7 +1383,7 @@ def _receive_punch(
     return PunchAcceptedOut(punch=punch, detection=detection)
 
 
-@router.post(
+@device_router.post(
     "/punches",
     response_model=PunchAcceptedOut,
     status_code=201,
@@ -1377,6 +1461,7 @@ def _status(request: Request, session: Session) -> SchedulerStatusOut:
     tags=["scheduler"],
     summary="Scheduler status and the last cycle's summary (payroll admin only)",
     responses=_errors(403, 422),
+    dependencies=[require_roles(ADMIN)],
 )
 def scheduler_status(actor_id: ActorId, request: Request, session: SessionDep):
     _require_admin(session, actor_id)
@@ -1392,6 +1477,7 @@ def scheduler_status(actor_id: ActorId, request: Request, session: SessionDep):
     "the per-cycle limits. Model-free cycles skip investigation and messaging. "
     "409 scheduler_busy if a cycle is already running.",
     responses=_errors(403, 409, 422),
+    dependencies=[require_roles(ADMIN)],
 )
 def scheduler_run_now(
     actor_id: ActorId,
@@ -1413,6 +1499,7 @@ def scheduler_run_now(
     summary="Start the timer (runtime only; a restart goes back to SCHEDULER_ENABLED)",
     description="Cases detected from now on count as new for the scheduler.",
     responses=_errors(403, 422),
+    dependencies=[require_roles(ADMIN)],
 )
 def scheduler_start(actor_id: ActorId, request: Request, session: SessionDep):
     _require_admin(session, actor_id)
@@ -1426,6 +1513,7 @@ def scheduler_start(actor_id: ActorId, request: Request, session: SessionDep):
     tags=["scheduler"],
     summary="Stop the timer (a running cycle finishes first)",
     responses=_errors(403, 422),
+    dependencies=[require_roles(ADMIN)],
 )
 def scheduler_stop(actor_id: ActorId, request: Request, session: SessionDep):
     _require_admin(session, actor_id)
@@ -1443,6 +1531,7 @@ def scheduler_stop(actor_id: ActorId, request: Request, session: SessionDep):
     description="Requires demo mode and demo reset enabled. Payroll admin only. "
     "Destructive: wipes every table like POST /api/seed.",
     responses=_errors(403, 409, 422),
+    dependencies=[require_roles(ADMIN)],
 )
 def demo_reset(actor_id: ActorId, request: Request, session: SessionDep):
     state = request.app.state
@@ -1452,7 +1541,10 @@ def demo_reset(actor_id: ActorId, request: Request, session: SessionDep):
     try:
         with session.begin():
             counts = seed_from_csv(
-                session, state.settings.data_dir, extra_week=state.settings.demo_extra_week
+                session,
+                state.settings.data_dir,
+                extra_week=state.settings.demo_extra_week,
+                demo_password=_seed_password(state.settings),
             )
             demo_clock.reset(session, state.clock)  # back to the as-of time (Phase 13)
     except DataValidationError as exc:
@@ -1482,6 +1574,7 @@ def demo_reset(actor_id: ActorId, request: Request, session: SessionDep):
     "through the same ingest module and checks as POST /api/punches, so the device key "
     "never has to be in the browser. Audited with via=demo_simulator.",
     responses=_errors(403, 409, 422),
+    dependencies=[require_roles(ADMIN)],
 )
 def demo_punch(body: DemoPunchIn, actor_id: ActorId, request: Request, session: SessionDep):
     _require_admin(session, actor_id)
@@ -1494,6 +1587,7 @@ def demo_punch(body: DemoPunchIn, actor_id: ActorId, request: Request, session: 
     summary="Demo only: the demo clock (now, the data cut-off, the offset)",
     description="Exists only when ATTENDFLOW_DEMO_MODE=true. Payroll admin only.",
     responses=_errors(403, 422),
+    dependencies=[require_roles(ADMIN)],
 )
 def demo_clock_get(actor_id: ActorId, request: Request, session: SessionDep):
     _require_admin(session, actor_id)
@@ -1510,6 +1604,7 @@ def demo_clock_get(actor_id: ActorId, request: Request, session: SessionDep):
     "detection is unchanged. It runs nothing: the next scheduler cycle (or Run scheduler "
     "now) applies the timeouts. A demo reset puts it back to the as-of time.",
     responses=_errors(403, 409, 422),
+    dependencies=[require_roles(ADMIN)],
 )
 def demo_clock_move(body: DemoClockIn, actor_id: ActorId, request: Request, session: SessionDep):
     _require_admin(session, actor_id)

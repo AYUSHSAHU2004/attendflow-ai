@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: attendflow-config
+data:
+  ATTENDFLOW_DEPLOYED: "true"
+  ATTENDFLOW_AUTH_MODE: session
+  ATTENDFLOW_COOKIE_SECURE: "true"
+  ATTENDFLOW_TRUSTED_PROXY: "true"
+  ATTENDFLOW_ENABLE_SEED: "false"
+  ATTENDFLOW_DEMO_MODE: "false"
+  ATTENDFLOW_DEMO_RESET_ENABLED: "false"
+  ATTENDFLOW_DEMO_EXTRA_WEEK: "false"
+  LLM_DIAGNOSTICS: "off"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: attendflow-secrets
+type: Opaque
+stringData:
+  DATABASE_URL: ""
+  ATTENDFLOW_SESSION_SECRET: ""
+  ATTENDFLOW_DEMO_PASSWORD: ""

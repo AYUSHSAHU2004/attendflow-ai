@@ -10,13 +10,18 @@ const code = [
   'from dataclasses import replace',
   'from attendflow.api.app import create_app',
   'from attendflow.config import get_settings',
-  'print(json.dumps(create_app(replace(get_settings(env_file=None), demo_mode=True)).openapi()))',
+  'print(json.dumps(create_app(replace(get_settings(env_file=None), demo_mode=True, demo_reset_enabled=True)).openapi()))',
 ].join('; ')
 const python = process.env.ATTENDFLOW_PYTHON
 const output = execFileSync(python || 'uv', python ? ['-c', code] : ['run', 'python', '-c', code], {
   cwd: root,
   encoding: 'utf8',
-  env: { ...process.env, LOG_LEVEL: 'WARNING' },
+  env: {
+    ...process.env,
+    ATTENDFLOW_DEPLOYED: 'false',
+    ATTENDFLOW_AUTH_MODE: 'header',
+    LOG_LEVEL: 'WARNING',
+  },
 })
 const generated = '// Generated from FastAPI OpenAPI. Run npm run api:generate.\n' +
   astToString(await openapiTS(JSON.parse(output)))

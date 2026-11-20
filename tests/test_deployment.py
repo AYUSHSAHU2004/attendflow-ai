@@ -25,6 +25,8 @@ DATABASE = "postgres://demo:private-db-value@db.example/demo?sslmode=require"
 def locked(monkeypatch):
     monkeypatch.setenv("ATTENDFLOW_DEPLOYED", "true")
     monkeypatch.setenv("ATTENDFLOW_DEMO_PASSWORD", PASSWORD)
+    monkeypatch.setenv("ATTENDFLOW_SESSION_SECRET", "fixture-session-secret-" + "x" * 32)
+    monkeypatch.setenv("ATTENDFLOW_AUTH_MODE", "header")
     monkeypatch.setenv("DATABASE_URL", DATABASE)
     for key in (
         "ATTENDFLOW_CORS_ORIGINS",
@@ -62,6 +64,8 @@ def test_normalizes_managed_postgres_urls(locked, scheme):
 @pytest.mark.parametrize(
     ("change", "error"),
     [
+        ({"session_secret": None}, "ATTENDFLOW_SESSION_SECRET"),
+        ({"session_secret": "short"}, "ATTENDFLOW_SESSION_SECRET"),
         ({"demo_password": None}, "ATTENDFLOW_DEMO_PASSWORD"),
         ({"demo_password": "secret"}, "ATTENDFLOW_DEMO_PASSWORD"),
         ({"device_api_key": ""}, "DEVICE_API_KEY"),
