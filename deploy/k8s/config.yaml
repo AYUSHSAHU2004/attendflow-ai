@@ -1,0 +1,81 @@
+# Non-secret settings for the deployed app (Locked profile). Names match .env.example.
+# Secrets (DATABASE_URL, session secret, demo password, Groq key) live in the Secret made by
+# scripts/k8s-create-secrets.sh, never here.
+#
+# After changing a value: kubectl apply -k deploy/k8s
+#                         kubectl -n attendflow rollout restart deploy/attendflow
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: attendflow-config
+data:
+  # --- Deployment and sign-in ---
+  ATTENDFLOW_DEPLOYED: "true"
+  ATTENDFLOW_AUTH_MODE: session
+  ATTENDFLOW_COOKIE_SECURE: "true"
+  # Safe only because the NetworkPolicy lets nothing but Traefik reach the app.
+  ATTENDFLOW_TRUSTED_PROXY: "true"
+
+  # --- Locked profile (docs/DEPLOY.md "Settings profiles") ---
+  ATTENDFLOW_ENABLE_SEED: "false"
+  ATTENDFLOW_DEMO_MODE: "false"
+  ATTENDFLOW_DEMO_RESET_ENABLED: "false"
+  ATTENDFLOW_DEMO_EXTRA_WEEK: "false"
+  # DEVICE_API_KEY stays unset: POST /api/punches answers 503.
+  # ATTENDFLOW_CORS_ORIGINS stays unset: same origin only.
+
+  # Demo data size. The single place to change it: a later phase may set "large".
+  # The current app does not read this value yet.
+  ATTENDFLOW_SEED_PROFILE: small
+
+  # --- Logging ---
+  LLM_DIAGNOSTICS: "off"
+  LOG_FORMAT: json
+  LOG_LEVEL: INFO
+
+  # --- LLM (the key is in the Secret) ---
+  LLM_BASE_URL: https://api.groq.com/openai/v1
+  LLM_MODEL: openai/gpt-oss-120b
+  LLM_TIMEOUT_SECONDS: "30"
+  LLM_REASONING_EFFORT: low
+  AGENT_MAX_STEPS: "5"
+  LLM_INVESTIGATION_BUDGET_SECONDS: "45"
+
+  # --- Demo clock ---
+  ATTENDFLOW_AS_OF: "2026-04-16T08:00:00"
+
+  # --- Mock attendance device ---
+  DEVICE_MAX_BACKDATE_DAYS: "7"
+
+  # --- Scheduler: off at first. docs/DEPLOY.md shows how to turn it on and what it costs. ---
+  SCHEDULER_ENABLED: "false"
+  SCHEDULER_INTERVAL_SECONDS: "60"
+  SCHEDULER_INVESTIGATIONS_PER_CYCLE: "1"
+  SCHEDULER_MESSAGES_PER_CYCLE: "1"
+  SCHEDULER_BACKLOG: "false"
+
+  # --- Auto-resolve (Phase 12) ---
+  AUTO_RESOLVE_ENABLED: "true"
+
+  # --- No-reply ladder (Phase 13); the clock stays fixed in the Locked profile ---
+  NO_REPLY_ESCALATION_ENABLED: "true"
+  NO_REPLY_REMINDER_HOURS: "8"
+  NO_REPLY_SUPERVISOR_HOURS: "24"
+  NO_REPLY_ADMIN_HOURS: "24"
+
+  # --- Operations dashboard (Phase 15) ---
+  OVERTIME_WARNING_MARGIN_HOURS: "4"
+
+  # --- Daily briefing (Phase 17) ---
+  BRIEFING_ENABLED: "true"
+  BRIEFING_SCHEDULED: "true"
+  BRIEFING_MIN_INTERVAL_SECONDS: "300"
+  BRIEFING_MAX_LLM_CALLS_PER_DAY: "40"
+  BRIEFING_LLM_DEADLINE_SECONDS: "20"
+
+  # --- Employee Q&A (Phase 20) ---
+  QA_ENABLED: "true"
+  QA_MAX_QUESTION_CHARS: "300"
+  QA_QUESTIONS_PER_HOUR: "10"
+  QA_MAX_LLM_CALLS_PER_DAY: "60"
+  QA_LLM_DEADLINE_SECONDS: "15"

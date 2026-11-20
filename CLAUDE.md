@@ -73,9 +73,11 @@ Done: 0 Setup + data + policy + LLM test; 1 Rule engine P1-P7, P15; 2 Rules P8-P
 end-to-end tests (**prototype complete**); 11 mock punch API + scheduler; 12 auto-resolve + undo +
 "resolved without a human" metric; 13 no-reply escalation ladder + demo clock; 14 Activity
 Center + Autonomy Table (generated, anti-drift tests); 15 operations dashboard;
-16 payroll readiness and human sign-off; 16.5 rough deploy (local only, Render deploy pending);
-17 daily briefing, worker history and the phone-first inbox; 18 runtime settings backend +
-read-only Current settings panel (built and checked locally, not committed yet).
+16 payroll readiness and human sign-off; 16.5 rough deploy (local only; Render is no longer
+the target); 17 daily briefing, worker history and the phone-first inbox; 18 runtime settings
+backend + read-only Current settings panel; 20 employee Q&A (19 admin UI and 21 analytics
+skipped on purpose); A employee login and sessions. In progress: 22 Kubernetes deployment
+(K1 manifests and image build built locally, not committed yet).
 
 **Prototype (3-10)**
 3. Backend + DB + API
@@ -100,14 +102,15 @@ read-only Current settings panel (built and checked locally, not committed yet).
 19. Admin UI
 20. Employee Q&A
 21. Analytics
-22. Deployment
+22. Kubernetes deployment (K1 manifests + image build, then the deploy to k3s on one AWS VM;
+    Render stays an optional alternative, not used)
 23. Tests + evaluation
 24. Delivery
 
 Phase 17 is committed as `e9e4a7b` (pushed). Verified with `./scripts/check-all.sh` on the
-Windows PC: 836 backend tests passed, 2 skipped; 108 frontend tests passed. CI: pending.
-Phase 18 is built and checked locally on the Mac (see PROGRESS.md); the owner commits and
-runs CI.
+Windows PC: 836 backend tests passed, 2 skipped; 108 frontend tests passed.
+Phase 18 is committed as `c945421`. CI: green. Phase 20 is committed as `5e6ec43`. CI: green.
+Phase A is committed as `3f7171d`. CI: pending.
 Phases 15 and 16 are verified, CI green. The Phase 16 check recorded 735 backend tests
 passed, 2 skipped, 93 frontend tests passed, type-check, build, a migration round trip,
 and a live payroll page check. The payroll test's scheduler response lookup and the
@@ -150,7 +153,12 @@ Setup and Traefik configuration are in [docs/DEPLOY.md](docs/DEPLOY.md).
   the current reviewer via `?as=`. The API scopes counts and forecasts to that reviewer's team.
 - Any phase that adds an audit action: add its row to `activity/autonomy.py` first (tests
   fail otherwise), then `python -m uv run attendflow-autonomy --write-readme`.
-- **Phase 22 checklist (deployment):**
+- **Phase 22 checklist (Kubernetes deployment):**
+  - Target: a single-node k3s cluster on one AWS VM (amd64), manifests in `deploy/k8s/`
+    (Phase K1), image from `ghcr.io/ayushsahu2004/attendflow-ai`. Render is dropped as the
+    target and stays an optional alternative. The hosted smoke test
+    (`scripts/smoke-deployed.py`), the cold-start check and the Groq connectivity check run
+    on that cluster.
   - Phase A resolves the historical actor-binding items below for session mode. Employee
     login supersedes the proposed persona switcher. Use the [deployment guide](docs/DEPLOY.md)
     for current session and seed settings.
@@ -211,9 +219,9 @@ Setup and Traefik configuration are in [docs/DEPLOY.md](docs/DEPLOY.md).
   - Phase 16.5: retain separate seed/reset switches. Start locked and temporarily arm a
     destructive operation only for a disposable synthetic DB. The guided profile opens
     simulator, clock and reset behind the gate.
-  - Phase 16.5: **Render deploy pending.** The Docker image ran on the owner's Mac (4/4
-    smoke checks, CI run #21 green), but nothing is deployed. The repo owner applies the
-    Blueprint later; then verify cold start, runtime Groq connectivity and the hosted smoke.
+  - Phase 16.5: the Docker image ran on the owner's Mac (4/4 smoke checks, CI run #21
+    green). Render is no longer the target (optional, not used). After the k3s deploy,
+    verify cold start, runtime Groq connectivity and the hosted smoke on the cluster.
   - Phase 17: `GET /api/briefing`, `POST /api/briefing/refresh` and `GET /api/worker/history`
     trust `X-Actor-Id` like every endpoint (real login first). Review BRIEFING_* limits
     against the Groq plan; the scheduled briefing needs an always-on scheduler. The
@@ -838,10 +846,31 @@ frontend/                Vite React: worker inbox (/, phone first: questions + M
 scripts/check-all.sh     local lint, validation, backend tests and frontend checks
 scripts/start-deployed.sh and scripts/smoke-deployed.py
                          deploy startup with migrations and hosted model-free smoke
-Dockerfile, render.yaml  single-process app image and the Locked Render blueprint
+scripts/k8s-create-secrets.sh  creates attendflow-secrets (+ ghcr-pull) from shell env, prints no value
+Dockerfile, render.yaml  single-process app image and the Locked Render blueprint (optional, unused)
+deploy/k8s/              kustomize for k3s (namespace attendflow): config, app, postgres, ingress,
+                         networkpolicy; *.example.yaml are applied by hand (Secret placeholder,
+                         ClusterIssuers, Traefik client-IP config)
 docker-compose.yml       PostgreSQL 16 (host port 5433); docker/initdb creates the test DB
-.github/workflows/ci.yml lint + validate + README autonomy check + tests (Postgres service)
+.github/workflows/ci.yml lint + validate + README autonomy check + tests (Postgres service);
+                         job `image` pushes ghcr.io/<owner>/attendflow-ai (SHA + latest), main only
 ```
+
+**Kubernetes (Phase 22 / K1)**
+- `deploy/k8s/config.yaml` is the single place for non-secret deployed settings (Locked
+  profile, session login, `SCHEDULER_ENABLED=false` at first, `ATTENDFLOW_SEED_PROFILE=small`,
+  which the app does not read yet). The app takes only its four Secret keys by name;
+  `POSTGRES_PASSWORD` stays with Postgres. The kustomization never contains a Secret, so
+  `kubectl apply -k` cannot overwrite the real one.
+- App: 1 replica, `Recreate`, startup/readiness/liveness on `/healthz` (which checks the DB,
+  so liveness tolerates about 2 minutes), init container waits with `pg_isready`, read-only
+  root filesystem with `/tmp` as an emptyDir (login lockout state), `enableServiceLinks: false`.
+- NetworkPolicies: default deny; only Traefik reaches the app (required by
+  `ATTENDFLOW_TRUSTED_PROXY=true`), only the app reaches Postgres, Traefik reaches the
+  cert-manager HTTP-01 solver. `traefik-config.example.yaml` keeps real client IPs.
+- `tests/test_k8s_manifests.py` checks the manifests, the Secret placeholders, the CI job and
+  that the ConfigMap passes the deployed `Settings` checks; it renders with
+  `kubectl kustomize` when kubectl is installed. PyYAML is a dev dependency for it.
 
 ## Commands
 

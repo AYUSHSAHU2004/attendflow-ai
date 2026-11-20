@@ -1159,6 +1159,9 @@ section 10 of [DEMO_WALKTHROUGH.md](DEMO_WALKTHROUGH.md) on an isolated demo dat
   locally. **Render deploy pending:** the repo owner will apply the Blueprint later.
   Nothing is deployed yet; host cold start, runtime Groq connectivity and a hosted smoke
   run remain unverified (tracked on the Phase 22 checklist).
+- **Update (2026-11-20, owner decision):** Render is dropped as the deployment target and
+  stays an optional alternative. Phase 22 deploys to k3s on one AWS VM; the hosted smoke,
+  cold-start and Groq connectivity checks run on that cluster.
 - **Phase 22:** jury actor switching remains an open decision. Production keeps
   the dev-only actor override out of the bundle.
 
@@ -1480,9 +1483,11 @@ and set the QA caps for the Groq plan.
 
 **Verify:** `python -m uv run alembic upgrade head`, then `REQUIRE_DB=1 python -m uv run
 pytest tests/test_qa_api.py tests/test_qa_golden.py` and section 14 of
-[DEMO_WALKTHROUGH.md](DEMO_WALKTHROUGH.md). **CI: pending** (not committed yet).
+[DEMO_WALKTHROUGH.md](DEMO_WALKTHROUGH.md).
 
-**Next:** Phase 22 (deployment).
+**Status (owner report):** committed as `5e6ec43`. **CI: green.**
+
+**Next:** Phase 22 (Kubernetes deployment: the K1 prompt, then the deploy to k3s).
 
 ## Phase A — Employee login and sessions (2026-11-20)
 
@@ -1518,3 +1523,50 @@ OpenAPI drift, and the model-free deployment smoke test passed.
 **CI:** pending
 
 See [DEPLOY.md](DEPLOY.md) for local session setup and Kubernetes configuration.
+
+## Phase 22 / K1: Kubernetes manifests and image build (2026-11-20)
+
+Phase 22 is now "Kubernetes deployment": this K1 step, then the deploy to a single-node
+k3s cluster on one AWS VM. Render is dropped as the target (optional, not used). Deployment
+files only; no app logic changed.
+
+**Built**
+- `deploy/k8s/` (kustomize, namespace `attendflow`): `config.yaml` (ConfigMap, Locked
+  profile, session login, secure cookie, trusted proxy, diagnostics off, scheduler off,
+  limits from `.env.example`, `ATTENDFLOW_SEED_PROFILE=small`), `app.yaml` (1 replica,
+  `Recreate`, startup/readiness/liveness on `/healthz`, init container waits for Postgres,
+  requests/limits for a 4 GB node, image `ghcr.io/ayushsahu2004/attendflow-ai:latest` with the
+  `ghcr-pull` pull secret), `postgres.yaml` (StatefulSet, 2Gi volume, `pg_isready` checks,
+  ClusterIP Service), `ingress.yaml` (Traefik, TLS, HTTP→HTTPS redirect, sslip.io host
+  placeholder), `networkpolicy.yaml`.
+- Applied by hand: `auth.example.yaml` (now the Secret placeholder only; the ConfigMap part
+  moved to `config.yaml`), `cluster-issuers.example.yaml` (Let's Encrypt staging + prod),
+  `traefik-config.example.yaml` (keeps real client IPs for the per-IP login lockout).
+- `scripts/k8s-create-secrets.sh`: reads the values from the shell, builds a percent-encoded
+  `DATABASE_URL`, passes everything to kubectl as files, prints no value; optional
+  `ghcr-pull` from `GHCR_USERNAME` + `GHCR_TOKEN`.
+- CI job `image`: after `backend` passes, on pushes to `main` only; amd64; tags commit SHA
+  and `latest`; `GITHUB_TOKEN` with `packages: write`. The workflow default is now
+  `contents: read`.
+- `docs/DEPLOY.md`: "Kubernetes on k3s" with numbered steps (VM, k3s, cert-manager, secrets,
+  apply, `seed-demo` bootstrap, certificate, smoke, cold start, Groq key, turning the
+  scheduler on and its call cost).
+
+**Decisions** (all recommended defaults, scheduler off at first per the owner)
+- The kustomization never contains a Secret, so `kubectl apply -k` cannot overwrite it.
+- The app takes only `DATABASE_URL`, the session secret, the demo password and the optional
+  `LLM_API_KEY` by name; `POSTGRES_PASSWORD` stays with Postgres.
+- `/healthz` checks the database, so liveness restarts only after about 2 minutes of failures.
+- `ATTENDFLOW_SEED_PROFILE` is not read by the app yet; it sits in `config.yaml` so a later
+  phase can switch it to `large` in one place.
+- Phase A CI is recorded as pending (no status was given).
+
+**Scheduler off: what still happens.** `seed-demo` runs detection once (with auto-resolve,
+so Sana's P2 duplicate closes on its own). Every approve, edit and undo re-runs detection
+for that worker, and new P2/P7 rows found then can auto-resolve. Investigate, ask-worker,
+briefing refresh and Q&A work on request. Without the scheduler nothing runs on a timer:
+no periodic detection, no automatic investigations or worker messages, no no-reply ladder
+(the clock is fixed in Locked mode anyway) and no scheduled briefing. Priya's "Run
+scheduler now" still runs one cycle.
+
+**Checks**

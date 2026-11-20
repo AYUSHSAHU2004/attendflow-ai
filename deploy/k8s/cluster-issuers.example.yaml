@@ -1,0 +1,36 @@
+# cert-manager ClusterIssuers for Let's Encrypt (HTTP-01 through Traefik). Not part of
+# kustomization.yaml because they are cluster-wide. Replace the email first (Let's Encrypt
+# refuses example.com addresses), then: kubectl apply -f deploy/k8s/cluster-issuers.example.yaml
+#
+# Use staging first: its certificates are not trusted by browsers, but its rate limits are
+# generous. When the staging certificate is issued, switch the Ingress annotation to
+# letsencrypt-prod.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+spec:
+  acme:
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    email: you@example.com
+    privateKeySecretRef:
+      name: letsencrypt-staging-account
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: traefik
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: you@example.com
+    privateKeySecretRef:
+      name: letsencrypt-prod-account
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: traefik

@@ -30,6 +30,7 @@ attendflow-autonomy = "attendflow.scripts.autonomy_cli:main"
 dev = [
     "httpx>=0.28.1",
     "pytest>=8.3",
+    "pyyaml>=6.0",
     "ruff>=0.7",
 ]
 

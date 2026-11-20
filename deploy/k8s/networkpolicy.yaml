@@ -1,0 +1,77 @@
+# k3s enforces NetworkPolicies out of the box. Nothing may reach a pod in this namespace
+# unless a policy below allows it. Outbound traffic (Groq, Let's Encrypt) is not limited.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress"]
+---
+# Only Traefik may call the app. ATTENDFLOW_TRUSTED_PROXY=true relies on this: the app
+# trusts the client IP that Traefik puts in X-Forwarded-For.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: app-from-traefik
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: attendflow
+      app.kubernetes.io/component: app
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - protocol: TCP
+          port: 10000
+---
+# Only the app may reach Postgres.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: db-from-app
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: attendflow
+      app.kubernetes.io/component: database
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: attendflow
+              app.kubernetes.io/component: app
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+# cert-manager answers the Let's Encrypt HTTP-01 challenge from a short-lived pod in this
+# namespace. Traefik must reach it, or the certificate is never issued.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: acme-solver-from-traefik
+spec:
+  podSelector:
+    matchLabels:
+      acme.cert-manager.io/http01-solver: "true"
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - protocol: TCP
+          port: 8089

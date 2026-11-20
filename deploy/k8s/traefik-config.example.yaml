@@ -1,0 +1,15 @@
+# Keeps the real client IP for the login lockout. Without it, the k3s built-in load
+# balancer replaces every client IP with the node IP, so one person's failed logins would
+# lock out everyone. Not part of kustomization.yaml (it belongs to kube-system).
+#   kubectl apply -f deploy/k8s/traefik-config.example.yaml
+# k3s then redeploys Traefik with this setting. Fine on a single node.
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: traefik
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    service:
+      spec:
+        externalTrafficPolicy: Local

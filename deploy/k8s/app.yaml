@@ -1,0 +1,153 @@
+# The AttendFlow API + built frontend. One pod only: the scheduler runs inside the API
+# process with an in-process lock, so two pods would mean two schedulers. Recreate stops
+# the old pod before the new one starts, also during a rollout.
+apiVersion: v1
+kind: Service
+metadata:
+  name: attendflow
+  labels:
+    app.kubernetes.io/name: attendflow
+    app.kubernetes.io/component: app
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: attendflow
+    app.kubernetes.io/component: app
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: attendflow
+  labels:
+    app.kubernetes.io/name: attendflow
+    app.kubernetes.io/component: app
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: attendflow
+      app.kubernetes.io/component: app
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: attendflow
+        app.kubernetes.io/component: app
+    spec:
+      # The repo is private, so the image is too. See docs/DEPLOY.md to create this secret.
+      imagePullSecrets:
+        - name: ghcr-pull
+      automountServiceAccountToken: false
+      # Without this, Kubernetes adds ATTENDFLOW_* service variables to the environment.
+      enableServiceLinks: false
+      # The scheduler finishes a running cycle (an investigation can take 45 s) on shutdown.
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        # Migrations run when the app starts, so wait until Postgres accepts connections.
+        - name: wait-for-db
+          image: postgres:16-bookworm
+          command:
+            - sh
+            - -c
+            - until pg_isready -h attendflow-db -p 5432 -U attendflow -d attendflow; do sleep 2; done
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+      containers:
+        - name: attendflow
+          image: ghcr.io/ayushsahu2004/attendflow-ai:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 10000
+          envFrom:
+            - configMapRef:
+                name: attendflow-config
+          # Only the keys the app needs; POSTGRES_PASSWORD stays with the database.
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: attendflow-secrets
+                  key: DATABASE_URL
+            - name: ATTENDFLOW_SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: attendflow-secrets
+                  key: ATTENDFLOW_SESSION_SECRET
+            - name: ATTENDFLOW_DEMO_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: attendflow-secrets
+                  key: ATTENDFLOW_DEMO_PASSWORD
+            - name: LLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: attendflow-secrets
+                  key: LLM_API_KEY
+                  optional: true
+          # /healthz answers 200 only when the database answers SELECT 1.
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 36  # about 3 minutes for migrations on a cold start
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          # Restart only after about 2 minutes of failures, so a short database blip
+          # takes the pod out of the Service without restarting it.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 250m
+              memory: 384Mi
+            limits:
+              cpu: "1"
+              memory: 768Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            # Login lockout state lives in the temp folder, shared by the API and the
+            # auth CLI run with kubectl exec in this container.
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi

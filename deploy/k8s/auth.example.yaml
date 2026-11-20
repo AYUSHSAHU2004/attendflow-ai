@@ -1,24 +1,21 @@
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: attendflow-config
-data:
-  ATTENDFLOW_DEPLOYED: "true"
-  ATTENDFLOW_AUTH_MODE: session
-  ATTENDFLOW_COOKIE_SECURE: "true"
-  ATTENDFLOW_TRUSTED_PROXY: "true"
-  ATTENDFLOW_ENABLE_SEED: "false"
-  ATTENDFLOW_DEMO_MODE: "false"
-  ATTENDFLOW_DEMO_RESET_ENABLED: "false"
-  ATTENDFLOW_DEMO_EXTRA_WEEK: "false"
-  LLM_DIAGNOSTICS: "off"
----
+# Placeholder only. This file is NOT in kustomization.yaml and must never hold real values.
+# Create the real Secret with scripts/k8s-create-secrets.sh, which reads the values from
+# your shell and builds DATABASE_URL from POSTGRES_PASSWORD.
+# The non-secret settings moved to config.yaml.
 apiVersion: v1
 kind: Secret
 metadata:
   name: attendflow-secrets
+  namespace: attendflow
 type: Opaque
 stringData:
+  # Postgres password (the StatefulSet reads it).
+  POSTGRES_PASSWORD: ""
+  # postgresql+psycopg://attendflow:<url-encoded password>@attendflow-db:5432/attendflow
   DATABASE_URL: ""
+  # At least 32 bytes: openssl rand -hex 32
   ATTENDFLOW_SESSION_SECRET: ""
+  # Strong random value: openssl rand -hex 24
   ATTENDFLOW_DEMO_PASSWORD: ""
+  # Groq key. Optional: leave it out and the app uses template answers only.
+  LLM_API_KEY: ""

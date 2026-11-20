@@ -1,0 +1,44 @@
+# Public HTTPS through Traefik (shipped with k3s) and a cert-manager certificate.
+#
+# Host placeholder: 203-0-113-10.sslip.io (a documentation IP). Replace it with
+# <elastic-ip>.sslip.io, for example 54-12-34-56.sslip.io; sslip.io resolves that name to
+# 54.12.34.56. The host appears twice below. docs/DEPLOY.md has a one-line sed for it.
+#
+# Issuer: start with letsencrypt-staging, then switch the annotation to letsencrypt-prod.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: redirect-https
+spec:
+  redirectScheme:
+    scheme: https
+    permanent: true
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: attendflow
+  labels:
+    app.kubernetes.io/name: attendflow
+    app.kubernetes.io/component: app
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-staging
+    # <namespace>-<middleware name>@kubernetescrd
+    traefik.ingress.kubernetes.io/router.middlewares: attendflow-redirect-https@kubernetescrd
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - 203-0-113-10.sslip.io
+      secretName: attendflow-tls
+  rules:
+    - host: 203-0-113-10.sslip.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: attendflow
+                port:
+                  name: http

@@ -1,0 +1,24 @@
+# AttendFlow on a single-node k3s cluster. Apply with: kubectl apply -k deploy/k8s
+#
+# Not part of this kustomization (applied separately, see docs/DEPLOY.md):
+#   auth.example.yaml             placeholder Secret; the real one comes from
+#                                 scripts/k8s-create-secrets.sh, so apply never overwrites it
+#   cluster-issuers.example.yaml  cert-manager Let's Encrypt issuers (cluster-wide)
+#   traefik-config.example.yaml   keeps real client IPs for the login lockout (kube-system)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: attendflow
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: attendflow
+    includeSelectors: false
+
+resources:
+  - namespace.yaml
+  - config.yaml
+  - postgres.yaml
+  - app.yaml
+  - ingress.yaml
+  - networkpolicy.yaml
