@@ -20,6 +20,36 @@
         "$env:VITE_API_BASE_URL='http://localhost:8001'; Set-Location frontend; npm run dev -- --port 5174 --strictPort"
       ],
       "port": 5174
+    },
+    {
+      "name": "phase17-api",
+      "runtimeExecutable": "powershell",
+      "runtimeArgs": [
+        "-NoProfile",
+        "-Command",
+        "$env:DATABASE_URL='postgresql+psycopg://attendflow:attendflow@localhost:5433/attendflow_phase17'; $env:ATTENDFLOW_DEMO_MODE='true'; $env:ATTENDFLOW_ENABLE_SEED='true'; $env:ATTENDFLOW_CORS_ORIGINS='http://localhost:5187'; $env:SCHEDULER_ENABLED='false'; $env:LOG_FORMAT='text'; $env:LLM_API_KEY='none'; $env:LLM_BASE_URL='http://127.0.0.1:9/v1'; python -m uv run attendflow-api --port 8017"
+      ],
+      "port": 8017
+    },
+    {
+      "name": "phase17-api-live",
+      "runtimeExecutable": "powershell",
+      "runtimeArgs": [
+        "-NoProfile",
+        "-Command",
+        "$env:DATABASE_URL='postgresql+psycopg://attendflow:attendflow@localhost:5433/attendflow_phase17'; $env:ATTENDFLOW_DEMO_MODE='true'; $env:ATTENDFLOW_ENABLE_SEED='true'; $env:ATTENDFLOW_CORS_ORIGINS='http://localhost:5187'; $env:SCHEDULER_ENABLED='false'; $env:LOG_FORMAT='text'; python -m uv run attendflow-api --port 8017"
+      ],
+      "port": 8017
+    },
+    {
+      "name": "phase17-web",
+      "runtimeExecutable": "powershell",
+      "runtimeArgs": [
+        "-NoProfile",
+        "-Command",
+        "$env:VITE_API_BASE_URL='http://localhost:8017'; Set-Location frontend; npx vite --port 5187 --strictPort"
+      ],
+      "port": 5187
     }
   ]
 }
