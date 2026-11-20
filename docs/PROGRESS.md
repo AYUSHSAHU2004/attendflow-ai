@@ -1154,5 +1154,115 @@ section 10 of [DEMO_WALKTHROUGH.md](DEMO_WALKTHROUGH.md) on an isolated demo dat
   on Render, host cold-start behavior, runtime Groq connectivity, and a live hosted
   smoke run. The owner has exact Mac build/run and hosted setup steps in
   [DEPLOY.md](DEPLOY.md). No public deployment was made.
+- **Update (2026-11-20, owner report):** the Docker image was built and run on the
+  owner's Mac and all 4 smoke checks passed; CI is green (run #21). Phase 16.5 is done
+  locally. **Render deploy pending:** the repo owner will apply the Blueprint later.
+  Nothing is deployed yet; host cold start, runtime Groq connectivity and a hosted smoke
+  run remain unverified (tracked on the Phase 22 checklist).
 - **Phase 22:** jury actor switching remains an open decision. Production keeps
   the dev-only actor override out of the bundle.
+
+## Phase 17: Daily briefing, worker history and the phone-first inbox (2026-11-20)
+
+**Built**
+- **Facts packet** (`briefing/facts.py`), built by code and scoped first: Priya gets all
+  teams, a supervisor only their team. It reuses the admin counters, the dashboard
+  (workload, P5 overtime, auto-resolve metric), payroll readiness (current-week blockers),
+  the activity summary (workflow date) and the decision queue. It holds case IDs, IDs,
+  in-scope names, policy titles, dates and numbers only. No free text, prompts, diagnostics
+  or secrets.
+- **Grounding validator** (`briefing/validate.py`): checks case IDs (exist, in scope, in the
+  bullet's section, listed), employee and policy IDs, numbers (packet values, list lengths,
+  parts of packet dates, number words), out-of-scope names, unknown proper nouns, future
+  tense and promises, action claims the packet does not show, and approval bypass. Failure
+  messages are code-built and never quote model text. A deterministic **template** is built
+  from the same packet and passes the same checks.
+- **Generator** (`briefing/generate.py`): one tool-free JSON call. The shape is in the
+  prompt, with no schema object, `$ref`, `$defs` or date-time format. **Your change:** one
+  correction request only after a failed check, so at most 2 calls. A provider error or
+  timeout goes straight to the template. **Your addition:** the prompt asks for present and
+  past tense only, numbers and IDs from the facts only, and cases referred to by ID.
+- **Service and API** (`briefing/service.py`):
+  - `GET /api/briefing` makes no LLM call and no write. It returns the stored briefing, or
+    a template with `stale` when the facts changed.
+  - `POST /api/briefing/refresh` refuses with 429 within 5 minutes per scope or after
+    40 calls a day, and 409 while busy.
+  - The `briefings` table (migration `0010`) stores each briefing with its facts hash.
+  - Scheduler step 5 writes Priya's briefing once per workflow day. It runs only after new
+    activity since the watermark and only when the facts changed.
+- **Audit and autonomy:** `briefing_refresh_requested` (human), `briefing_generated`
+  (agent) and `briefing_fallback` (system, reason code only) are registered rows. The README
+  table is regenerated, and only Priya sees these rows in the feed. No new writer of
+  timecards, schedule or leave.
+- **Summaries** (agreed): one grounded team line per team in the same LLM call. The worker
+  history shows a code-built outcome per case.
+- **Worker history:** `GET /api/worker/history` is worker-only and covers own cases. It
+  shows questions, the worker's own answers and a plain outcome. Only the
+  decided-without-reply reason is shown, never a reject reason.
+- **Frontend:**
+  - `BriefingCard` on `/admin` and `/supervisor` shows a label, clickable case IDs and
+    Refresh. It refreshes once by itself when stale and reloads after a busy reply.
+  - The worker inbox is rebuilt phone first: greeting, Questions / My history switch,
+    one question per card, 56 px Yes/No, a focused confirmation ("One more step" when a
+    time is still needed), Check again and dark mode.
+
+**Decisions:** all recommended defaults, plus your change (retry only on a failed check)
+and your two additions. My own calls:
+- JSON or shape errors count as failed checks, so they get the correction.
+- The "today" activity counts use the workflow date, matching the activity summary.
+- An explicit Refresh always calls the LLM, even with unchanged facts (a person asked).
+- The admin and supervisor pages have no dark mode, so the card has none.
+- Supervisors do not see briefing rows in their feed (they have no case).
+
+**Checks (run here)**
+- Backend `REQUIRE_DB=1 pytest`: 818 passed, 2 skipped. 64 new tests:
+  - `test_briefing_validate.py`: 35
+  - `test_briefing_api.py`: 19
+  - `test_worker_history.py`: 5
+
+  Existing tests updated: the endpoint list, autonomy coverage and the stub in the page
+  tests. After later formatting-only edits, the briefing, history, activity and autonomy
+  files were rerun: 99 passed.
+- `ruff check .` and `ruff format --check .` pass, as do `attendflow-validate` and
+  `attendflow-autonomy --check`. Migration 0010 passed downgrade and upgrade.
+- Frontend: 108 tests pass (16 new), along with type-check, build, `api:generate` (no
+  drift) and `api:check`. The bundle has no `URLSearchParams` and no `Neha`.
+- `scripts/check-all.sh` was not run as a script here (`uv` is not on PATH). Each of its
+  steps was run with `python -m uv`.
+
+**Live check** (`attendflow_phase17`, API :8017, Vite :5187)
+- Offline: Priya's and Ravi's template briefings showed. Ravi's covered Inbound only. A
+  case ID opened the detail panel.
+- Amit at 375 px, dark and light: Ravi asked him (a human action), and he answered No with
+  his own words. He then got "One more step", entered 18:30, saw the confirmation and
+  history, and had no horizontal scroll.
+- One real refresh with the `.env` key passed every check on the first draft: 1 call,
+  2.6 s model latency, 3.0 s end to end.
+- The real draft said P3-E002 is "awaiting supervisor review" (it is open) and that
+  Outbound has "no pending items" (it has 5 active). The validator does not check status
+  words; I did not loosen or change it.
+- Amit's P1 had only `detected` until Ravi acted. No briefing row touches it.
+- Found and fixed during the check:
+  - The card stayed stale after a 409 from a second tab; it now reloads.
+  - Case links now scroll to the detail panel.
+  - The Vite launch command did not take the port in PowerShell.
+
+**Render deploy pending** (Phase 16.5, see above). Nothing is deployed.
+
+**Follow-up: status and emptiness checks** (user request after the first real run)
+- `status_mismatch`: a status phrase tied to a case ID must match that case's status in the
+  packet. The phrase belongs to the nearest group of IDs in its sentence ("A and B
+  awaiting supervisor" covers both), "open" fits any active status, and negated phrases are
+  not checked. Message example: "P3-E002-2026-04-13 is open, not awaiting supervisor".
+- `false_empty_claim`: "no pending", "nothing waiting", "no open cases", "all clear" (and
+  close variants) for the headline, a section or a team whose count is above 0.
+- Both use the one correction request; messages are code-built. No other check changed.
+- Tests: 18 new in `test_briefing_validate.py` (53 there now), including both real
+  examples as regression tests, correct wording that must pass, and a correction run.
+  Rerun: validator, briefing API, activity and autonomy tests, 112 passed. Both ruff
+  checks pass.
+- Second real-key refresh: the first draft passed every check (including the new ones), so
+  there was no retry. 1 call, 2.4 s model latency, 2.8 s end to end. Its only status
+  phrase about a case ("P5-E002-2026-04-13 remains open") is true.
+
+**Next:** Phase 18 (settings backend).

@@ -26,6 +26,8 @@ import { cycleLine, SchedulerPanel } from './SchedulerPanel'
 import { noReplyBadge, plainError, SupervisorPage } from './SupervisorPage'
 import { cycle, metric, schedulerStatus } from './testFixtures'
 
+// The briefing card has its own tests (BriefingCard.test.tsx).
+vi.mock('./BriefingCard', () => ({ BriefingCard: () => null }))
 vi.mock('./api', async (importOriginal) => ({
   ...await importOriginal<typeof import('./api')>(),
   getQueue: vi.fn(),

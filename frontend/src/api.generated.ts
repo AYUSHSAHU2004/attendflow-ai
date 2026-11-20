@@ -304,6 +304,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/worker/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What happened to my cases: my questions, my answers and the outcome
+         * @description Worker-only and scoped to the caller's own cases (others get 403 worker_inbox_only). Outcome texts are built by code; no LLM, no writes.
+         */
+        get: operations["worker_history_api_worker_history_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/briefing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The caller's daily briefing (payroll admin: all teams; supervisor: own team)
+         * @description Never calls the LLM and writes nothing. Returns the stored briefing when the facts are unchanged, else a template built from the current facts with stale=true. Workers get 403.
+         */
+        get: operations["get_briefing_api_briefing_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/briefing/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Write a fresh briefing (at most two LLM calls, else the template)
+         * @description One LLM call phrases the code-built facts; if the draft fails a check, one correction request follows; a provider error or timeout uses the template at once. 429 briefing_too_soon within BRIEFING_MIN_INTERVAL_SECONDS of the last briefing for this scope, 429 briefing_daily_cap when the daily call budget is used up, 409 briefing_busy while one is being written. Changes no timecard, schedule or leave.
+         */
+        post: operations["refresh_briefing_api_briefing_refresh_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/supervisor/queue": {
         parameters: {
             query?: never;
@@ -1547,6 +1607,103 @@ export interface components {
             /** Items */
             items: components["schemas"]["AutonomyRowOut"][];
         };
+        /** BriefingBulletOut */
+        BriefingBulletOut: {
+            /** Text */
+            text: string;
+            /** Case Ids */
+            case_ids: string[];
+        };
+        /** BriefingOut */
+        BriefingOut: {
+            /**
+             * Scope
+             * @enum {string}
+             */
+            scope: "all" | "team";
+            /** Team */
+            team?: string | null;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "llm" | "template";
+            /**
+             * Reason
+             * @description validated, validated_after_retry, validation_failed, llm_error, timeout, llm_unavailable, llm_disabled, no_budget, facts_changed or not_generated
+             */
+            reason: string;
+            /** Label */
+            label: string;
+            /**
+             * Stale
+             * @description The facts changed since the stored briefing (or none yet)
+             */
+            stale: boolean;
+            /** Stored */
+            stored: boolean;
+            /** Briefing Id */
+            briefing_id?: number | null;
+            /** Headline */
+            headline: string;
+            /** Sections */
+            sections: components["schemas"]["BriefingSectionOut"][];
+            /** Team Lines */
+            team_lines: components["schemas"]["BriefingTeamLineOut"][];
+            /**
+             * Generated At
+             * Format: date-time
+             * @description Workflow time (demo clock)
+             */
+            generated_at: string;
+            /** Facts Hash */
+            facts_hash: string;
+            /** Llm Calls */
+            llm_calls: number;
+            /** Latency Ms */
+            latency_ms?: number | null;
+            /**
+             * Failed Checks
+             * @description Codes of checks the LLM drafts failed
+             */
+            failed_checks: string[];
+            refresh: components["schemas"]["BriefingRefreshStateOut"];
+        };
+        /** BriefingRefreshStateOut */
+        BriefingRefreshStateOut: {
+            /** Allowed */
+            allowed: boolean;
+            /** Reason */
+            reason?: ("too_soon" | "daily_cap") | null;
+            /** Retry After Seconds */
+            retry_after_seconds?: number | null;
+            /** Calls Left Today */
+            calls_left_today: number;
+            /**
+             * Llm Configured
+             * @description An LLM key is set and BRIEFING_ENABLED is on
+             */
+            llm_configured: boolean;
+        };
+        /** BriefingSectionOut */
+        BriefingSectionOut: {
+            /**
+             * Key
+             * @enum {string}
+             */
+            key: "needs_decision" | "handled_on_its_own" | "blocking_payroll" | "watch";
+            /** Title */
+            title: string;
+            /** Bullets */
+            bullets: components["schemas"]["BriefingBulletOut"][];
+        };
+        /** BriefingTeamLineOut */
+        BriefingTeamLineOut: {
+            /** Team */
+            team: string;
+            /** Text */
+            text: string;
+        };
         /** CardConfirmedTimeOut */
         CardConfirmedTimeOut: {
             /** Timestamp */
@@ -1698,6 +1855,23 @@ export interface components {
             /** Needs Actual Time */
             needs_actual_time: boolean;
         };
+        /** CycleBriefingOut */
+        CycleBriefingOut: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "generated" | "fallback" | "skipped";
+            /** Reason */
+            reason: string;
+            /** Briefing Id */
+            briefing_id?: number | null;
+            /**
+             * Llm Calls
+             * @default 0
+             */
+            llm_calls: number;
+        };
         /** CycleErrorOut */
         CycleErrorOut: {
             /** Exception Id */
@@ -1706,7 +1880,7 @@ export interface components {
              * Step
              * @enum {string}
              */
-            step: "detection" | "investigate" | "ask_worker";
+            step: "detection" | "investigate" | "ask_worker" | "no_reply" | "briefing";
             /** Error */
             error: string;
         };
@@ -2820,6 +2994,8 @@ export interface components {
             skipped_undone: number;
             /** @description No-reply ladder steps (Phase 13) */
             no_reply?: components["schemas"]["CycleNoReplyOut"];
+            /** @description Priya's scheduled daily briefing (Phase 17) */
+            briefing?: components["schemas"]["CycleBriefingOut"] | null;
             /** Errors */
             errors: components["schemas"]["CycleErrorOut"][];
         };
@@ -3226,6 +3402,62 @@ export interface components {
             /** Set At */
             set_at: string;
         };
+        /** WorkerAnswerOut */
+        WorkerAnswerOut: {
+            /**
+             * Confirmed
+             * @description Yes (true), No (false), or no choice yet
+             */
+            confirmed: boolean | null;
+            /**
+             * Text
+             * @description The worker's own words, if any
+             */
+            text?: string | null;
+            /**
+             * Time
+             * @description The time the worker confirmed (HH:MM)
+             */
+            time?: string | null;
+            /** Replied At */
+            replied_at?: string | null;
+        };
+        /** WorkerHistoryItemOut */
+        WorkerHistoryItemOut: {
+            /** Exception Id */
+            exception_id: string;
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Questions */
+            questions: components["schemas"]["WorkerHistoryQuestionOut"][];
+            outcome: components["schemas"]["WorkerOutcomeOut"];
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** WorkerHistoryOut */
+        WorkerHistoryOut: {
+            /** Items */
+            items: components["schemas"]["WorkerHistoryItemOut"][];
+        };
+        /** WorkerHistoryQuestionOut */
+        WorkerHistoryQuestionOut: {
+            /**
+             * Asked At
+             * Format: date-time
+             */
+            asked_at: string;
+            /** Message */
+            message: string;
+            /** Reminded At */
+            reminded_at?: string | null;
+            answer?: components["schemas"]["WorkerAnswerOut"] | null;
+        };
         /** WorkerInboxOut */
         WorkerInboxOut: {
             /** Items */
@@ -3281,6 +3513,24 @@ export interface components {
             reason?: string | null;
             /** At */
             at?: string | null;
+        };
+        /** WorkerOutcomeOut */
+        WorkerOutcomeOut: {
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "waiting_for_you" | "with_supervisor" | "with_payroll" | "decided_without_reply" | "decided" | "fixed" | "closed_no_change";
+            /**
+             * Text
+             * @description Built by code, in plain words
+             */
+            text: string;
+            /**
+             * Reason
+             * @description Only for a decision taken without the worker's reply
+             */
+            reason?: string | null;
         };
         /** WorkerRecheckOut */
         WorkerRecheckOut: {
@@ -4253,6 +4503,147 @@ export interface operations {
             };
             /** @description Unprocessable Entity */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    worker_history_api_worker_history_get: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
+                "X-Actor-Id": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkerHistoryOut"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    get_briefing_api_briefing_get: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
+                "X-Actor-Id": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BriefingOut"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    refresh_briefing_api_briefing_refresh_post: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
+                "X-Actor-Id": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BriefingOut"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };

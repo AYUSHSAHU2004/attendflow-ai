@@ -353,3 +353,38 @@ SOURCE_TABLES = (
     LeaveBalanceRow,
     HolidayRow,
 )
+
+
+class BriefingRow(Base):
+    """Phase 17: one generated daily briefing (LLM or template) for one scope.
+
+    `scope` is "all" (the payroll admin) or a supervisor's employee ID. `facts` is the
+    code-built packet the text was checked against and `facts_hash` its hash, so a briefing
+    is regenerated only when the facts change (or a person presses Refresh). `attempts`
+    holds code-built check results only, never model text. `workflow_at` is the demo clock;
+    `created_utc` is real time and drives the rate limits (the demo clock can jump).
+    The briefing never changes any data.
+    """
+
+    __tablename__ = "briefings"
+    __table_args__ = (
+        CheckConstraint(_in("source", ("llm", "template")), "source"),
+        CheckConstraint(_in("trigger", ("refresh", "scheduler")), "trigger"),
+        Index("ix_briefings_scope_id", "scope", "id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    scope: Mapped[str] = mapped_column(String(8))
+    facts_hash: Mapped[str] = mapped_column(String(64))
+    facts: Mapped[dict[str, Any]]
+    content: Mapped[dict[str, Any]]
+    source: Mapped[str] = mapped_column(String(8))
+    reason: Mapped[str] = mapped_column(String(40))
+    attempts: Mapped[list[Any]]
+    llm_calls: Mapped[int] = mapped_column(SmallInteger)
+    model: Mapped[str | None] = mapped_column(Text)
+    latency_ms: Mapped[float | None] = mapped_column(Float)
+    trigger: Mapped[str] = mapped_column(String(10))
+    requested_by: Mapped[str | None] = mapped_column(String(8))
+    workflow_at: Mapped[datetime] = mapped_column(DateTime(timezone=False))
+    created_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True))

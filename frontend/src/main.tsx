@@ -52,6 +52,6 @@ createRoot(document.getElementById('root')!).render(
           : page === 'activity' ? <ActivityPage />
             : page === 'dashboard' ? <DashboardPage />
               : page === 'payroll' ? <PayrollPage />
-                : <WorkerInbox />}
+                : <WorkerInbox actor={workerActor} />}
   </StrictMode>,
 )

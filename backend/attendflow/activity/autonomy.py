@@ -409,6 +409,48 @@ CAPABILITIES: tuple[Capability, ...] = (
         audit_actors=("admin",),
         proof_tests=("tests/test_payroll.py::test_payroll_signoff_and_reopen",),
     ),
+    # ---------------------------------------------------------------- briefing (Phase 17)
+    A(
+        key="briefing_generated",
+        title="Write the daily briefing",
+        actor_type="llm_agent",
+        performed_by="LLM agent",
+        approval="none",
+        reversible="not_applicable",
+        guardrail="Only from a code-built facts packet scoped to the reader; every number, "
+        "case ID, name and claim is checked by code, one correction, else the template. "
+        "Changes no data.",
+        audit_actions=("briefing_generated",),
+        audit_actors=("agent",),
+    ),
+    A(
+        key="briefing_fallback",
+        title="Use the template briefing",
+        actor_type="system",
+        performed_by="Briefing service",
+        approval="none",
+        reversible="not_applicable",
+        guardrail="Used when the LLM is off, fails, times out or its draft fails the checks; "
+        "built by code from the same facts; stores a reason code only. Changes no data.",
+        audit_actions=("briefing_fallback",),
+        audit_actors=("system",),
+    ),
+    A(
+        key="briefing_refresh",
+        title="Ask for a fresh briefing",
+        actor_type="human",
+        performed_by="Supervisor or payroll admin",
+        approval="supervisor_or_payroll_admin",
+        reversible="not_applicable",
+        guardrail="Own scope only (a supervisor sees their team); at most two LLM calls, a "
+        "minimum interval and a daily call budget. Workers get 403.",
+        audit_actions=("briefing_refresh_requested",),
+        audit_actors=("supervisor", "admin"),
+        proof_tests=(
+            "tests/test_briefing_api.py::test_workers_get_403_and_unknown_actors_are_refused",
+            "tests/test_briefing_api.py::test_refresh_is_rate_limited_and_capped",
+        ),
+    ),
     # ---------------------------------------------------------------- never
     A(
         key="never_auto_signoff",

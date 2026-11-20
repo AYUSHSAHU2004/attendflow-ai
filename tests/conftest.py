@@ -157,6 +157,13 @@ def make_api_settings(db_engine, **changes):
         no_reply_reminder_hours=8,
         no_reply_supervisor_hours=24,
         no_reply_admin_hours=24,
+        # Phase 17: the briefing with no rate limit; the scheduled briefing only where a
+        # test turns it on (so other scheduler tests see exactly the rows they expect).
+        briefing_enabled=True,
+        briefing_scheduled=False,
+        briefing_min_interval_seconds=0,
+        briefing_max_llm_calls_per_day=40,
+        briefing_llm_deadline_seconds=20,
     )
     return replace(settings, **changes)
 

@@ -31,6 +31,9 @@ before payroll.
   arrival within grace). They are configurable in `policy.json` and always audit-logged.
 - Every LLM output is validated with Pydantic. On invalid output, retry once, then fall back
   to a template or a manual form. If the LLM is down, the app must still work.
+  (Phase 17 briefing, user decision: the one correction request happens only when the draft
+  fails a format, grounding or claim check, never after a provider error or timeout; at
+  most 2 calls per refresh, both counted in BRIEFING_MAX_LLM_CALLS_PER_DAY.)
 
 ## Tech stack (ask the user before changing)
 
@@ -68,7 +71,8 @@ Done: 0 Setup + data + policy + LLM test; 1 Rule engine P1-P7, P15; 2 Rules P8-P
 end-to-end tests (**prototype complete**); 11 mock punch API + scheduler; 12 auto-resolve + undo +
 "resolved without a human" metric; 13 no-reply escalation ladder + demo clock; 14 Activity
 Center + Autonomy Table (generated, anti-drift tests); 15 operations dashboard;
-16 payroll readiness and human sign-off.
+16 payroll readiness and human sign-off; 16.5 rough deploy (local only, Render deploy pending);
+17 daily briefing, worker history and the phone-first inbox.
 
 **Prototype (3-10)**
 3. Backend + DB + API
@@ -97,6 +101,7 @@ Center + Autonomy Table (generated, anti-drift tests); 15 operations dashboard;
 23. Tests + evaluation
 24. Delivery
 
+Phase 17 is built and checked locally (see PROGRESS.md); the owner commits and runs CI.
 Phases 15 and 16 are verified, CI green. The Phase 16 check recorded 735 backend tests
 passed, 2 skipped, 93 frontend tests passed, type-check, build, a migration round trip,
 and a live payroll page check. The payroll test's scheduler response lookup and the
@@ -171,6 +176,23 @@ deploy. See [docs/PROGRESS.md](docs/PROGRESS.md) for verification status.
   - Phase 16.5: retain separate seed/reset switches. Start locked and temporarily arm a
     destructive operation only for a disposable synthetic DB. The guided profile opens
     simulator, clock and reset behind the gate.
+  - Phase 16.5: **Render deploy pending.** The Docker image ran on the owner's Mac (4/4
+    smoke checks, CI run #21 green), but nothing is deployed. The repo owner applies the
+    Blueprint later; then verify cold start, runtime Groq connectivity and the hosted smoke.
+  - Phase 17: `GET /api/briefing`, `POST /api/briefing/refresh` and `GET /api/worker/history`
+    trust `X-Actor-Id` like every endpoint (real login first). Review BRIEFING_* limits
+    against the Groq plan; the scheduled briefing needs an always-on scheduler. The
+    validator checks numbers, IDs, names and listed actions, not status words (see
+    PROGRESS.md Phase 17 for the real-model example). Briefing rows keep the facts packet
+    (no free text) and code-built check messages; include them in the retention review.
+  - **Persona switcher (design accepted in Phase 17, not built):** Guided profile only. The
+    server holds the persona: `POST /api/demo/persona` (behind the password gate) sets a
+    signed, HttpOnly actor cookie, and `GET /api/runtime` tells the frontend whether to show
+    the switcher and which personas exist. In deployed mode the server takes the actor from
+    that cookie and ignores `X-Actor-Id`. In the Locked profile both routes are not
+    registered (404) and no switcher shows. The dev-only `?as=` override stays out of the
+    production bundle (bundle grep). The worker inbox gets its actor from `main.tsx`
+    (`workerActor`), never from `?as=` directly.
   - Phase 16.5: sleeping free web services stop their scheduler. Choose an always-on plan
     if a schedule must run reliably. Before a manual rollout, stop the old scheduler and
     wait for its cycle to finish. Review overlapping old/new processes and migrations
@@ -715,11 +737,11 @@ backend/attendflow/
   demo_clock.py          demo clock offset: describe, load at startup, move (audited), reset
   ingest/punches.py      the ONLY other writer: new device punches (INSERT + audit row)
   scheduler/cycle.py     one cycle: detect, investigate new cases, message workers, no-reply ladder,
-                         summary
+                         Priya's daily briefing, summary
   scheduler/runner.py    Scheduler thread, non-overlap lock, start/stop/status
   errors.py              AppError family -> HTTP status + error code
   db/models.py           SQLAlchemy tables (6 source tables + exceptions, audit_log, tool_calls,
-                         settings, scheduler_runs, payroll_signoffs); PUNCH_ID_LOCK
+                         settings, scheduler_runs, payroll_signoffs, briefings); PUNCH_ID_LOCK
   db/migrations/         Alembic (alembic.ini at repo root)
   db/seed.py             demo reset: truncate all, load CSVs, optionally add a closed week
   db/dataset.py          read-only: DB -> engine Dataset (voided punches left out)
@@ -737,6 +759,12 @@ backend/attendflow/
   cases/auto_fix.py      auto-resolve info per case, supervisor team list, "without a human" metric
   cases/no_reply.py      no-reply ladder rules (due_step), wait state, reminder text, NoReply view
   cases/ladder.py        runs one ladder step per due case (scheduler step 4); no data writes
+  briefing/facts.py      Phase 17 facts packet (scoped first; reuses dashboard, payroll, activity,
+                         queue, metric) + facts hash + section case IDs
+  briefing/validate.py   BriefingDraft schema, grounding + claim checks, correction prompt, template
+  briefing/generate.py   one tool-free JSON call + one correction on a failed check, else template
+  briefing/service.py    GET (no LLM), refresh (limits, lock, audit), scheduled (cycle step 5)
+  cases/worker_history.py worker-scoped "what happened to my case" (code-built outcomes)
   activity/autonomy.py   the Autonomy Table registry (single source) + README rendering
   activity/feed.py       Activity Center feed, summary counts, team scope, safe sentences
   activity/trace.py      one-line tool-call result summaries for the case traces
@@ -754,7 +782,9 @@ backend/attendflow/
 data/                    6 CSVs + policy.json (limits) + policy.md (plain-language, cited by agent)
 docs/                    PROGRESS.md, PLANTED_CASES.md, LLM_LICENCE.md, DEMO_WALKTHROUGH.md
 tests/                   pytest suite
-frontend/                Vite React: worker inbox (/, reminders + notices), supervisor (/supervisor,
+frontend/                Vite React: worker inbox (/, phone first: questions + My history,
+                         reminders + notices), BriefingCard on /admin and /supervisor,
+                         supervisor (/supervisor,
                          no-reply badge, decide without worker, send to payroll, TeamAutoFixes),
                          admin (/admin, SchedulerPanel with demo clock, stuck counter + filter,
                          metric line, AutoFixPanel), activity (/activity: feed, filters, summary
@@ -831,3 +861,61 @@ python -m uv run ruff check . && python -m uv run ruff format --check .
   original client. It restores the original file on drift. It also runs frontend tests
   before type-check. CI provisions PostgreSQL, installs dependencies, skips generation,
   and type-checks before frontend tests.
+
+**Daily briefing, worker history, phone inbox (Phase 17)**
+- Facts packet (`briefing/facts.py`): built by code and scoped first (Priya `all`, a
+  supervisor only their team). Counts from `admin.counters`; team workload, P5 overtime and
+  the auto-resolve metric from `dashboard.overview`; blockers from `payroll.snapshot` (current
+  week); today's activity from `activity.summary` (workflow date); "needs a decision" from
+  `supervisor.queue`. Case lists capped at 10 with `*_total`. Names only for people in scope
+  and referenced. No free text (worker replies, typed reasons, LLM narratives), prompts,
+  diagnostics or secrets. Hash = sha256 of the packet (no time of day).
+- Draft shape: headline (<= 120), 3-5 bullets with `section` in needs_decision /
+  handled_on_its_own / blocking_payroll / watch, `text` (<= 220) and `case_ids`, plus
+  `team_lines`. The shape is described in the prompt; no JSON schema object is sent.
+- Checks (`briefing/validate.py`): plain text; case IDs exist, are in scope, belong to the
+  bullet's section and are listed in `case_ids`; employee and policy IDs in the packet;
+  numbers in the packet, list lengths, or day/month/year of packet dates (number words
+  two to twenty count); no out-of-scope name; no capitalised mid-sentence word missing from
+  the packet (`unknown_name`); no future tense or promise; past-tense action claims only
+  when the packet shows them; `_BYPASS` outside "handled on its own"; **status claims**
+  (user request after the first real run): a status phrase tied to a case ID must match
+  that case's status in the packet (`status_mismatch`, e.g. "P3-E002-2026-04-13 is open,
+  not awaiting supervisor"; the phrase belongs to the nearest group of IDs in its
+  sentence, "open" means any active status, negated phrases are not checked); "no
+  pending" / "nothing waiting" / "no open cases" / "all clear" for the headline, a section
+  or a team with a count above 0 is `false_empty_claim`. Both get the one correction. Messages are
+  code-built and never quote model text (unknown JSON keys become "unexpected field").
+- Prompt (user addition): present and past tense only, only numbers and IDs from the facts,
+  refer to cases by ID.
+- One generation = at most 2 calls (user change: correction only after a failed check;
+  JSON/shape errors count as failed checks). Provider error or timeout -> template at once.
+  Reasons: validated, validated_after_retry, validation_failed, llm_error, timeout,
+  llm_unavailable, llm_disabled, no_budget; GET adds facts_changed / not_generated.
+- API: `GET /api/briefing` never calls the LLM or writes; stored briefing if the hash
+  matches, else a template from current facts with `stale=true`. `POST /api/briefing/refresh`
+  always attempts (a person asked): 429 `briefing_too_soon` (BRIEFING_MIN_INTERVAL_SECONDS
+  300, real time, per scope), 429 `briefing_daily_cap` (BRIEFING_MAX_LLM_CALLS_PER_DAY 40,
+  all scopes, real UTC day, only when an LLM is configured), 409 `briefing_busy`
+  (in-process lock per scope). Workers 403 `supervisor_only`. Table `briefings` (migration
+  `0010`). Tests force BRIEFING_* in `make_api_settings` (scheduled off, interval 0).
+- Audit (autonomy rows): `briefing_refresh_requested` (supervisor/admin, human),
+  `briefing_generated` (agent), `briefing_fallback` (system, reason code only). The rows
+  have no case, so only Priya sees them in the feed.
+- Scheduler step 5 (`BRIEFING_SCHEDULED`, default true): Priya's briefing at most once per
+  workflow date, only if audit rows newer than the watermark exist (so not right after a
+  demo reset), and only when the facts hash changed; respects the limits.
+- Frontend `BriefingCard.tsx`: label, clickable case IDs (open the page's detail panel and
+  scroll to it), Refresh, one automatic refresh when stale and an LLM is configured,
+  reloads itself after `briefing_busy`. /admin and /supervisor have no dark mode, so the
+  card has none either.
+- `GET /api/worker/history` (worker only, own cases they were asked about): questions, own
+  answers and a code-built outcome. Only the decided-without-reply reason is shown (as in
+  Phase 13); a reject reason never is.
+- Inbox (`WorkerInbox.tsx`): "Hi Amit", Questions / My history switch, one question per
+  card ("Question 1 of 2"), 3.5rem Yes/No, native time input with help text and
+  `enterkeyhint`, focused confirmation card ("One more step" when a time is still needed),
+  Check again, dark mode, 18px base, no horizontal scroll at 375px.
+- Live check: `attendflow_phase17`, API :8017, Vite :5187 (launch configs `phase17-api`
+  offline, `phase17-api-live` with the .env key, `phase17-web`). In PowerShell use
+  `npx vite --port ...` (npm drops the `--` and Vite starts on 5173).

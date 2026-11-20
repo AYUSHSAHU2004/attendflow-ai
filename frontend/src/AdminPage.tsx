@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { adminActor, linkedCase } from './actors'
+import { BriefingCard } from './BriefingCard'
 import {
   getAdminCase,
   getAdminOverview,
@@ -404,6 +405,8 @@ export function AdminPage() {
         <a href="/dashboard">Operations dashboard</a> · <a href="/payroll">Payroll readiness</a>
         {' · '}<a href="/activity">Activity and autonomy</a>
       </p>
+
+      <BriefingCard actor={adminActor.id} onOpenCase={setSelected} />
 
       <SchedulerPanel onChanged={() => setRefresh((value) => value + 1)} />
 

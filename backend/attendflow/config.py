@@ -101,6 +101,12 @@ class Settings:
     no_reply_supervisor_hours: float = 24
     no_reply_admin_hours: float = 24
     overtime_warning_margin_hours: float = DEFAULT_OVERTIME_WARNING_MARGIN_HOURS
+    # Phase 17: the daily briefing. Off = template only (no LLM call). Limits use real time.
+    briefing_enabled: bool = True
+    briefing_scheduled: bool = True  # the scheduler writes Priya's briefing once a workflow day
+    briefing_min_interval_seconds: float = 300
+    briefing_max_llm_calls_per_day: int = 40
+    briefing_llm_deadline_seconds: float = 20
     deployed: bool = False
     demo_password: str | None = field(default=None, repr=False)
     demo_reset_enabled: bool = True
@@ -133,6 +139,14 @@ class Settings:
             raise ValueError("LLM_INVESTIGATION_BUDGET_SECONDS must be positive and finite")
         if self.llm_extraction_attempts not in {1, 2}:
             raise ValueError("LLM_EXTRACTION_ATTEMPTS must be 1 or 2")
+        interval_s = self.briefing_min_interval_seconds
+        if not isfinite(interval_s) or interval_s < 0:
+            raise ValueError("BRIEFING_MIN_INTERVAL_SECONDS must not be negative")
+        if self.briefing_max_llm_calls_per_day < 0:
+            raise ValueError("BRIEFING_MAX_LLM_CALLS_PER_DAY must not be negative")
+        deadline = self.briefing_llm_deadline_seconds
+        if not isfinite(deadline) or deadline <= 0:
+            raise ValueError("BRIEFING_LLM_DEADLINE_SECONDS must be positive")
         if self.agent_max_steps < 1:
             raise ValueError("AGENT_MAX_STEPS must be positive")
         if self.llm_reasoning_effort not in {"off", "low", "medium", "high"}:
@@ -223,6 +237,11 @@ def get_settings(env_file: Path | None = REPO_ROOT / ".env") -> Settings:
         overtime_warning_margin_hours=float(
             os.getenv("OVERTIME_WARNING_MARGIN_HOURS") or DEFAULT_OVERTIME_WARNING_MARGIN_HOURS
         ),
+        briefing_enabled=_env_bool("BRIEFING_ENABLED", default=True),
+        briefing_scheduled=_env_bool("BRIEFING_SCHEDULED", default=True),
+        briefing_min_interval_seconds=float(os.getenv("BRIEFING_MIN_INTERVAL_SECONDS") or 300),
+        briefing_max_llm_calls_per_day=int(os.getenv("BRIEFING_MAX_LLM_CALLS_PER_DAY") or 40),
+        briefing_llm_deadline_seconds=float(os.getenv("BRIEFING_LLM_DEADLINE_SECONDS") or 20),
         deployed=deployed,
         demo_password=os.getenv("ATTENDFLOW_DEMO_PASSWORD") or None,
         demo_reset_enabled=_env_bool("ATTENDFLOW_DEMO_RESET_ENABLED", default=not deployed),

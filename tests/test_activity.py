@@ -371,6 +371,13 @@ COVERED_ELSEWHERE = {
     "investigation_finished": (
         "tests/test_agent_loop.py::test_tools_feed_back_and_multiple_calls_and_runs_are_logged"
     ),
+    # Phase 17: the story has no LLM key and no briefing refresh.
+    "briefing_generated": (
+        "tests/test_briefing_api.py::test_refresh_stores_an_llm_briefing_and_audits_it"
+    ),
+    "briefing_fallback": (
+        "tests/test_briefing_api.py::test_scheduled_briefing_once_per_workflow_day_after_new_activity"
+    ),
 }
 
 

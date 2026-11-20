@@ -347,6 +347,98 @@ class WorkerInboxOut(ApiModel):
     )
 
 
+class WorkerAnswerOut(ApiModel):
+    confirmed: bool | None = Field(description="Yes (true), No (false), or no choice yet")
+    text: str | None = Field(default=None, description="The worker's own words, if any")
+    time: str | None = Field(default=None, description="The time the worker confirmed (HH:MM)")
+    replied_at: datetime | None = None
+
+
+class WorkerHistoryQuestionOut(ApiModel):
+    asked_at: datetime
+    message: str
+    reminded_at: datetime | None = None
+    answer: WorkerAnswerOut | None = None
+
+
+class WorkerOutcomeOut(ApiModel):
+    state: Literal[
+        "waiting_for_you",
+        "with_supervisor",
+        "with_payroll",
+        "decided_without_reply",
+        "decided",
+        "fixed",
+        "closed_no_change",
+    ]
+    text: str = Field(description="Built by code, in plain words")
+    reason: str | None = Field(
+        default=None, description="Only for a decision taken without the worker's reply"
+    )
+
+
+class WorkerHistoryItemOut(ApiModel):
+    exception_id: str
+    date: date
+    questions: list[WorkerHistoryQuestionOut]
+    outcome: WorkerOutcomeOut
+    updated_at: datetime
+
+
+class WorkerHistoryOut(ApiModel):
+    items: list[WorkerHistoryItemOut]
+
+
+# ---------------------------------------------------------------- briefing (Phase 17)
+
+
+class BriefingBulletOut(ApiModel):
+    text: str
+    case_ids: list[str]
+
+
+class BriefingSectionOut(ApiModel):
+    key: Literal["needs_decision", "handled_on_its_own", "blocking_payroll", "watch"]
+    title: str
+    bullets: list[BriefingBulletOut]
+
+
+class BriefingTeamLineOut(ApiModel):
+    team: str
+    text: str
+
+
+class BriefingRefreshStateOut(ApiModel):
+    allowed: bool
+    reason: Literal["too_soon", "daily_cap"] | None = None
+    retry_after_seconds: int | None = None
+    calls_left_today: int
+    llm_configured: bool = Field(description="An LLM key is set and BRIEFING_ENABLED is on")
+
+
+class BriefingOut(ApiModel):
+    scope: Literal["all", "team"]
+    team: str | None = None
+    source: Literal["llm", "template"]
+    reason: str = Field(
+        description="validated, validated_after_retry, validation_failed, llm_error, timeout, "
+        "llm_unavailable, llm_disabled, no_budget, facts_changed or not_generated"
+    )
+    label: str
+    stale: bool = Field(description="The facts changed since the stored briefing (or none yet)")
+    stored: bool
+    briefing_id: int | None = None
+    headline: str
+    sections: list[BriefingSectionOut]
+    team_lines: list[BriefingTeamLineOut]
+    generated_at: datetime = Field(description="Workflow time (demo clock)")
+    facts_hash: str
+    llm_calls: int
+    latency_ms: float | None = None
+    failed_checks: list[str] = Field(description="Codes of checks the LLM drafts failed")
+    refresh: BriefingRefreshStateOut
+
+
 # ---------------------------------------------------------------- supervisor
 
 
@@ -802,7 +894,7 @@ class CycleInvestigationOut(ApiModel):
 
 class CycleErrorOut(ApiModel):
     exception_id: str | None
-    step: Literal["detection", "investigate", "ask_worker"]
+    step: Literal["detection", "investigate", "ask_worker", "no_reply", "briefing"]
     error: str
 
 
@@ -811,6 +903,13 @@ class CycleNoReplyOut(ApiModel):
     reminded: list[str] = Field(default_factory=list)
     to_supervisor: list[str] = Field(default_factory=list)
     to_admin: list[str] = Field(default_factory=list)
+
+
+class CycleBriefingOut(ApiModel):
+    status: Literal["generated", "fallback", "skipped"]
+    reason: str
+    briefing_id: int | None = None
+    llm_calls: int = 0
 
 
 class SchedulerCycleOut(ApiModel):
@@ -841,6 +940,9 @@ class SchedulerCycleOut(ApiModel):
     )
     no_reply: CycleNoReplyOut = Field(
         default_factory=CycleNoReplyOut, description="No-reply ladder steps (Phase 13)"
+    )
+    briefing: CycleBriefingOut | None = Field(
+        default=None, description="Priya's scheduled daily briefing (Phase 17)"
     )
     errors: list[CycleErrorOut]
 

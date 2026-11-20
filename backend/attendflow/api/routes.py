@@ -30,6 +30,7 @@ from attendflow.api.schemas import (
     AuditListOut,
     AutonomyTableOut,
     AutoResolveMetricOut,
+    BriefingOut,
     DashboardOut,
     DemoClockIn,
     DemoClockOut,
@@ -63,12 +64,15 @@ from attendflow.api.schemas import (
     ToolCallOut,
     UndoIn,
     UndoOut,
+    WorkerHistoryOut,
     WorkerInboxOut,
     WorkerReplyIn,
     WorkerReplyOut,
     WorkerTimeIn,
 )
+from attendflow.briefing import service as briefing_service
 from attendflow.cases import admin, auto_fix, dashboard, payroll, service, supervisor
+from attendflow.cases import worker_history as worker_history_module
 from attendflow.cases.selection import validate_date_range
 from attendflow.cases.transitions import Status
 from attendflow.clock import Clock
@@ -562,6 +566,69 @@ def worker_manual_time(
 def worker_messages(actor_id: ActorId, session: SessionDep, clock: ClockDep):
     with session.begin():
         return service.worker_inbox(session, actor_id, clock)
+
+
+@router.get(
+    "/worker/history",
+    response_model=WorkerHistoryOut,
+    tags=["worker"],
+    summary="What happened to my cases: my questions, my answers and the outcome",
+    description="Worker-only and scoped to the caller's own cases (others get 403 "
+    "worker_inbox_only). Outcome texts are built by code; no LLM, no writes.",
+    responses=_errors(403, 422),
+)
+def worker_history(actor_id: ActorId, session: SessionDep):
+    with session.begin():
+        return worker_history_module.worker_history(session, actor_id)
+
+
+# ---------------------------------------------------------------- briefing (Phase 17)
+
+
+@router.get(
+    "/briefing",
+    response_model=BriefingOut,
+    tags=["briefing"],
+    summary="The caller's daily briefing (payroll admin: all teams; supervisor: own team)",
+    description="Never calls the LLM and writes nothing. Returns the stored briefing when "
+    "the facts are unchanged, else a template built from the current facts with "
+    "stale=true. Workers get 403.",
+    responses=_errors(403, 422),
+)
+def get_briefing(
+    actor_id: ActorId,
+    session: SessionDep,
+    clock: ClockDep,
+    policy: PolicyDep,
+    settings: Annotated[Settings, Depends(get_settings_dep)],
+):
+    with session.begin():
+        session.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"))
+        return briefing_service.get_briefing(session, actor_id, clock, policy, settings)
+
+
+@router.post(
+    "/briefing/refresh",
+    response_model=BriefingOut,
+    tags=["briefing"],
+    summary="Write a fresh briefing (at most two LLM calls, else the template)",
+    description="One LLM call phrases the code-built facts; if the draft fails a check, one "
+    "correction request follows; a provider error or timeout uses the template at once. "
+    "429 briefing_too_soon within BRIEFING_MIN_INTERVAL_SECONDS of the last briefing for "
+    "this scope, 429 briefing_daily_cap when the daily call budget is used up, 409 "
+    "briefing_busy while one is being written. Changes no timecard, schedule or leave.",
+    responses=_errors(403, 409, 422, 429),
+)
+def refresh_briefing(
+    actor_id: ActorId,
+    request: Request,
+    clock: ClockDep,
+    policy: PolicyDep,
+    settings: Annotated[Settings, Depends(get_settings_dep)],
+):
+    return briefing_service.refresh(
+        request.app.state.session_factory, actor_id, clock, policy, settings
+    )
 
 
 # ---------------------------------------------------------------- supervisor

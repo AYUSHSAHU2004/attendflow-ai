@@ -81,6 +81,24 @@ PUNCH_WORDS = {
 }
 
 
+BRIEFING_REASONS = {
+    "validation_failed": "the LLM draft failed the checks",
+    "llm_error": "the LLM call failed",
+    "timeout": "the LLM call timed out",
+    "llm_unavailable": "no LLM is configured",
+    "llm_disabled": "the LLM briefing is switched off",
+    "no_budget": "today's LLM budget is used up",
+}
+
+
+def _scope_words(after: dict, employees: dict[str, EmployeeRow]) -> str:
+    scope = str(after.get("scope") or "")
+    if scope == "all":
+        return "all teams"
+    who = employees.get(scope)
+    return f"{who.team} team" if who else "one team"
+
+
 def feed_sentence(entry: AuditLogRow, employees: dict[str, EmployeeRow]) -> str:
     """The plain sentence for one row. Deterministic, built from safe stored fields only."""
     if entry.action in SAFE_TEXT:
@@ -103,6 +121,17 @@ def feed_sentence(entry: AuditLogRow, employees: dict[str, EmployeeRow]) -> str:
         if closed:
             parts.append(f"closed: {', '.join(closed)}")
         return f"Detection re-ran after the punch ({'; '.join(parts)})."
+    if entry.action == "briefing_refresh_requested":
+        return f"Asked for a fresh daily briefing ({_scope_words(after, employees)})."
+    if entry.action == "briefing_generated":
+        retry = " after one correction" if after.get("reason") == "validated_after_retry" else ""
+        return (
+            f"Wrote the daily briefing ({_scope_words(after, employees)}) from verified "
+            f"facts; every check passed{retry}."
+        )
+    if entry.action == "briefing_fallback":
+        why = BRIEFING_REASONS.get(str(after.get("reason")), "the LLM was not used")
+        return f"Showed the template briefing ({_scope_words(after, employees)}): {why}."
     if entry.action == "post_punch_detection_failed":
         return "Detection after the punch failed; the next run picks it up."
     if entry.action == "post_undo_detection_failed":

@@ -55,6 +55,9 @@ Generated from `backend/attendflow/activity/autonomy.py` by `python -m uv run at
 | Move the demo clock forward | Human | Payroll admin | Payroll admin | No | Demo mode only (404 otherwise); forward only, at most +14 days; never changes what detection sees. |
 | Sign off attendance readiness | Human | Payroll admin | Payroll admin | Yes, with undo | Only a closed period with attendance data and no blockers can be signed off. Changes to the reviewed data require a new human sign-off. |
 | Reopen attendance readiness | Human | Payroll admin | Payroll admin | Yes, with undo | Requires a reason. Reopening preserves the audit history and source data. |
+| Write the daily briefing | LLM agent | LLM agent | None | Not applicable | Only from a code-built facts packet scoped to the reader; every number, case ID, name and claim is checked by code, one correction, else the template. Changes no data. |
+| Use the template briefing | System | Briefing service | None | Not applicable | Used when the LLM is off, fails, times out or its draft fails the checks; built by code from the same facts; stores a reason code only. Changes no data. |
+| Ask for a fresh briefing | Human | Supervisor or payroll admin | Supervisor (payroll admin once escalated) | Not applicable | Own scope only (a supervisor sees their team); at most two LLM calls, a minimum interval and a daily call budget. Workers get 403. |
 
 **Never allowed**
 

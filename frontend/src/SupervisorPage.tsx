@@ -1,5 +1,6 @@
 import { type FormEvent, useEffect, useState } from 'react'
 import { linkedCase, reviewers, supervisorActor, teamDashboardHref } from './actors'
+import { BriefingCard } from './BriefingCard'
 import {
   ApiError,
   approveCase,
@@ -649,6 +650,7 @@ export function SupervisorPage() {
         <a href={teamDashboardHref}>Operations dashboard</a> ·{' '}
         <a href={import.meta.env.DEV ? `/activity?as=${supervisorActor.id}` : '/activity'}>Team activity</a>
       </p>
+      <BriefingCard actor={supervisorActor.id} onOpenCase={(id) => { setSelected(id); setNotice('') }} />
       {notice && <p role="status" className="notice">{notice}</p>}
       <div className="split">
         <section aria-label="Queue" className="queue">

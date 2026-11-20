@@ -16,6 +16,8 @@ import {
 } from './api'
 import { plainError, SupervisorPage } from './SupervisorPage'
 
+// The briefing card has its own tests (BriefingCard.test.tsx).
+vi.mock('./BriefingCard', () => ({ BriefingCard: () => null }))
 vi.mock('./api', async (importOriginal) => ({
   ...await importOriginal<typeof import('./api')>(),
   getQueue: vi.fn(),

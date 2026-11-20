@@ -7,6 +7,8 @@ export type WorkerMessage = Schemas['WorkerMessageOut']
 export type WorkerNotice = Schemas['WorkerNoticeOut']
 export type WorkerInboxData = { items: WorkerMessage[]; notices: WorkerNotice[] }
 export type WorkerReceipt = Schemas['WorkerReplyOut']
+export type WorkerHistoryItem = Schemas['WorkerHistoryItemOut']
+export type Briefing = Schemas['BriefingOut']
 export type InvestigationJob = Schemas['InvestigationJobOut']
 export type InvestigationCase = Schemas['InvestigationCase']
 
@@ -79,6 +81,22 @@ export async function getWorkerInbox(signal?: AbortSignal): Promise<WorkerInboxD
     '/api/worker/messages', workerActor.id, { signal },
   )).body
   return { items: body.items, notices: body.notices ?? [] }
+}
+
+// Phase 17: "what happened to my case" (worker-scoped in the API).
+export async function getWorkerHistory(signal?: AbortSignal): Promise<WorkerHistoryItem[]> {
+  return (await request<Schemas['WorkerHistoryOut']>(
+    '/api/worker/history', workerActor.id, { signal },
+  )).body.items
+}
+
+// Phase 17: the daily briefing. Reading never calls the LLM; refresh may (rate-limited).
+export async function getBriefing(actor: string, signal?: AbortSignal) {
+  return (await request<Briefing>('/api/briefing', actor, { signal })).body
+}
+
+export async function refreshBriefing(actor: string) {
+  return (await request<Briefing>('/api/briefing/refresh', actor, { method: 'POST' })).body
 }
 
 export async function sendReply(id: string, reply: ReplyInput) {

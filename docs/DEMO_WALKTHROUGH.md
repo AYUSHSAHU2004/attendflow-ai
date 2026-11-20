@@ -285,3 +285,39 @@ origin and add the Vite origin to `ATTENDFLOW_CORS_ORIGINS`.
    **Blocked**, reminder, supervisor ownership, and **Ready with notes** after an
    explicit decision without the worker. The default demo has pending leave and
    other blockers. The optional seed week stays clean for recording sign-off.
+
+## 12. Daily briefing and Amit's phone (Phase 17)
+
+1. Use a separate demo DB and ports if the shared app is in use (the live check used
+   `attendflow_phase17`, API :8017, Vite :5187; launch configs `phase17-api`,
+   `phase17-api-live` and `phase17-web`). Migrate to head, `POST /api/seed` once, then
+   `POST /api/admin/demo/reset` as E201 (17 findings).
+2. **Offline first.** Start `phase17-api` (the LLM address points at nothing). Open
+   `/admin`: **Today's briefing · All teams** shows the template, labelled **Template (LLM
+   unavailable)**: 16 active cases, Sana's auto-resolved P2 (1 of 17, 5.9%), 15 cases
+   blocking payroll for the week of 2026-04-13, Meena's 48 projected hours against the
+   40 h limit, and one line per team. Click a case ID: the case opens in the detail panel.
+3. Open `/supervisor` as Ravi: the card says **Inbound team** and shows only Inbound
+   cases and names (11 active, 1 of 12 closed without a person).
+4. **Amit on a phone.** As Ravi, investigate and ask Amit about `P1-E001-2026-04-14`
+   (the card's **Investigate** and **Ask the worker** buttons, or the API). Open `/` at
+   375 px wide (phone, light or dark). Amit sees **Hi Amit**, **Question 1 of 1** and big
+   **Yes / No** buttons. Tap **No**, type "No, I stayed late. Left around 6:30 pm after
+   loading the truck." and **Send**. Without an LLM the time cannot be read, so the
+   confirmation says **One more step** and the exact-time field appears. Enter 18:30 and
+   **Send time**: "18:30 sent to your supervisor. This makes the day 8.5 h ...".
+   **See my history** shows the question, Amit's own words, the time and **With your
+   supervisor**.
+5. **One real briefing** (only with a key in `.env`). Restart the API as
+   `phase17-api-live` and press **Refresh** on `/admin` once (or
+   `curl -X POST localhost:8017/api/briefing/refresh -H "X-Actor-Id: E201"`). The label
+   turns to **Written by the LLM from verified facts**; the footer shows the LLM calls and
+   any failed checks. A second Refresh within 5 minutes is refused (429), and reading the
+   page again makes no LLM call until the facts change.
+6. Open **Activity and autonomy** as Priya: "Asked for a fresh daily briefing (all teams)",
+   "Wrote the daily briefing (all teams) from verified facts; every check passed" or
+   "Showed the template briefing (...): no LLM is configured". The Autonomy tab lists
+   **Write the daily briefing** (LLM agent), **Use the template briefing** (system) and
+   **Ask for a fresh briefing** (supervisor or payroll admin).
+7. Amit's planted P1 is untouched by any briefing: its audit trail shows only `detected`
+   until a person acts.

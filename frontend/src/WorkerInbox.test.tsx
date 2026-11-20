@@ -1,11 +1,15 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { confirmWorkerTime, getWorkerInbox, sendReply, submitManualTime, type WorkerMessage } from './api'
+import {
+  confirmWorkerTime, getWorkerHistory, getWorkerInbox, sendReply, submitManualTime,
+  type WorkerHistoryItem, type WorkerMessage,
+} from './api'
 import { WorkerInbox } from './WorkerInbox'
 
 vi.mock('./api', () => ({
   getWorkerInbox: vi.fn(),
+  getWorkerHistory: vi.fn(),
   sendReply: vi.fn(),
   confirmWorkerTime: vi.fn(),
   submitManualTime: vi.fn(),
@@ -85,7 +89,9 @@ describe('worker inbox', () => {
     await user.click(await screen.findByRole('button', { name: 'No' }))
     await user.type(screen.getByLabelText(item.reply_prompt), 'Left around 7:30ish')
     await user.click(screen.getByRole('button', { name: 'Send' }))
-    expect(await screen.findByText(/We understood you left at 19:30/)).toBeVisible()
+    // The time is shown in bold, so match the whole sentence across its parts.
+    expect(await screen.findByText((_, el) => el?.tagName === 'P'
+      && /We understood you left at 19:30/.test(el.textContent ?? ''))).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Confirm' }))
     expect(confirmWorkerTime).toHaveBeenCalledWith(item.exception_id)
     expect(await screen.findByText('19:30 sent to your supervisor. Ravi will review the new exceptions.')).toBeVisible()
@@ -167,5 +173,112 @@ describe('worker inbox', () => {
       .toHaveTextContent('Payroll is handling this now.')
     expect(screen.getByText('No open questions')).toBeVisible()
     expect(screen.queryByRole('button', { name: 'Yes' })).not.toBeInTheDocument()
+  })
+
+  it('greets the worker, numbers the questions and gives big Yes/No buttons', async () => {
+    vi.mocked(getWorkerInbox).mockResolvedValue({ items: [item, { ...item, exception_id: 'P13-E001-2026-04-15', date: '2026-04-15' }], notices: [] })
+    render(<WorkerInbox actor={{ id: 'E001', name: 'Amit Verma' }} />)
+    expect(await screen.findByRole('heading', { level: 1, name: 'Hi Amit' })).toBeVisible()
+    expect(screen.getByText('Question 1 of 2')).toBeVisible()
+    expect(screen.getByText('Question 2 of 2')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Questions (2)' })).toHaveAttribute('aria-pressed', 'true')
+    const [yes] = screen.getAllByRole('button', { name: 'Yes' })
+    expect(yes.parentElement).toHaveClass('yes-no') // the two-column, 3.5rem-tall button row
+    // Each card is labelled by its own question, so a screen reader announces it.
+    expect(screen.getAllByRole('article', { name: item.message })).toHaveLength(2)
+  })
+
+  it('moves focus to a clear confirmation after a reply and links to the history', async () => {
+    vi.mocked(getWorkerInbox).mockResolvedValue({ items: [item], notices: [] })
+    vi.mocked(sendReply).mockResolvedValue({
+      exception_id: item.exception_id, confirmed: true, needs_actual_time: false,
+    })
+    vi.mocked(getWorkerHistory).mockResolvedValue([])
+    const user = userEvent.setup()
+    render(<WorkerInbox actor={{ id: 'E001', name: 'Amit Verma' }} />)
+    await user.click(await screen.findByRole('button', { name: 'Yes' }))
+    const title = await screen.findByRole('heading', { name: /Thanks, Amit. Your answer is saved./ })
+    expect(title).toHaveFocus()
+    await user.click(screen.getByRole('button', { name: 'See my history' }))
+    expect(await screen.findByText('No history yet')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'My history' })).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('the time field suits a phone keyboard', async () => {
+    vi.mocked(getWorkerInbox).mockResolvedValue({ notices: [], items: [{
+      ...item, needs_actual_time: true, time_review: { stage: 'manual', approximate: false },
+    }] })
+    render(<WorkerInbox />)
+    const input = await screen.findByLabelText('Exact clock-out time')
+    expect(input).toHaveAttribute('type', 'time')
+    expect(input).toHaveAttribute('enterkeyhint', 'send')
+    expect(input).toHaveAccessibleDescription('Use the 24-hour time, for example 18:30.')
+  })
+
+  it('shows what happened to each case in plain words, not by colour alone', async () => {
+    const history: WorkerHistoryItem[] = [
+      {
+        exception_id: 'P1-E001-2026-04-14', date: '2026-04-14', updated_at: '2026-04-17T09:00:00',
+        outcome: { state: 'decided_without_reply', text: 'Decided without your reply: Set clock-out to 18:00.', reason: 'Worker unreachable; the gate log shows 18:00.' },
+        questions: [{ asked_at: '2026-04-16T08:00:00', message: item.message, reminded_at: '2026-04-16T16:00:00', answer: null }],
+      },
+      {
+        exception_id: 'P3-E001-2026-04-13', date: '2026-04-13', updated_at: '2026-04-16T10:00:00',
+        outcome: { state: 'fixed', text: 'Fixed: Correct clock-out to 17:45.', reason: null },
+        questions: [{
+          asked_at: '2026-04-16T08:00:00', message: 'Did you leave at 18:00?', reminded_at: null,
+          answer: { confirmed: false, text: 'I left at quarter to six.', time: '17:45', replied_at: '2026-04-16T09:00:00' },
+        }],
+      },
+    ]
+    vi.mocked(getWorkerInbox).mockResolvedValue({ items: [], notices: [] })
+    vi.mocked(getWorkerHistory).mockResolvedValue(history)
+    const user = userEvent.setup()
+    render(<WorkerInbox />)
+    await user.click(await screen.findByRole('button', { name: 'My history' }))
+    const [first, second] = await screen.findAllByRole('article')
+    expect(first).toHaveTextContent('Decided without your reply: Set clock-out to 18:00.')
+    expect(first).toHaveTextContent('Reason: Worker unreachable; the gate log shows 18:00.')
+    expect(first).toHaveTextContent('No answer yet.')
+    expect(first).toHaveTextContent('Reminder sent')
+    expect(second).toHaveTextContent('Fixed')
+    expect(second).toHaveTextContent('You answered No — “I left at quarter to six.” (time: 17:45)')
+  })
+
+  it('shows a history load error and retries', async () => {
+    vi.mocked(getWorkerInbox).mockResolvedValue({ items: [], notices: [] })
+    vi.mocked(getWorkerHistory).mockRejectedValueOnce(new Error('Your history could not be loaded.'))
+    vi.mocked(getWorkerHistory).mockResolvedValueOnce([])
+    const user = userEvent.setup()
+    render(<WorkerInbox />)
+    await user.click(await screen.findByRole('button', { name: 'My history' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Your history could not be loaded.')
+    await user.click(screen.getByRole('button', { name: 'Try again' }))
+    expect(await screen.findByText('No history yet')).toBeVisible()
+  })
+
+  it('offers Check again on an empty inbox', async () => {
+    vi.mocked(getWorkerInbox).mockResolvedValueOnce({ items: [], notices: [] })
+    vi.mocked(getWorkerInbox).mockResolvedValueOnce({ items: [item], notices: [] })
+    const user = userEvent.setup()
+    render(<WorkerInbox />)
+    await user.click(await screen.findByRole('button', { name: 'Check again' }))
+    expect(await screen.findByText(item.message)).toBeVisible()
+  })
+
+  it('says one more step when the answer still needs an exact time', async () => {
+    vi.mocked(getWorkerInbox).mockResolvedValue({ items: [item], notices: [] })
+    vi.mocked(sendReply).mockResolvedValue({
+      exception_id: item.exception_id, confirmed: false, needs_actual_time: true,
+      time_review: { stage: 'manual', approximate: false },
+    })
+    const user = userEvent.setup()
+    render(<WorkerInbox actor={{ id: 'E001', name: 'Amit Verma' }} />)
+    await user.click(await screen.findByRole('button', { name: 'No' }))
+    await user.type(screen.getByLabelText(item.reply_prompt), 'Stayed late, not sure when.')
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+    expect(await screen.findByRole('heading', { name: /Thanks, Amit. One more step./ })).toHaveFocus()
+    expect(screen.getByLabelText('Exact clock-out time')).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'See my history' })).not.toBeInTheDocument()
   })
 })

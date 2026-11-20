@@ -48,6 +48,9 @@ EXPECTED_PATHS = {
     ("get", "/api/audit-log"),
     ("get", "/api/tool-calls"),
     ("get", "/api/worker/messages"),
+    ("get", "/api/worker/history"),  # Phase 17
+    ("get", "/api/briefing"),  # Phase 17
+    ("post", "/api/briefing/refresh"),  # Phase 17
     ("get", "/api/supervisor/queue"),
     ("get", "/api/supervisor/auto-resolved"),
     ("post", "/api/exceptions/{exception_id}/undo"),

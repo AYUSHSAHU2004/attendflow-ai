@@ -19,6 +19,8 @@ import { AutoFixPanel, AutoResolveMetricLine } from './AutoFix'
 import { SupervisorPage } from './SupervisorPage'
 import { autoFix, metric, schedulerStatus } from './testFixtures'
 
+// The briefing card has its own tests (BriefingCard.test.tsx).
+vi.mock('./BriefingCard', () => ({ BriefingCard: () => null }))
 vi.mock('./api', async (importOriginal) => ({
   ...await importOriginal<typeof import('./api')>(),
   getAdminOverview: vi.fn(),

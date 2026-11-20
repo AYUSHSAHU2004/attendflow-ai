@@ -12,7 +12,10 @@ A cycle:
    then payroll, for cases still waiting for a reply. It covers EVERY case waiting for a
    worker, also hand-asked and backlog ones (the watermark below does not apply to it),
    and skips undone cases. No LLM, no data changes;
-5. stores a summary (scheduler_runs + one `scheduler_cycle` audit row).
+5. writes Priya's daily briefing (Phase 17, briefing/service.py): at most once per
+   workflow date, only after new activity since the watermark and when the facts changed;
+   at most two LLM calls, else the template. No data changes;
+6. stores a summary (scheduler_runs + one `scheduler_cycle` audit row).
 
 Backlog rule: by default only cases first detected AFTER the watermark are touched. The
 watermark is the audit-log ID at the moment the scheduler started (or a demo reset, or
@@ -38,6 +41,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from attendflow.agent.jobs import InvestigationJobs
+from attendflow.briefing import service as briefing_service
 from attendflow.cases import ladder, service
 from attendflow.cases.facts import facts_hash
 from attendflow.clock import Clock
@@ -244,6 +248,7 @@ def _new_summary(cycle_id: int, trigger: Trigger, deps: CycleDeps, started, wate
             "to_supervisor": [],
             "to_admin": [],
         },
+        "briefing": None,
         "errors": [],
     }
 
@@ -361,7 +366,17 @@ def run_cycle(deps: CycleDeps, trigger: Trigger) -> dict[str, Any]:
         log.exception("no-reply ladder failed", extra={"event": "no_reply_ladder_failed"})
         summary["errors"].append(_error(None, "no_reply", exc))
 
-    # 5. Summary: scheduler_runs row + one audit row Priya can read.
+    # 5. Priya's daily briefing (Phase 17): once per workflow date, only after new activity
+    #    since the watermark and when the facts changed; never changes data.
+    try:
+        summary["briefing"] = briefing_service.scheduled(
+            deps.sessions, settings, deps.clock, deps.policy, watermark=watermark
+        )
+    except Exception as exc:  # noqa: BLE001 - the briefing is optional; next cycle retries
+        log.exception("scheduled briefing failed", extra={"event": "briefing_failed"})
+        summary["errors"].append(_error(None, "briefing", exc))
+
+    # 6. Summary: scheduler_runs row + one audit row Priya can read.
     finished = datetime.now(UTC)
     summary["finished_at"] = finished.isoformat(timespec="seconds")
     summary["duration_ms"] = round((time.monotonic() - t0) * 1000, 1)
@@ -387,6 +402,7 @@ def run_cycle(deps: CycleDeps, trigger: Trigger) -> dict[str, Any]:
                     "investigated_ids": [i["exception_id"] for i in summary["investigated"]],
                     "messages_sent": summary["messages_sent"],
                     "no_reply": summary["no_reply"],
+                    "briefing": summary["briefing"],
                     "duration_ms": summary["duration_ms"],
                 },
                 created_at=deps.clock.now(),

@@ -361,3 +361,78 @@ select { font: inherit; padding: 0.55rem 0.6rem; border: 1px solid #aebfb3; bord
   .payroll-table tr { display: block; padding-block: .55rem; border-bottom: 1px solid #dedfd6; }
   .payroll-table th, .payroll-table td { display: block; border: 0; padding: .2rem 0; }
 }
+
+/* Phase 17: daily briefing card (/admin, /supervisor) */
+.briefing-card { margin-bottom: 1.4rem; }
+.briefing-card h2 { margin: 0; font-size: 1.25rem; letter-spacing: -0.02em; }
+.briefing-card h3 { margin: 0.9rem 0 0.25rem; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.05em; color: #4b5b53; }
+.briefing-card ul { margin: 0; padding-left: 1.15rem; }
+.briefing-card li { margin: 0.2rem 0; overflow-wrap: anywhere; }
+.briefing-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.5rem; align-items: center; }
+.briefing-headline { font-size: 1.12rem; font-weight: 650; margin: 0.7rem 0 0; }
+.briefing-foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.6rem; align-items: center; margin-top: 1rem; }
+.briefing-foot .hint { margin: 0; }
+.source-tag { font-size: 0.8rem; font-weight: 700; padding: 0.2rem 0.6rem; border-radius: 999px; background: #f6efd2; color: #5b4510; border: 1px solid #e3d29a; }
+.source-tag.llm { background: #e4f1e7; color: #1f4d36; border-color: #b5d3bf; }
+.case-chip { min-height: 2rem; padding: 0.05rem 0.45rem; font-size: 0.85rem; font-weight: 650; font-family: ui-monospace, "Cascadia Mono", monospace; background: #eef3ee; color: #1d4f37; border: 1px solid #c3d4c7; border-radius: 0.4rem; vertical-align: baseline; }
+.case-chip:hover:not(:disabled) { background: #dfeadf; }
+.hint { color: #4b5b53; font-size: 0.9rem; }
+
+/* Phase 17: the worker inbox, phone first */
+.worker-inbox { font-size: 1.125rem; }
+.worker-inbox h1 { font-size: clamp(2rem, 9vw, 3rem); margin-bottom: 0.4rem; }
+.worker-inbox .lede { margin: 0 0 1.2rem; }
+.view-switch { display: grid; grid-template-columns: 1fr 1fr; gap: 0.4rem; padding: 0.3rem; background: #e9ece6; border-radius: 0.9rem; margin-bottom: 1.1rem; }
+.view-switch button { min-height: 3rem; background: transparent; color: #23402f; border: 0; font-size: 1rem; }
+.view-switch button.active { background: #fff; color: #173826; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); }
+.view-switch button:hover:not(:disabled) { background: #f6f8f4; }
+.card-top { display: flex; justify-content: space-between; gap: 0.6rem; align-items: baseline; flex-wrap: wrap; }
+.step { color: #4b5b53; font-size: 0.85rem; font-weight: 650; }
+.worker-card .question-text { font-size: 1.3rem; line-height: 1.45; }
+.answer-area label { margin-top: 0.6rem; }
+.big-input { font-size: 1.25rem; min-height: 3.25rem; }
+.big-line { font-size: 1.2rem; font-weight: 650; margin: 0 0 0.4rem; }
+.worker-inbox .actions button { min-height: 3.5rem; font-size: 1.1rem; }
+.actions.yes-no { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+.actions.stack { display: grid; grid-template-columns: 1fr; gap: 0.6rem; }
+@media (min-width: 520px) { .actions.stack { grid-template-columns: 1fr 1fr; } }
+.confirm-card { border-color: #8fbf9f; background: #f1f8f2; }
+.confirm-card h2 { margin: 0 0 0.4rem; font-size: 1.3rem; outline-offset: 4px; }
+.empty-state { text-align: center; }
+.empty-state button { margin-top: 0.6rem; width: 100%; }
+.state-tag { font-size: 0.85rem; font-weight: 750; padding: 0.15rem 0.6rem; border-radius: 999px; background: #f6efd2; color: #5b4510; }
+.state-tag.done { background: #e4f1e7; color: #1f4d36; }
+.outcome { font-size: 1.15rem; font-weight: 650; margin: 0.6rem 0; }
+.timeline { list-style: none; margin: 0.6rem 0 0; padding: 0 0 0 0.9rem; border-left: 3px solid #dcdfd6; }
+.timeline li + li { margin-top: 0.9rem; }
+.timeline p { margin: 0.15rem 0; overflow-wrap: anywhere; }
+.who { font-weight: 750; }
+@media (max-width: 420px) {
+  .worker-inbox { width: calc(100% - 2rem); margin-top: 1.4rem; }
+  .worker-inbox .question-card { padding: 1.1rem; }
+}
+@media (prefers-color-scheme: dark) {
+  :root:has(.worker-inbox) { color-scheme: dark; background: #15231d; color: #edf4ee; }
+  :root:has(.worker-inbox) .site-header { background: #1e3329; border-color: #466253; }
+  :root:has(.worker-inbox) .identity { color: #c9dccf; }
+  .worker-inbox .question-card, .worker-inbox .panel { background: #1e3329; border-color: #466253; color: #edf4ee; }
+  .worker-inbox .question-text, .worker-inbox .question-card time, .worker-inbox a { color: #edf4ee; }
+  .worker-inbox .question-card time, .worker-inbox .who { color: #afe4c6; }
+  .worker-inbox .hint, .worker-inbox .lede, .worker-inbox .step { color: #c9dccf; }
+  .worker-inbox .error { color: #ffb4ad; }
+  .worker-inbox input, .worker-inbox textarea { background: #243b30; border-color: #759384; color: #edf4ee; }
+  .worker-inbox button { background: #87cdaa; border-color: #87cdaa; color: #10241a; }
+  .worker-inbox button:hover:not(:disabled) { background: #a5dcbf; }
+  .worker-inbox button.secondary { background: #243b30; color: #edf4ee; border-color: #759384; }
+  .worker-inbox .view-switch { background: #243b30; }
+  .worker-inbox .view-switch button { background: transparent; color: #c9dccf; border: 0; }
+  .worker-inbox .view-switch button.active { background: #355345; color: #fff; }
+  .worker-inbox .confirm-card { background: #20402f; border-color: #5f9a78; }
+  .worker-inbox .notice, .worker-inbox .message-status { background: #243b30; color: #d8eadd; }
+  .worker-inbox .state-tag { background: #4a3f1c; color: #f3e3b0; }
+  .worker-inbox .state-tag.done { background: #2c4d3b; color: #cdeeda; }
+  .worker-inbox .timeline { border-color: #466253; }
+  .worker-inbox .reminder { background: #3a3218; color: #f3e3b0; border-color: #6b5a2a; }
+  .worker-inbox .status-note { color: #f3e3b0; }
+  .worker-inbox :focus-visible { outline-color: #f0c674; }
+}

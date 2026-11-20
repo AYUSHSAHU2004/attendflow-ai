@@ -61,3 +61,10 @@ class UnauthorizedError(AppError):
 class ServiceUnavailableError(AppError):
     status_code = 503
     code = "service_unavailable"
+
+
+class RateLimitedError(AppError):
+    """Too soon or over a budget (Phase 17 briefing refresh). details.retry_after_seconds."""
+
+    status_code = 429
+    code = "rate_limited"
