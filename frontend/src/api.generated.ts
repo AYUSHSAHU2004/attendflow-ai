@@ -555,6 +555,83 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Runtime settings: value, source and range (payroll admin only)
+         * @description Every editable setting and the read-only ones, with the effective value, its source (default / env / override), the allowed range and the last change. Payroll admin only (403 admin_only). Works in every profile.
+         */
+        get: operations["get_runtime_settings_api_settings_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/settings/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Settings changes and resets, newest first (payroll admin only) */
+        get: operations["get_settings_history_api_settings_history_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/settings/{key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Change one runtime setting (payroll admin only)
+         * @description Whitelisted keys only (403 setting_locked for configuration, secrets and policy rules; 404 unknown_setting). Needs a reason of 10+ characters. Turning auto_resolve_enabled on needs `confirm: true`. Refused in the deployed Locked profile (403 settings_locked_in_profile). Never retroactive: the scheduler reads the new value at its next cycle and running no-reply waits keep their limits. Audited as settings_changed.
+         */
+        put: operations["put_setting_api_settings__key__put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/settings/{key}/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Remove a runtime override: back to the server value (payroll admin only)
+         * @description Needs a reason of 10+ characters; 409 no_override when nothing is overridden. Refused in the deployed Locked profile. Audited as settings_reset.
+         */
+        post: operations["reset_setting_api_settings__key__reset_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/activity": {
         parameters: {
             query?: never;
@@ -3052,6 +3129,164 @@ export interface components {
                 [key: string]: number;
             };
         };
+        /** SettingChangeIn */
+        SettingChangeIn: {
+            /**
+             * Value
+             * @description The new value: true/false or a JSON number, never a string. Checked against the setting's type and range; a wrong type or range is a plain 422.
+             * @example 12
+             */
+            value: unknown;
+            /**
+             * Reason
+             * @description Why it changes (at least 10 characters, saved in the audit log)
+             * @example Workers on the late shift need more time to answer
+             */
+            reason?: string | null;
+            /**
+             * Confirm
+             * @description Required (true) to turn auto_resolve_enabled on
+             * @default false
+             */
+            confirm: boolean;
+        };
+        /** SettingChangeOut */
+        SettingChangeOut: {
+            /** Key */
+            key: string;
+            before: components["schemas"]["SettingSideOut"];
+            after: components["schemas"]["SettingSideOut"];
+            setting: components["schemas"]["SettingItemOut"];
+        };
+        /** SettingHistoryItemOut */
+        SettingHistoryItemOut: {
+            /** Id */
+            id: number;
+            /**
+             * At
+             * Format: date-time
+             */
+            at: string;
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "settings_changed" | "settings_reset";
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+            /** Actor Id */
+            actor_id: string | null;
+            /** Actor Name */
+            actor_name: string | null;
+            /** Old Value */
+            old_value: boolean | number | null;
+            /** Old Source */
+            old_source: ("default" | "env" | "override") | null;
+            /** New Value */
+            new_value: boolean | number | null;
+            /** New Source */
+            new_source: ("default" | "env" | "override") | null;
+            /** Old Text */
+            old_text: string | null;
+            /** New Text */
+            new_text: string | null;
+            /** Reason */
+            reason: string | null;
+        };
+        /** SettingHistoryOut */
+        SettingHistoryOut: {
+            /** Items */
+            items: components["schemas"]["SettingHistoryItemOut"][];
+            /** Next Before Id */
+            next_before_id: number | null;
+        };
+        /** SettingItemOut */
+        SettingItemOut: {
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+            /** Group */
+            group: string;
+            /** Help */
+            help: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "bool" | "int" | "half";
+            /** Value */
+            value: boolean | number;
+            /** Value Text */
+            value_text: string;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "default" | "env" | "override";
+            /** Server Value */
+            server_value: boolean | number;
+            /** Default Value */
+            default_value: boolean | number;
+            /** Env Var */
+            env_var: string;
+            /** Editable */
+            editable: boolean;
+            /** Minimum */
+            minimum: number | null;
+            /** Maximum */
+            maximum: number | null;
+            /** Unit */
+            unit: string | null;
+            /** Range Text */
+            range_text: string | null;
+            /** Within Range */
+            within_range: boolean;
+            /** Needs Confirm To Enable */
+            needs_confirm_to_enable: boolean;
+            /** Locked Note */
+            locked_note: string | null;
+            last_change: components["schemas"]["SettingHistoryItemOut"] | null;
+        };
+        /** SettingResetIn */
+        SettingResetIn: {
+            /**
+             * Reason
+             * @description Why the override is removed (at least 10 characters, saved in the audit)
+             * @example Back to the server value after the demo
+             */
+            reason?: string | null;
+        };
+        /** SettingSideOut */
+        SettingSideOut: {
+            /** Key */
+            key: string;
+            /** Value */
+            value: boolean | number;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "default" | "env" | "override";
+        };
+        /** SettingsOut */
+        SettingsOut: {
+            /**
+             * Profile
+             * @enum {string}
+             */
+            profile: "local" | "guided" | "locked";
+            /** Changes Allowed */
+            changes_allowed: boolean;
+            /** Locked Reason */
+            locked_reason: string | null;
+            /** Min Reason Length */
+            min_reason_length: number;
+            /** Items */
+            items: components["schemas"]["SettingItemOut"][];
+        };
         /** SupervisorCaseOut */
         SupervisorCaseOut: {
             /** Exception Id */
@@ -5122,6 +5357,224 @@ export interface operations {
             };
             /** @description Not Found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    get_runtime_settings_api_settings_get: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
+                "X-Actor-Id": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsOut"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_settings_history_api_settings_history_get: {
+        parameters: {
+            query?: {
+                key?: string | null;
+                before_id?: number | null;
+                limit?: number;
+            };
+            header: {
+                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
+                "X-Actor-Id": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingHistoryOut"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    put_setting_api_settings__key__put: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
+                "X-Actor-Id": string;
+            };
+            path: {
+                /** @description Setting key */
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SettingChangeIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingChangeOut"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    reset_setting_api_settings__key__reset_post: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
+                "X-Actor-Id": string;
+            };
+            path: {
+                /** @description Setting key */
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SettingResetIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingChangeOut"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -55,6 +55,7 @@ Generated from `backend/attendflow/activity/autonomy.py` by `python -m uv run at
 | Move the demo clock forward | Human | Payroll admin | Payroll admin | No | Demo mode only (404 otherwise); forward only, at most +14 days; never changes what detection sees. |
 | Sign off attendance readiness | Human | Payroll admin | Payroll admin | Yes, with undo | Only a closed period with attendance data and no blockers can be signed off. Changes to the reviewed data require a new human sign-off. |
 | Reopen attendance readiness | Human | Payroll admin | Payroll admin | Yes, with undo | Requires a reason. Reopening preserves the audit history and source data. |
+| Change a runtime setting | Human | Payroll admin | Payroll admin | Yes, with undo | Ten whitelisted keys within fixed bounds, a reason of 10+ characters, an explicit confirm to turn auto-resolve on; refused in the deployed Locked profile. Never retroactive. Writes only the settings row and the audit log; reset is the undo. |
 | Write the daily briefing | LLM agent | LLM agent | None | Not applicable | Only from a code-built facts packet scoped to the reader; every number, case ID, name and claim is checked by code, one correction, else the template. Changes no data. |
 | Use the template briefing | System | Briefing service | None | Not applicable | Used when the LLM is off, fails, times out or its draft fails the checks; built by code from the same facts; stores a reason code only. Changes no data. |
 | Ask for a fresh briefing | Human | Supervisor or payroll admin | Supervisor (payroll admin once escalated) | Not applicable | Own scope only (a supervisor sees their team); at most two LLM calls, a minimum interval and a daily call budget. Workers get 403. |
@@ -69,6 +70,7 @@ Generated from `backend/attendflow/activity/autonomy.py` by `python -m uv run at
 | Calculate payroll or salaries | Anyone | There is no pay data in the database and no pay tool; the app only cleans attendance before payroll. |
 | Treat silence as a Yes | No-reply ladder | The ladder only changes who is asked; deciding without the worker is a separate human action with a reason. |
 | Auto-resolve anything but P2 and P7 | Rule engine | The code allows only P2 and P7, whatever policy.json says; the kill switch turns even those off. |
+| Change policy rules, LLM settings or secrets while the app runs | Anyone | The settings API accepts only its whitelist. Policy.json rules and limits, the LLM key, URL and model, demo mode and clock, passwords, the database URL, the as-of time and every other server setting are refused (403 setting_locked). |
 | Take an action that is not in this table | Anyone | A test scans the code, and another checks every audit row the test suite writes; both fail on an action missing here. |
 <!-- autonomy-table:end -->
 

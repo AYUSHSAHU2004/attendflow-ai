@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any, Literal
 
@@ -56,6 +56,7 @@ from attendflow.db.models import (
 )
 from attendflow.errors import AppError
 from attendflow.policy.models import PolicyConfig
+from attendflow.runtime_settings import SettingsReader
 
 log = logging.getLogger("attendflow.scheduler")
 
@@ -68,10 +69,19 @@ AUTO_NOTE = "Sent automatically by the scheduler."
 @dataclass
 class CycleDeps:
     sessions: sessionmaker[Session]
-    settings: Settings
+    settings: Settings  # the server's values; runtime overrides are applied per cycle
     policy: PolicyConfig
     clock: Clock
     jobs: InvestigationJobs
+    reader: SettingsReader | None = None  # Phase 18 runtime settings
+
+    def for_cycle(self) -> CycleDeps:
+        """A copy with the effective settings read once, at the start of a cycle. The
+        whole cycle uses this one frozen copy, so a change made while it runs applies from
+        the next cycle (never half-way through one)."""
+        if self.reader is None:
+            return self
+        return replace(self, settings=self.reader.apply(self.settings))
 
 
 # ------------------------------------------------------------------ watermark

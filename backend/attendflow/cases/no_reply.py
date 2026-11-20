@@ -66,15 +66,40 @@ class Limits:
             admin=timedelta(hours=settings.no_reply_admin_hours),
         )
 
+    def stored(self) -> dict[str, float]:
+        return {
+            "reminder_hours": self.reminder.total_seconds() / 3600,
+            "supervisor_hours": self.supervisor.total_seconds() / 3600,
+            "admin_hours": self.admin.total_seconds() / 3600,
+        }
+
+
+def limits_for(row: ExceptionRow, current: Limits) -> Limits:
+    """Phase 18: the limits stored when this case's wait began, so a settings change never
+    re-times a running wait. A case without stored limits uses the current ones."""
+    stored = row.no_reply_limits
+    if not isinstance(stored, dict):
+        return current
+    try:
+        return Limits(
+            reminder=timedelta(hours=float(stored["reminder_hours"])),
+            supervisor=timedelta(hours=float(stored["supervisor_hours"])),
+            admin=timedelta(hours=float(stored["admin_hours"])),
+        )
+    except (KeyError, TypeError, ValueError):
+        return current
+
 
 def wait_start(row: ExceptionRow) -> datetime | None:
     return row.no_reply_wait_since or row.waiting_since
 
 
 def due_step(row: ExceptionRow, now: datetime, limits: Limits) -> tuple[Step, datetime] | None:
-    """The next step and when it was due, or None. Pure: reads the row, changes nothing."""
+    """The next step and when it was due, or None. Pure: reads the row, changes nothing.
+    `limits` are the current ones; limits stored on the case win (limits_for)."""
     if row.auto_resolve_undone_at is not None:
         return None
+    limits = limits_for(row, limits)
     stage = row.no_reply_stage or NONE
     if row.status == "awaiting_worker":
         since = wait_start(row)
@@ -95,14 +120,20 @@ def due_step(row: ExceptionRow, now: datetime, limits: Limits) -> tuple[Step, da
 # ------------------------------------------------------------------ state changes
 
 
-def start_wait(row: ExceptionRow, since: datetime) -> None:
-    """A new wait for the worker (a new question, or a No that still needs the time)."""
+def _clear(row: ExceptionRow) -> None:
     row.no_reply_stage = NONE
-    row.no_reply_wait_since = since
     row.no_reply_reminded_at = None
     row.no_reply_supervisor_at = None
     row.no_reply_admin_at = None
     row.no_reply_late_reply_at = None
+
+
+def start_wait(row: ExceptionRow, since: datetime, limits: Limits) -> None:
+    """A new wait for the worker (a new question, or a No that still needs the time). The
+    limits in force now are stored with it (Phase 18: never re-timed by a later change)."""
+    _clear(row)
+    row.no_reply_wait_since = since
+    row.no_reply_limits = limits.stored()
 
 
 def stop(row: ExceptionRow, now: datetime) -> int:
@@ -110,8 +141,9 @@ def stop(row: ExceptionRow, now: datetime) -> int:
     the supervisor was brought in is recorded as late."""
     stage = row.no_reply_stage or NONE
     late = row.no_reply_late_reply_at
-    start_wait(row, now)
+    _clear(row)
     row.no_reply_wait_since = None
+    row.no_reply_limits = None
     row.no_reply_late_reply_at = now if stage >= WITH_SUPERVISOR else late
     return stage
 
@@ -135,7 +167,8 @@ def hours_text(delta: timedelta) -> str:
 def reminder_text(row: ExceptionRow, limits: Limits) -> str:
     since = wait_start(row)
     assert since is not None
-    return REMINDER.format(date=day_text(row.date), deadline=stamp_text(since + limits.supervisor))
+    deadline = since + limits_for(row, limits).supervisor
+    return REMINDER.format(date=day_text(row.date), deadline=stamp_text(deadline))
 
 
 def info(row: ExceptionRow, now: datetime, worker_name: str | None = None) -> dict[str, Any] | None:

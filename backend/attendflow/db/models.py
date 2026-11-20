@@ -209,6 +209,10 @@ class ExceptionRow(Base):
     no_reply_supervisor_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
     no_reply_admin_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
     no_reply_late_reply_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
+    # Phase 18: the ladder limits in force when the current wait began
+    # ({"reminder_hours", "supervisor_hours", "admin_hours"}), so a settings change never
+    # re-times a wait that is already running. None = no wait recorded (use the current).
+    no_reply_limits: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     assigned_to: Mapped[str | None] = mapped_column(ForeignKey("employees.employee_id"))
     waiting_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
     last_detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=False))
@@ -318,7 +322,8 @@ class InvestigationJobRow(Base):
 
 
 class SettingRow(Base):
-    """App settings (filled from Phase 18). Policy limits stay in policy.json."""
+    """App settings: the demo clock, the scheduler watermark and (Phase 18) the runtime
+    overrides (`runtime_overrides`, runtime_settings.py). Policy limits stay in policy.json."""
 
     __tablename__ = "settings"
 

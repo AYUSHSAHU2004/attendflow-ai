@@ -16,6 +16,8 @@ import { cycle, schedulerStatus } from './testFixtures'
 
 // The briefing card has its own tests (BriefingCard.test.tsx).
 vi.mock('./BriefingCard', () => ({ BriefingCard: () => null }))
+// The settings panel has its own tests (SettingsPanel.test.tsx).
+vi.mock('./SettingsPanel', () => ({ SettingsPanel: () => null }))
 vi.mock('./api', async (importOriginal) => ({
   ...await importOriginal<typeof import('./api')>(),
   getSchedulerStatus: vi.fn(),

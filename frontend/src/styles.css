@@ -436,3 +436,15 @@ select { font: inherit; padding: 0.55rem 0.6rem; border: 1px solid #aebfb3; bord
   .worker-inbox .status-note { color: #f3e3b0; }
   .worker-inbox :focus-visible { outline-color: #f0c674; }
 }
+
+/* Phase 18: read-only runtime settings on /admin */
+.settings-panel { margin-bottom: 1.2rem; }
+.settings-panel summary { cursor: pointer; font-weight: 600; }
+.settings-panel .table-scroll { overflow-x: auto; }
+.settings-table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
+.settings-table th, .settings-table td { border-top: 1px solid #d5ddd8; padding: 0.4rem 0.5rem; text-align: left; vertical-align: top; }
+.settings-table .hint.block { display: block; margin: 0.1rem 0 0; }
+.settings-table tr.read-only { color: #4b5b53; }
+.badge.source-override { background: #fff1c7; color: #5c4400; }
+.badge.source-env { background: #e3eef8; color: #1e3d5c; }
+.badge.source-default { background: #edf2ef; color: #33433a; }

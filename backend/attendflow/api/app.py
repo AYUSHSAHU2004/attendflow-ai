@@ -30,6 +30,7 @@ from attendflow.config import REPO_ROOT, Settings, get_settings
 from attendflow.db.session import make_engine, make_session_factory
 from attendflow.errors import AppError
 from attendflow.policy.models import load_policy
+from attendflow.runtime_settings import SettingsReader
 from attendflow.scheduler.cycle import CycleDeps
 from attendflow.scheduler.runner import Scheduler
 
@@ -99,7 +100,8 @@ def create_app(
     clock = clock or DemoClock(settings.as_of)
     jobs = InvestigationJobs(sessions, settings, clock)
     policy = load_policy(settings.data_dir / "policy.json")
-    scheduler = Scheduler(CycleDeps(sessions, settings, policy, clock, jobs))
+    reader = SettingsReader(sessions)  # Phase 18: runtime overrides, read per request/cycle
+    scheduler = Scheduler(CycleDeps(sessions, settings, policy, clock, jobs, reader))
 
     async def recover_jobs(*, startup: bool = False) -> None:
         try:
@@ -153,16 +155,18 @@ def create_app(
             {"name": "scheduler", "description": "Automatic detection, investigation, messages"},
             {"name": "demo", "description": "Demo-only helpers (ATTENDFLOW_DEMO_MODE=true)"},
             {"name": "admin", "description": "Payroll admin views"},
+            {"name": "settings", "description": "Runtime settings (payroll admin)"},
         ],
     )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=list(settings.cors_origins),
-        allow_methods=["GET", "POST"],
+        allow_methods=["GET", "POST", "PUT"],  # PUT: runtime settings (Phase 18)
         allow_headers=["X-Actor-Id", "Content-Type"],
         expose_headers=["Location"],
     )
-    app.state.settings = settings
+    app.state.settings = settings  # the server's values (env/.env), never overridden
+    app.state.settings_reader = reader
     app.state.engine = engine
     app.state.session_factory = sessions
     app.state.investigation_jobs = jobs

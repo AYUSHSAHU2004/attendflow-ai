@@ -1266,3 +1266,102 @@ class PayrollSignoffIn(RequestModel):
 
 class PayrollReopenIn(RequestModel):
     reason: str = Field(min_length=10, max_length=500)
+
+
+# ---------------------------------------------------------------- runtime settings (Phase 18)
+
+SettingValue = bool | int | float
+SettingSource = Literal["default", "env", "override"]
+
+
+class SettingChangeIn(RequestModel):
+    value: Any = Field(
+        description="The new value: true/false or a JSON number, never a string. Checked "
+        "against the setting's type and range; a wrong type or range is a plain 422.",
+        examples=[12],
+    )
+    reason: str | None = Field(
+        default=None,
+        max_length=500,
+        description="Why it changes (at least 10 characters, saved in the audit log)",
+        examples=["Workers on the late shift need more time to answer"],
+    )
+    confirm: bool = Field(
+        default=False,
+        description="Required (true) to turn auto_resolve_enabled on",
+    )
+
+
+class SettingResetIn(RequestModel):
+    reason: str | None = Field(
+        default=None,
+        max_length=500,
+        description="Why the override is removed (at least 10 characters, saved in the audit)",
+        examples=["Back to the server value after the demo"],
+    )
+
+
+class SettingHistoryItemOut(ApiModel):
+    id: int
+    at: datetime
+    action: Literal["settings_changed", "settings_reset"]
+    key: str
+    label: str
+    actor_id: str | None
+    actor_name: str | None
+    old_value: SettingValue | None
+    old_source: SettingSource | None
+    new_value: SettingValue | None
+    new_source: SettingSource | None
+    old_text: str | None
+    new_text: str | None
+    reason: str | None
+
+
+class SettingItemOut(ApiModel):
+    key: str
+    label: str
+    group: str
+    help: str
+    kind: Literal["bool", "int", "half"]
+    value: SettingValue
+    value_text: str
+    source: SettingSource
+    server_value: SettingValue
+    default_value: SettingValue
+    env_var: str
+    editable: bool
+    minimum: float | None
+    maximum: float | None
+    unit: str | None
+    range_text: str | None
+    within_range: bool
+    needs_confirm_to_enable: bool
+    locked_note: str | None
+    last_change: SettingHistoryItemOut | None
+
+
+class SettingsOut(ApiModel):
+    profile: Literal["local", "guided", "locked"]
+    changes_allowed: bool
+    locked_reason: str | None
+    min_reason_length: int
+    items: list[SettingItemOut]
+
+
+class SettingSideOut(ApiModel):
+    key: str
+    value: SettingValue
+    source: SettingSource
+
+
+class SettingChangeOut(ApiModel):
+    key: str
+    before: SettingSideOut
+    after: SettingSideOut
+    setting: SettingItemOut
+
+
+class SettingHistoryOut(ApiModel):
+    items: list[SettingHistoryItemOut]
+    next_before_id: int | None

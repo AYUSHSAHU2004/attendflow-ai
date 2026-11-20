@@ -8,11 +8,12 @@ from datetime import date
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, Query, Request, Response
+from fastapi import Path as FastApiPath
 from fastapi.responses import JSONResponse
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
-from attendflow import __version__, demo_clock
+from attendflow import __version__, demo_clock, runtime_settings
 from attendflow.activity import feed as activity
 from attendflow.api.schemas import (
     EMPLOYEE_ID,
@@ -56,6 +57,11 @@ from attendflow.api.schemas import (
     SchedulerCycleOut,
     SchedulerStatusOut,
     SeedOut,
+    SettingChangeIn,
+    SettingChangeOut,
+    SettingHistoryOut,
+    SettingResetIn,
+    SettingsOut,
     Severity,
     SupervisorCaseOut,
     SupervisorQueueOut,
@@ -123,7 +129,20 @@ def get_clock(request: Request) -> Clock:
     return request.app.state.clock
 
 
+def effective_settings(request: Request) -> Settings:
+    """The server's settings with the Phase 18 runtime overrides applied (one primary-key
+    read per request; no cache, so no stale or shared state)."""
+    state = request.app.state
+    reader = getattr(state, "settings_reader", None)
+    return reader.apply(state.settings) if reader is not None else state.settings
+
+
 def get_settings_dep(request: Request) -> Settings:
+    return effective_settings(request)
+
+
+def get_server_settings(request: Request) -> Settings:
+    """The values the server started with (env/.env), before runtime overrides."""
     return request.app.state.settings
 
 
@@ -920,6 +939,116 @@ def admin_exception(
         )
 
 
+# ---------------------------------------------------------------- runtime settings (Phase 18)
+
+SETTING_KEY = r"^[A-Za-z0-9_.\-]{1,80}$"
+SettingKey = Annotated[str, FastApiPath(pattern=SETTING_KEY, description="Setting key")]
+
+
+def _setting_item(session: Session, request: Request, actor_id: str, key: str) -> dict:
+    view = runtime_settings.overview(session, request.app.state.settings, actor_id)
+    return next(item for item in view["items"] if item["key"] == key)
+
+
+@router.get(
+    "/settings",
+    response_model=SettingsOut,
+    tags=["settings"],
+    summary="Runtime settings: value, source and range (payroll admin only)",
+    description="Every editable setting and the read-only ones, with the effective value, "
+    "its source (default / env / override), the allowed range and the last change. "
+    "Payroll admin only (403 admin_only). Works in every profile.",
+    responses=_errors(403),
+)
+def get_runtime_settings(actor_id: ActorId, request: Request, session: SessionDep):
+    with session.begin():
+        return runtime_settings.overview(session, request.app.state.settings, actor_id)
+
+
+@router.get(
+    "/settings/history",
+    response_model=SettingHistoryOut,
+    tags=["settings"],
+    summary="Settings changes and resets, newest first (payroll admin only)",
+    responses=_errors(403, 422),
+)
+def get_settings_history(
+    actor_id: ActorId,
+    session: SessionDep,
+    key: Annotated[str | None, Query(pattern=SETTING_KEY)] = None,
+    before_id: Annotated[int | None, Query(ge=1)] = None,
+    limit: Annotated[
+        int, Query(ge=1, le=runtime_settings.MAX_HISTORY_LIMIT)
+    ] = runtime_settings.DEFAULT_HISTORY_LIMIT,
+):
+    with session.begin():
+        return runtime_settings.history(
+            session, actor_id, key=key, before_id=before_id, limit=limit
+        )
+
+
+@router.put(
+    "/settings/{key}",
+    response_model=SettingChangeOut,
+    tags=["settings"],
+    summary="Change one runtime setting (payroll admin only)",
+    description="Whitelisted keys only (403 setting_locked for configuration, secrets and "
+    "policy rules; 404 unknown_setting). Needs a reason of 10+ characters. Turning "
+    "auto_resolve_enabled on needs `confirm: true`. Refused in the deployed Locked "
+    "profile (403 settings_locked_in_profile). Never retroactive: the scheduler reads the "
+    "new value at its next cycle and running no-reply waits keep their limits. Audited "
+    "as settings_changed.",
+    responses=_errors(403, 404, 409, 422),
+)
+def put_setting(
+    key: SettingKey,
+    body: SettingChangeIn,
+    actor_id: ActorId,
+    request: Request,
+    session: SessionDep,
+    clock: ClockDep,
+    policy: PolicyDep,
+):
+    with session.begin():
+        result = runtime_settings.change(
+            session,
+            clock,
+            policy,
+            request.app.state.settings,
+            actor_id,
+            key,
+            body.value,
+            body.reason,
+            confirm=body.confirm,
+        )
+        return {**result, "setting": _setting_item(session, request, actor_id, key)}
+
+
+@router.post(
+    "/settings/{key}/reset",
+    response_model=SettingChangeOut,
+    tags=["settings"],
+    summary="Remove a runtime override: back to the server value (payroll admin only)",
+    description="Needs a reason of 10+ characters; 409 no_override when nothing is "
+    "overridden. Refused in the deployed Locked profile. Audited as settings_reset.",
+    responses=_errors(403, 404, 409, 422),
+)
+def reset_setting(
+    key: SettingKey,
+    body: SettingResetIn,
+    actor_id: ActorId,
+    request: Request,
+    session: SessionDep,
+    clock: ClockDep,
+    policy: PolicyDep,
+):
+    with session.begin():
+        result = runtime_settings.reset(
+            session, clock, policy, request.app.state.settings, actor_id, key, body.reason
+        )
+        return {**result, "setting": _setting_item(session, request, actor_id, key)}
+
+
 # ---------------------------------------------------------------- activity (Phase 14)
 
 ACTIVITY_SCOPE = (
@@ -1091,7 +1220,7 @@ def _receive_punch(
         state.policy,
         state.clock,
         punch,
-        auto_resolve=state.settings.auto_resolve_enabled,
+        auto_resolve=effective_settings(request).auto_resolve_enabled,
     )
     return PunchAcceptedOut(punch=punch, detection=detection)
 
@@ -1140,7 +1269,7 @@ def _require_admin(session: Session, actor_id: str) -> None:
 
 
 def _status(request: Request, session: Session) -> SchedulerStatusOut:
-    settings = request.app.state.settings
+    settings = effective_settings(request)
     workers = []
     if settings.demo_mode:
         with session.begin():
@@ -1258,9 +1387,8 @@ def demo_reset(actor_id: ActorId, request: Request, session: SessionDep):
             code="invalid_data",
             details=exc.errors,
         ) from exc
-    detection = service.run_detection(
-        session, state.policy, state.clock, auto_resolve=state.settings.auto_resolve_enabled
-    )
+    auto_resolve = effective_settings(request).auto_resolve_enabled  # overrides were wiped
+    detection = service.run_detection(session, state.policy, state.clock, auto_resolve=auto_resolve)
     watermark = set_watermark(state.session_factory, state.clock, "demo_reset")
     state.logger.info("demo reset", extra={"event": "demo_reset", **counts})
     return DemoResetOut(

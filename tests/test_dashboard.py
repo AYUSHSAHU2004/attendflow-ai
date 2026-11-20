@@ -224,5 +224,7 @@ def test_dashboard_uses_a_read_only_transaction(demo):
         assert _get(demo)["active_total"] > 0
     finally:
         event.remove(engine, "before_cursor_execute", record)
-    assert statements[0] == "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"
-    assert all(statement.startswith("SELECT") for statement in statements[1:])
+    # Phase 18: the effective settings are read first (one primary-key SELECT, own session).
+    assert statements[0].startswith("SELECT SETTINGS.KEY")
+    assert statements[1] == "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"
+    assert all(statement.startswith("SELECT") for statement in statements[2:])

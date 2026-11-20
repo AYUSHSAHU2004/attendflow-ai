@@ -63,6 +63,8 @@ and CI, 10-minute demo video, 5 slides.
 7. The user commits and pushes themselves. Tell them what to commit; don't commit unasked.
 8. Always run both `uv run ruff check .` and `uv run ruff format --check .` before
    finishing a phase. Phase 15 CI exposed lint and format issues that needed separate fixes.
+9. Never add Co-Authored-By lines, "Claude" or any other AI attribution to commit messages,
+   code comments or docs.
 
 ## Phase plan
 
@@ -72,7 +74,8 @@ end-to-end tests (**prototype complete**); 11 mock punch API + scheduler; 12 aut
 "resolved without a human" metric; 13 no-reply escalation ladder + demo clock; 14 Activity
 Center + Autonomy Table (generated, anti-drift tests); 15 operations dashboard;
 16 payroll readiness and human sign-off; 16.5 rough deploy (local only, Render deploy pending);
-17 daily briefing, worker history and the phone-first inbox.
+17 daily briefing, worker history and the phone-first inbox; 18 runtime settings backend +
+read-only Current settings panel (built and checked locally, not committed yet).
 
 **Prototype (3-10)**
 3. Backend + DB + API
@@ -101,7 +104,10 @@ Center + Autonomy Table (generated, anti-drift tests); 15 operations dashboard;
 23. Tests + evaluation
 24. Delivery
 
-Phase 17 is built and checked locally (see PROGRESS.md); the owner commits and runs CI.
+Phase 17 is committed as `e9e4a7b` (pushed). Verified with `./scripts/check-all.sh` on the
+Windows PC: 836 backend tests passed, 2 skipped; 108 frontend tests passed. CI: pending.
+Phase 18 is built and checked locally on the Mac (see PROGRESS.md); the owner commits and
+runs CI.
 Phases 15 and 16 are verified, CI green. The Phase 16 check recorded 735 backend tests
 passed, 2 skipped, 93 frontend tests passed, type-check, build, a migration round trip,
 and a live payroll page check. The payroll test's scheduler response lookup and the
@@ -193,6 +199,14 @@ deploy. See [docs/PROGRESS.md](docs/PROGRESS.md) for verification status.
     registered (404) and no switcher shows. The dev-only `?as=` override stays out of the
     production bundle (bundle grep). The worker inbox gets its actor from `main.tsx`
     (`workerActor`), never from `?as=` directly.
+  - Phase 18: `/api/settings` (GET, PUT, reset, history) trusts `X-Actor-Id` like every
+    endpoint, so anyone who passes the demo password gate can change settings as E201 in
+    the Guided profile. Real login (or the persona cookie) first. The Locked profile
+    refuses every change (403 `settings_locked_in_profile`).
+  - Phase 18: overrides live in the database (`settings` row `runtime_overrides`) and win
+    over the env values after a restart. Review them (GET /api/settings shows the source)
+    before go-live; a demo reset or seed clears them.
+  - Phase 18: CORS now allows PUT (settings). Same-origin deploys are unaffected.
   - Phase 16.5: sleeping free web services stop their scheduler. Choose an always-on plan
     if a schedule must run reliably. Before a manual rollout, stop the old scheduler and
     wait for its cycle to finish. Review overlapping old/new processes and migrations
@@ -768,6 +782,8 @@ backend/attendflow/
   activity/autonomy.py   the Autonomy Table registry (single source) + README rendering
   activity/feed.py       Activity Center feed, summary counts, team scope, safe sentences
   activity/trace.py      one-line tool-call result summaries for the case traces
+  runtime_settings.py    Phase 18: whitelist + bounds, SettingsReader (per request/cycle),
+                         change/reset (row lock + audit), history, GET overview
   tools/models.py        tool inputs/outputs (Pydantic), ok/error envelope, ProposedChange
   tools/read_tools.py    get_schedule, get_leave, get_leave_balance, get_punches, get_policy
   tools/run_checks.py    run_checks: simulate a change, re-run the engine, diff the week
@@ -786,8 +802,8 @@ frontend/                Vite React: worker inbox (/, phone first: questions + M
                          reminders + notices), BriefingCard on /admin and /supervisor,
                          supervisor (/supervisor,
                          no-reply badge, decide without worker, send to payroll, TeamAutoFixes),
-                         admin (/admin, SchedulerPanel with demo clock, stuck counter + filter,
-                         metric line, AutoFixPanel), activity (/activity: feed, filters, summary
+                         admin (/admin, SettingsPanel read-only, SchedulerPanel with demo
+                         clock, stuck counter + filter, metric line, AutoFixPanel), activity (/activity: feed, filters, summary
                          strip, Autonomy tab), payroll readiness (/payroll, /supervisor/payroll),
                          dev (/dev)
 scripts/check-all.sh     local lint, validation, backend tests and frontend checks
@@ -919,3 +935,52 @@ python -m uv run ruff check . && python -m uv run ruff format --check .
 - Live check: `attendflow_phase17`, API :8017, Vite :5187 (launch configs `phase17-api`
   offline, `phase17-api-live` with the .env key, `phase17-web`). In PowerShell use
   `npx vite --port ...` (npm drops the `--` and Vite starts on 5173).
+
+**Runtime settings (Phase 18)**
+- Effective value = runtime override (one `settings` row, key `runtime_overrides`,
+  `{key: value}`) > the server value (env/.env) > the code default. `source` is `override`,
+  else `env` when the server value differs from the code default, else `default`.
+  `app.state.settings` stays the server value; `SettingsReader.apply(base)` builds a new
+  frozen `Settings` (the config.py checks run again). No cache: one primary-key read per
+  request (`get_settings_dep` / `effective_settings`) and per scheduler cycle
+  (`CycleDeps.for_cycle()`, read once at the start, so a change made mid-cycle applies
+  from the next one). A stored value that no longer fits is skipped and logged.
+- Editable (user-approved bounds): `auto_resolve_enabled`; `no_reply_reminder_hours` 1-72,
+  `no_reply_supervisor_hours` 2-168, `no_reply_admin_hours` 1-168 (whole hours, reminder <
+  supervisor); `scheduler_investigations_per_cycle` 0-5, `scheduler_messages_per_cycle` 0-10
+  (user change: lower, for the Groq free tier); `briefing_min_interval_seconds` 60-3600;
+  `briefing_max_llm_calls_per_day` 0-100 (user change); `briefing_scheduled`;
+  `overtime_warning_margin_hours` 0.5-20 in 0.5 steps, below the P5 limit. Strict JSON types
+  (a string "8" is refused). Shown read-only: `no_reply_escalation_enabled`,
+  `scheduler_enabled`, `scheduler_interval_seconds`, `scheduler_backlog`, `briefing_enabled`.
+  Any other Settings field or a policy key (`P5`, `policy`, ...) is 403 `setting_locked`;
+  anything else 404 `unknown_setting`. Secrets never appear in GET or the audit.
+- API (tag `settings`): `GET /api/settings`, `GET /api/settings/history` (newest first,
+  `before_id`, `limit` 50/200, `key`), `PUT /api/settings/{key}` (`value`, `reason`,
+  `confirm`), `POST /api/settings/{key}/reset` (`reason`). Payroll admin only (403
+  `admin_only`). Order: profile, admin, key, value, reason. Errors: 422
+  `invalid_setting_value` / `invalid_setting_combination` (plain words, no env names) /
+  `reason_required` (10+ trimmed) / `confirmation_required` (auto-resolve ON without
+  `confirm: true`); 409 `no_change` / `no_override`.
+- Profiles (user change): the deployed Locked profile (`deployed` and not `demo_mode`)
+  refuses PUT and reset for everyone with 403 `settings_locked_in_profile`; GET and the
+  panel still work. Guided and local dev allow changes (Priya only).
+- Writes: the overrides row is locked (`INSERT ... ON CONFLICT DO NOTHING`, then
+  `SELECT ... FOR UPDATE`) and changed in the same transaction as the audit row.
+  `runtime_settings.py` imports only `SettingRow`, `AuditLogRow`, `EmployeeRow` and has one
+  `session.add` (the audit row); a static test and the SQL write hook check it.
+- Audit: `settings_changed` / `settings_reset`, actor `admin`, no case. `before`/`after` =
+  `{key, value, source}` (+ `confirmed` when auto-resolve is turned on), `reason` = Priya's
+  text. Autonomy rows `runtime_settings` (human, payroll admin, reset is the undo) and
+  `never_runtime_policy_change`. Feed: Priya only, with her reason ("Changed No-reply
+  reminder after from 8 h to 12 h."). Not counted in the summary strip.
+- Never retroactive: migration `0011_no_reply_limits` adds `exceptions.no_reply_limits`
+  (JSONB). `start_wait` stores the limits in force; `due_step` and the reminder deadline
+  use the stored ones (`limits_for`), else the current. The migration backfills waiting
+  cases with the env values (else 8/24/24). Auto-resolve only touches newly detected rows,
+  so turning it on never closes held cases. Demo reset and seed clear every override.
+- Frontend: `SettingsPanel.tsx` on `/admin` ("Current settings", closed `<details>`):
+  value, source badge, range, last change with reason; no edit controls (Phase 19).
+  `getRuntimeSettings` in `api.ts`. CORS allows PUT for Phase 19.
+- This Mac has no `uv`; the checks ran with the project `.venv` (Python 3.12) directly,
+  and the OpenAPI script with `ATTENDFLOW_PYTHON=.venv/bin/python`.

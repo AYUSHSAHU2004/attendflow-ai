@@ -89,7 +89,7 @@ class Scheduler:
             )
             return None
         try:
-            deps = self.deps
+            deps = self.deps.for_cycle()  # Phase 18: effective settings, read once per cycle
             if model_free:
                 settings = replace(
                     deps.settings,
@@ -115,7 +115,7 @@ class Scheduler:
         return (self.next_run_at - datetime.now(UTC)).total_seconds()
 
     def status(self) -> dict[str, Any]:
-        settings = self.deps.settings
+        settings = self.deps.for_cycle().settings  # what the next cycle will use
         with self.deps.sessions() as session:
             last = session.scalars(
                 select(SchedulerRunRow)

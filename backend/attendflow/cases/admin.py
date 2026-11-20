@@ -378,7 +378,23 @@ def audit_summary(entry: AuditLogRow, employees: dict[str, EmployeeRow]) -> str:
         return f"Escalated to {_name(employees, after.get('assigned_to'))} (no decision made)."
     if action == "demo_clock_moved":
         return f"Demo clock moved forward {after.get('hours')} h."
+    if action in ("settings_changed", "settings_reset"):
+        return _settings_summary(entry)
     return action.replace("_", " ").capitalize() + "."
+
+
+def _settings_summary(entry: AuditLogRow) -> str:
+    """Phase 18. Built only from the stored key and values (whitelisted settings)."""
+    from attendflow.runtime_settings import SPECS, format_value  # it imports this module
+
+    before, after = entry.before or {}, entry.after or {}
+    spec = SPECS.get(str(after.get("key") or ""))
+    if spec is None:
+        return "Changed a runtime setting."
+    old, new = format_value(spec, before.get("value")), format_value(spec, after.get("value"))
+    if entry.action == "settings_reset":
+        return f"Reset {spec.label} to the server value ({old} to {new})."
+    return f"Changed {spec.label} from {old} to {new}."
 
 
 def _audit_entry(entry: AuditLogRow, employees: dict[str, EmployeeRow]) -> dict[str, Any]:

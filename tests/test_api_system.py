@@ -41,6 +41,11 @@ EXPECTED_PATHS = {
     ("get", "/api/activity"),  # Phase 14
     ("get", "/api/activity/summary"),
     ("get", "/api/autonomy"),
+    # Phase 18: runtime settings (payroll admin)
+    ("get", "/api/settings"),
+    ("get", "/api/settings/history"),
+    ("put", "/api/settings/{key}"),
+    ("post", "/api/settings/{key}/reset"),
     ("get", "/api/dashboard"),
     ("get", "/api/payroll"),
     ("post", "/api/payroll/{week_start}/sign-off"),

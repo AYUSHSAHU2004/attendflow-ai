@@ -1032,7 +1032,9 @@ def ask_worker(
         before = {**_state(row), "no_reply_stage": row.no_reply_stage}
         _set_status(row, "awaiting_worker", clock, row.employee_id)
         row.worker_recheck = None
-        no_reply.start_wait(row, clock.now())  # a new question = a new wait (Phase 13)
+        no_reply.start_wait(  # a new question = a new wait (Phase 13)
+            row, clock.now(), no_reply.Limits.from_settings(settings)
+        )
         message = WorkerMessageRow(
             exception_id=row.id,
             recipient_id=row.employee_id,
@@ -1316,7 +1318,9 @@ def worker_reply(
             if late:  # a late No: back to the worker for the actual time (normal Phase 8)
                 check_transition(row.status, "awaiting_worker", action="worker_reply")
                 _set_status(row, "awaiting_worker", clock, actor.employee_id)
-            no_reply.start_wait(row, clock.now())  # waiting for the time = a new wait
+            no_reply.start_wait(  # waiting for the time = a new wait
+                row, clock.now(), no_reply.Limits.from_settings(settings)
+            )
             row.updated_at = clock.now()
             option = time_review.clock_out_option(row, asked)
             if option:

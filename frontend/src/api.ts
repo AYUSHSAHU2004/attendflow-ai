@@ -313,3 +313,13 @@ export async function getActivitySummary(
 export async function getAutonomy(actor = activityActor.id, signal?: AbortSignal) {
   return (await request<Schemas['AutonomyTableOut']>('/api/autonomy', actor, { signal })).body.items
 }
+
+// ---------------------------------------------------------------- runtime settings (Phase 18)
+
+export type RuntimeSettings = Schemas['SettingsOut']
+export type RuntimeSetting = Schemas['SettingItemOut']
+
+// Read-only here; editing comes with the Phase 19 admin UI.
+export async function getRuntimeSettings(signal?: AbortSignal) {
+  return (await request<RuntimeSettings>('/api/settings', adminActor.id, { signal })).body
+}

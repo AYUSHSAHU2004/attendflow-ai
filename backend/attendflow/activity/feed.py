@@ -52,6 +52,8 @@ HUMAN_REASON_ACTIONS = (
     "auto_resolve_undone",
     "payroll_signed_off",
     "payroll_reopened",
+    "settings_changed",
+    "settings_reset",
 )
 HUMAN_ACTORS = ("worker", "supervisor", "admin")
 # Fixed sentences for rows whose detail sentence would echo a model diagnostic.

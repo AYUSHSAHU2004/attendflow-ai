@@ -1265,4 +1265,88 @@ and your two additions. My own calls:
   there was no retry. 1 call, 2.4 s model latency, 2.8 s end to end. Its only status
   phrase about a case ("P5-E002-2026-04-13 remains open") is true.
 
+**Status (owner report):** committed and pushed as `e9e4a7b`. Verified with
+`./scripts/check-all.sh` on the Windows PC: 836 backend tests passed, 2 skipped; 108
+frontend tests passed. **CI: pending** (the owner confirms the green tick).
+
 **Next:** Phase 18 (settings backend).
+
+## Phase 18: Runtime settings backend (2026-11-20)
+
+**What existed before** (built on, not duplicated): the `settings` table (demo clock,
+scheduler watermark), the frozen `Settings` with its start-up checks, `require_admin`, the
+audit log, the Autonomy Table and its anti-drift tests, the static writer test and the SQL
+write hook.
+
+**Built**
+- `runtime_settings.py`: a whitelist of ten settings with fixed bounds, strict JSON types
+  and plain-words 422s. Effective value = runtime override (one `settings` row,
+  `runtime_overrides`) > the server value (env/.env) > the code default, with `source`
+  reported. Five more settings are shown read-only. Every other Settings field and any
+  policy key is 403 `setting_locked`.
+- API (payroll admin only): `GET /api/settings`, `PUT /api/settings/{key}`,
+  `POST /api/settings/{key}/reset`, `GET /api/settings/history`. A reason of 10+
+  characters on every change and reset; `confirm: true` to turn auto-resolve on; 409
+  `no_change` / `no_override`; the cross-setting rules (reminder before supervisor, margin
+  below the P5 limit) are checked in plain words before the start-up checks.
+- No restart: routes read the effective settings per request; the scheduler reads them
+  once at the start of each cycle (`CycleDeps.for_cycle()`), so a change made while a cycle
+  runs applies from the next one. No cache, so no stale value and no state shared between
+  threads; writers lock the overrides row.
+- Never retroactive: migration `0011_no_reply_limits` stores the ladder limits on each case
+  when its wait starts; waiting cases are backfilled with the env values. Auto-resolve
+  only ever touches newly detected cases.
+- Audit `settings_changed` / `settings_reset` (actor admin, key + old/new value and source
+  + reason, nothing else). Autonomy rows `runtime_settings` and
+  `never_runtime_policy_change`; README regenerated. Feed: Priya only, with her reason.
+- `/admin`: a read-only **Current settings** panel (value, source badge, range, last change
+  and reason). Editing is Phase 19. API types regenerated.
+
+**Decisions** (all 16 defaults, with your two changes)
+- **Your change:** lower LLM-cost limits for the Groq free tier: investigations per cycle
+  0-5, messages per cycle 0-10, briefing LLM calls per day 0-100.
+- **Your change:** the deployed Locked profile refuses PUT and reset for everyone (403
+  `settings_locked_in_profile`); GET and the panel still work. Guided and local dev allow
+  changes (Priya only). The profile check runs first, so the refusal is the same for
+  everyone.
+- **Your rule:** no AI attribution in commit messages, code comments or docs (CLAUDE.md
+  working rule 9).
+- My calls: `source` is `env` only when the server value differs from the code default;
+  an env value outside the runtime range is shown with `within_range: false` and reset
+  returns to it; a stored override that no longer fits (after an env change) is skipped
+  and logged; CORS now allows PUT (for Phase 19).
+
+**Checks (run on the Mac with the project `.venv`; `uv` is not installed here)**
+- Backend with `REQUIRE_DB=1` (one pytest run, no API running): **907 passed, 2 skipped**
+  (the opt-in real-LLM tests); 909 collected. New: `tests/test_runtime_settings.py` (69 with
+  parameter cases: permissions, locked keys, bounds and types, cross-setting rules,
+  reasons, confirm, no change, reset, history, feed, audit content, Locked and Guided
+  profiles, the scheduler cap on the next cycle and a change during a cycle, auto-resolve
+  off, ladder limits never re-timed, demo reset, SQL write hook, static module check) plus
+  2 new Autonomy-row cases. Two existing tests updated: the endpoint list and the
+  dashboard read-only test (the settings SELECT now comes first, then the read-only
+  transaction). The leak test caught the word "diagnostics" in my new "never" row on the
+  Autonomy tab; I reworded the row and left the test unchanged.
+- `ruff check .`, `ruff format --check .`, `attendflow-validate`, `attendflow-autonomy
+  --check` (README regenerated).
+- Migration 0011: upgrade, downgrade, upgrade on a throwaway DB; the backfill gave a
+  waiting case the env limits (reminder 6 h from the env, 24/24 defaults) and left the 16
+  others empty.
+- Frontend: `api:generate` then `api:check` (no drift), **111 tests passed** (3 new for
+  the panel), type-check, build. The bundle has no `URLSearchParams` and no `Neha`.
+- Live check (`attendflow_phase18`, API :8018, Vite :5188, Mac launch configs
+  `phase18-api-mac` / `phase18-web-mac`, no LLM): seed, detection (17), a real change to
+  12 h shows on `/admin` as **Changed at runtime** with Priya's reason; 6 investigations
+  per cycle, Ravi, and `llm_model` were refused in plain words. At 375 px the page has no
+  horizontal scroll (the table scrolls inside its box); no console errors.
+- Not run here: `./scripts/check-all.sh` as one script and the Windows checks.
+
+**Phase 22 checklist (added):** the settings API trusts `X-Actor-Id` (Guided profile:
+anyone past the password gate can act as E201); overrides in the DB win over env values
+after a restart, so review them before go-live; CORS allows PUT.
+
+**Verify:** `python -m uv run alembic upgrade head`, then `REQUIRE_DB=1 python -m uv run
+pytest tests/test_runtime_settings.py` and section 13 of
+[DEMO_WALKTHROUGH.md](DEMO_WALKTHROUGH.md). **CI: pending** (not committed yet).
+
+**Next:** Phase 19 (admin UI: edit the settings from `/admin`).

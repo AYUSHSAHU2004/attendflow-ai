@@ -321,3 +321,48 @@ origin and add the Vite origin to `ATTENDFLOW_CORS_ORIGINS`.
    **Ask for a fresh briefing** (supervisor or payroll admin).
 7. Amit's planted P1 is untouched by any briefing: its audit trail shows only `detected`
    until a person acts.
+
+## 13. Runtime settings (Phase 18)
+
+Priya changes a few operational settings while the app runs. No restart, every change has
+a reason and an audit row, and nothing applies retroactively. Policy rules, the LLM
+settings and secrets stay locked. Use the local API (or the Guided profile; the deployed
+Locked profile answers every change with 403 `settings_locked_in_profile`).
+
+1. **Read them.** On `/admin`, open **Current settings**: value, source (Default / Server
+   (.env) / Changed at runtime), the allowed range and the last change with its reason.
+   Or:
+   ```bash
+   curl localhost:8000/api/settings -H "X-Actor-Id: E201"
+   ```
+2. **Change one** (whole hours, 1 to 72, a reason of 10+ characters):
+   ```bash
+   curl -X PUT localhost:8000/api/settings/no_reply_reminder_hours -H "X-Actor-Id: E201" -H "Content-Type: application/json" -d '{"value": 12, "reason": "Night shift workers need more time to answer"}'
+   ```
+   The answer shows `before` (8, default) and `after` (12, override). Reload `/admin`: the
+   row says **Changed at runtime** and "Changed by Priya Sharma ... 8 h → 12 h". Workers
+   already waiting keep the 8 h they were promised; only new questions use 12 h.
+3. **Refusals in plain words** (nothing is saved):
+   - Ravi: `-H "X-Actor-Id: E101"` gives 403 `admin_only`.
+   - `{"value": 6}` for `scheduler_investigations_per_cycle` gives 422
+     "Investigations per scheduler cycle must be a whole number from 0 to 5."
+   - `llm_model` or `P5` gives 403 `setting_locked`.
+   - A reason under 10 characters gives 422 `reason_required`.
+4. **Auto-resolve needs a confirm to turn back on.** Turning it off needs only a reason;
+   turning it on without `"confirm": true` gives 422 `confirmation_required`:
+   ```bash
+   curl -X PUT localhost:8000/api/settings/auto_resolve_enabled -H "X-Actor-Id: E201" -H "Content-Type: application/json" -d '{"value": true, "confirm": true, "reason": "Duplicate taps are handled by code again"}'
+   ```
+   Cases detected while it was off stay with people.
+5. **Pause the LLM work of the scheduler** for the next cycle (the running cycle keeps its
+   value): `{"value": 0, ...}` for `scheduler_investigations_per_cycle`, then **Run
+   scheduler now**: new cases are listed under `skipped_budget`.
+6. **History and reset:**
+   ```bash
+   curl localhost:8000/api/settings/history -H "X-Actor-Id: E201"
+   curl -X POST localhost:8000/api/settings/no_reply_reminder_hours/reset -H "X-Actor-Id: E201" -H "Content-Type: application/json" -d '{"reason": "Back to the server value after the demo"}'
+   ```
+   The **Activity and autonomy** feed shows "Changed No-reply reminder after from 8 h to
+   12 h." with Priya's reason (Priya only), and the Autonomy tab lists **Change a runtime
+   setting** (payroll admin) and the "never" row for policy rules, LLM settings and
+   secrets. A demo reset clears every override.

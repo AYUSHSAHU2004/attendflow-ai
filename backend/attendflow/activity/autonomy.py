@@ -409,6 +409,26 @@ CAPABILITIES: tuple[Capability, ...] = (
         audit_actors=("admin",),
         proof_tests=("tests/test_payroll.py::test_payroll_signoff_and_reopen",),
     ),
+    # ---------------------------------------------------------------- settings (Phase 18)
+    A(
+        key="runtime_settings",
+        title="Change a runtime setting",
+        actor_type="human",
+        performed_by="Payroll admin",
+        approval="payroll_admin",
+        reversible="yes_undo",
+        guardrail="Ten whitelisted keys within fixed bounds, a reason of 10+ characters, "
+        "an explicit confirm to turn auto-resolve on; refused in the deployed Locked profile. "
+        "Never retroactive. Writes only the settings row and the audit log; reset is the undo.",
+        audit_actions=("settings_changed", "settings_reset"),
+        audit_actors=("admin",),
+        proof_tests=(
+            "tests/test_runtime_settings.py::test_supervisors_and_workers_cannot_change_settings",
+            "tests/test_runtime_settings.py::test_locked_profile_refuses_changes_but_still_reads",
+            "tests/test_runtime_settings.py::test_turning_auto_resolve_on_needs_confirm",
+            "tests/test_runtime_settings.py::test_every_change_needs_a_reason",
+        ),
+    ),
     # ---------------------------------------------------------------- briefing (Phase 17)
     A(
         key="briefing_generated",
@@ -535,6 +555,21 @@ CAPABILITIES: tuple[Capability, ...] = (
         proof_tests=(
             "tests/test_auto_resolve_engine.py::test_policy_json_cannot_turn_on_auto_resolve_for_another_policy",
             "tests/test_api_auto_resolve.py::test_kill_switch_off_nothing_auto_resolves",
+        ),
+    ),
+    A(
+        key="never_runtime_policy_change",
+        title="Change policy rules, LLM settings or secrets while the app runs",
+        actor_type="human",
+        performed_by="Anyone",
+        approval="none",
+        reversible="not_applicable",
+        kind="never",
+        guardrail="The settings API accepts only its whitelist. Policy.json rules and limits, "
+        "the LLM key, URL and model, demo mode and clock, passwords, the database URL, the "
+        "as-of time and every other server setting are refused (403 setting_locked).",
+        proof_tests=(
+            "tests/test_runtime_settings.py::test_locked_keys_and_policy_rules_are_refused",
         ),
     ),
     A(

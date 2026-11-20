@@ -13,6 +13,7 @@ import {
 } from './api'
 import { AutoFixPanel, AutoResolveMetricLine } from './AutoFix'
 import { SchedulerPanel } from './SchedulerPanel'
+import { SettingsPanel } from './SettingsPanel'
 import { CaseCard, noReplyBadge, plainError } from './SupervisorPage'
 import { displayDate } from './WorkerInbox'
 
@@ -411,6 +412,8 @@ export function AdminPage() {
       <SchedulerPanel onChanged={() => setRefresh((value) => value + 1)} />
 
       <AutoResolveMetricLine refresh={refresh} />
+
+      <SettingsPanel refresh={refresh} />
 
       {data && (
         <section aria-label="Counters" className="counters">
