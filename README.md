@@ -25,8 +25,7 @@ Jump to: [Overview](#1-project-overview) · [Flow and diagrams](#2-project-flow-
 | Ayush | TBD:  https://drive.google.com/file/d/1WraFvf-BwIz4MDNL-wn6UMYiV-IOoYv8/view?usp=drivesdk |
 | Maharshi | TBD:https://drive.google.com/file/d/1OIe6bFt7qmkIK-JWEWphJn5Eekw2KsL9/view?usp=drivesdk |
 | Saurav | TBD:  https://drive.google.com/file/d/1-iRw9F-VFXcj8D54RYSJXj_Ws2pjPcTk/view?usp=drivesdk|
-
-|Arnav | TBD : https://drive.google.com/file/d/1Uli4YYR_CCluq0EEJk2BT3IuYC6Ess2y/view?usp=sharing |
+| Arnav | TBD: https://drive.google.com/file/d/1Uli4YYR_CCluq0EEJk2BT3IuYC6Ess2y/view?usp=sharing |
 
 ## Run it locally
 
