@@ -18,7 +18,12 @@ from attendflow.config import Settings
 
 
 class LLMError(RuntimeError):
-    """Any failure talking to the model. Callers fall back to non-LLM behaviour."""
+    """Any failure talking to the model. Callers fall back to non-LLM behaviour.
+    `status_code` is the provider's HTTP status when there was one (429 = rate limited)."""
+
+    def __init__(self, message: str = "", *, status_code: int | None = None):
+        super().__init__(message)
+        self.status_code = status_code
 
 
 @dataclass(frozen=True)
@@ -46,6 +51,9 @@ class ToolRequest(BaseModel):
 class ChatMessage(BaseModel):
     text: str | None = None
     tool_calls: list[ToolRequest] = Field(default_factory=list)
+    # Token usage as the provider reported it (None when it did not).
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
 
 
 def _retry_after(exc: APIStatusError) -> float:
@@ -106,7 +114,7 @@ def _http_error(
 ) -> LLMError:
     diagnostic = "" if settings.deployed else _provider_message(exc, settings, messages)
     error = f"{summary} (HTTP {exc.status_code})"
-    return LLMError(f"{error}: {diagnostic}" if diagnostic else error)
+    return LLMError(f"{error}: {diagnostic}" if diagnostic else error, status_code=exc.status_code)
 
 
 def _chat_completion(
@@ -189,7 +197,13 @@ def chat(
             calls.append(
                 ToolRequest(id=call.id, name=call.function.name, arguments=call.function.arguments)
             )
-        reply = ChatMessage(text=message.content, tool_calls=calls)
+        usage = getattr(response, "usage", None)
+        reply = ChatMessage(
+            text=message.content,
+            tool_calls=calls,
+            prompt_tokens=_int_or_none(getattr(usage, "prompt_tokens", None)),
+            completion_tokens=_int_or_none(getattr(usage, "completion_tokens", None)),
+        )
     except ValidationError:
         raise LLMError("model returned an invalid message") from None
     if len({call.id for call in calls}) != len(calls):
@@ -197,6 +211,10 @@ def chat(
     if not calls and not (reply.text or "").strip():
         raise LLMError("model returned an empty reply")
     return reply
+
+
+def _int_or_none(value: Any) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
 def _client(settings: Settings) -> OpenAI:

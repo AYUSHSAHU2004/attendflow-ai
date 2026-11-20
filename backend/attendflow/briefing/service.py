@@ -50,6 +50,9 @@ QUIET_ACTIONS = (
     "briefing_refresh_requested",
     "briefing_generated",
     "briefing_fallback",
+    "qa_answered",  # Phase 20: questions change no case facts
+    "qa_fallback",
+    "qa_refused",
 )
 
 _guard = threading.Lock()

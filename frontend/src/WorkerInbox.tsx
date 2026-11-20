@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Actor } from './actors'
+import { WorkerAsk } from './WorkerAsk'
 import {
   confirmWorkerTime,
   getWorkerHistory,
@@ -13,7 +14,8 @@ import {
 } from './api'
 
 // Phase 17: the worker's phone-first inbox. One question per card, big Yes/No buttons, a
-// clear confirmation after each reply and a "My history" view. The worker identity comes
+// clear confirmation after each reply and a "My history" view (Phase 20 adds "Ask"). The
+// worker identity comes
 // from the page (main.tsx); the API only ever returns the caller's own cases.
 
 export function displayDate(value: string) {
@@ -183,11 +185,20 @@ const OUTCOME_LABELS: Record<string, string> = {
   closed_no_change: 'Closed',
 }
 
-function HistoryCard({ item }: { item: WorkerHistoryItem }) {
+function HistoryCard({ item, focused }: { item: WorkerHistoryItem; focused?: boolean }) {
   const state = item.outcome.state
   const done = ['fixed', 'decided', 'decided_without_reply', 'closed_no_change'].includes(state)
+  const ref = useRef<HTMLElement>(null)
+  useEffect(() => {
+    if (focused) {
+      ref.current?.scrollIntoView?.({ block: 'start' })
+      ref.current?.focus()
+    }
+  }, [focused])
   return (
-    <article className="question-card history-card" aria-label={`Case from ${displayDate(item.date)}`}>
+    <article ref={ref} tabIndex={focused ? -1 : undefined}
+      className={focused ? 'question-card history-card focused' : 'question-card history-card'}
+      aria-label={`Case from ${displayDate(item.date)}`}>
       <div className="card-top">
         <time dateTime={item.date}>{displayDate(item.date)}</time>
         <span className={done ? 'state-tag done' : 'state-tag'}>
@@ -224,7 +235,8 @@ function firstName(actor?: Actor) {
 }
 
 export function WorkerInbox({ actor }: { actor?: Actor } = {}) {
-  const [view, setView] = useState<'questions' | 'history'>('questions')
+  const [view, setView] = useState<'questions' | 'history' | 'ask'>('questions')
+  const [focusCase, setFocusCase] = useState<string | null>(null)
   const [items, setItems] = useState<WorkerMessage[] | null>(null)
   const [notices, setNotices] = useState<WorkerNotice[]>([])
   const [history, setHistory] = useState<WorkerHistoryItem[] | null>(null)
@@ -319,12 +331,16 @@ export function WorkerInbox({ actor }: { actor?: Actor } = {}) {
       <p className="lede">Your attendance questions. Answer when you can; it takes a minute.</p>
       <nav className="view-switch" aria-label="Inbox views">
         <button type="button" className={view === 'questions' ? 'active' : ''} aria-pressed={view === 'questions'}
-          onClick={() => setView('questions')}>
+          onClick={() => { setFocusCase(null); setView('questions') }}>
           Questions{items !== null && open > 0 ? ` (${open})` : ''}
         </button>
         <button type="button" className={view === 'history' ? 'active' : ''} aria-pressed={view === 'history'}
-          onClick={() => setView('history')}>
+          onClick={() => { setFocusCase(null); setView('history') }}>
           My history
+        </button>
+        <button type="button" className={view === 'ask' ? 'active' : ''} aria-pressed={view === 'ask'}
+          onClick={() => setView('ask')}>
+          Ask
         </button>
       </nav>
 
@@ -346,7 +362,9 @@ export function WorkerInbox({ actor }: { actor?: Actor } = {}) {
         </section>
       )}
 
-      {view === 'questions' ? (
+      {view === 'ask' ? (
+        <WorkerAsk onOpenCase={(id) => { setFocusCase(id); setView('history') }} />
+      ) : view === 'questions' ? (
         <section aria-label="Questions">
           {error ? (
             <div className="question-card">
@@ -385,7 +403,9 @@ export function WorkerInbox({ actor }: { actor?: Actor } = {}) {
               <p className="big-line">No history yet</p>
               <p className="hint">Questions you answer, and what happened next, show up here.</p>
             </div>
-          ) : history.map((item) => <HistoryCard key={item.exception_id} item={item} />)}
+          ) : history.map((item) => (
+            <HistoryCard key={item.exception_id} item={item} focused={item.exception_id === focusCase} />
+          ))}
         </section>
       )}
     </main>

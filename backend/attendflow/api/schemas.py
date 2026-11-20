@@ -389,6 +389,85 @@ class WorkerHistoryOut(ApiModel):
     items: list[WorkerHistoryItemOut]
 
 
+# ---------------------------------------------------------------- employee Q&A (Phase 20)
+
+
+class AskIn(RequestModel):
+    question: str = Field(
+        min_length=3,
+        max_length=1000,
+        description="The worker's question in their own words. The server also applies "
+        "QA_MAX_QUESTION_CHARS (default 300; longer is 422 question_too_long).",
+        examples=["How many sick days do I have left?"],
+    )
+
+
+class AskSourceOut(ApiModel):
+    kind: Literal["policy", "case", "leave_balance", "schedule", "punches", "supervisor"]
+    id: str | None = Field(default=None, description="Policy ID or case ID")
+    label: str | None = None
+    text: str | None = Field(
+        default=None,
+        description="Code-held detail: the policy.md section, or the case summary and where "
+        "it is now. Never model text.",
+    )
+    in_history: bool | None = Field(
+        default=None, description="Cases only: the case is in the worker's My history"
+    )
+
+
+class AskLimitsOut(ApiModel):
+    max_chars: int
+    questions_per_hour: int
+    questions_left_this_hour: int
+    retry_after_seconds: int | None = None
+    llm_configured: bool
+    llm_calls_left_today: int
+
+
+class AskAnswerOut(ApiModel):
+    question_id: int
+    question: str
+    kind: Literal["answer", "refusal"]
+    source: Literal["llm", "template", "refusal"]
+    label: str = Field(description="AI answer, Template answer or Can't answer")
+    reason: str = Field(
+        description="validated, validated_after_retry, validation_failed, llm_error, "
+        "rate_limited, timeout, no_budget, llm_unavailable, llm_disabled or refused"
+    )
+    refusal_code: str | None = Field(
+        default=None,
+        description="other_person, pay, action, injection, language, unsupported, "
+        "out_of_range or ask_supervisor",
+    )
+    answer: str
+    sources: list[AskSourceOut]
+    intents: list[str]
+    asked_at: datetime
+    llm_calls: int
+    latency_ms: float | None = None
+
+
+class AskResultOut(AskAnswerOut):
+    limits: AskLimitsOut
+
+
+class AskHistoryOut(ApiModel):
+    items: list[AskAnswerOut]
+    limits: AskLimitsOut
+
+
+class AdminQuestionOut(AskAnswerOut):
+    employee_id: str
+    employee_name: str
+    failed_checks: list[str]
+
+
+class AdminQuestionsOut(ApiModel):
+    items: list[AdminQuestionOut]
+    total: int
+
+
 # ---------------------------------------------------------------- briefing (Phase 17)
 
 

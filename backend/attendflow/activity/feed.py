@@ -93,6 +93,55 @@ BRIEFING_REASONS = {
 }
 
 
+QA_ACTIONS = ("qa_answered", "qa_fallback", "qa_refused")
+QA_REASONS = {
+    "validation_failed": "the LLM answer failed the checks",
+    "llm_error": "the LLM call failed",
+    "rate_limited": "the LLM provider was rate limited",
+    "timeout": "the LLM call timed out",
+    "llm_unavailable": "no LLM is configured",
+    "llm_disabled": "LLM answers are switched off",
+    "no_budget": "today's LLM budget is used up",
+}
+QA_REFUSALS = {
+    "other_person": "it asked about another person",
+    "pay": "it asked about pay or salary",
+    "action": "it asked for a change",
+    "injection": "it tried to change the rules",
+    "language": "it was not in English",
+    "unsupported": "it was outside what the assistant answers",
+    "out_of_range": "it asked about a date outside the two weeks it covers",
+    "ask_supervisor": "the day is under review with the supervisor",
+}
+QA_TOPICS = {
+    "my_cases": "cases",
+    "my_punches": "punches",
+    "leave_balance": "leave balance",
+    "my_schedule": "schedule",
+    "policy_rule": "policy",
+    "my_supervisor": "who to ask",
+}
+
+
+def _qa_sentence(entry: AuditLogRow, employees: dict[str, EmployeeRow]) -> str:
+    after = entry.after or {}
+    who = employees.get(str(after.get("employee_id") or ""))
+    name = who.name if who else "a worker"
+    topics = ", ".join(QA_TOPICS.get(str(i), "other") for i in after.get("intents") or [])
+    about = f" ({topics})" if topics else ""
+    if entry.action == "qa_answered":
+        retry = " after one correction" if after.get("reason") == "validated_after_retry" else ""
+        return (
+            f"Answered a question from {name}{about} from verified facts; every check "
+            f"passed{retry}."
+        )
+    if entry.action == "qa_fallback":
+        why = QA_REASONS.get(str(after.get("reason")), "the LLM was not used")
+        return f"Showed {name} a template answer{about}: {why}."
+    why = QA_REFUSALS.get(str(after.get("refusal_code")), "it was outside what it answers")
+    return f"Did not answer a question from {name}: {why}."
+
+
 def _scope_words(after: dict, employees: dict[str, EmployeeRow]) -> str:
     scope = str(after.get("scope") or "")
     if scope == "all":
@@ -134,6 +183,8 @@ def feed_sentence(entry: AuditLogRow, employees: dict[str, EmployeeRow]) -> str:
     if entry.action == "briefing_fallback":
         why = BRIEFING_REASONS.get(str(after.get("reason")), "the LLM was not used")
         return f"Showed the template briefing ({_scope_words(after, employees)}): {why}."
+    if entry.action in QA_ACTIONS:
+        return _qa_sentence(entry, employees)
     if entry.action == "post_punch_detection_failed":
         return "Detection after the punch failed; the next run picks it up."
     if entry.action == "post_undo_detection_failed":

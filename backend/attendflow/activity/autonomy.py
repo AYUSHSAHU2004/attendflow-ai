@@ -417,7 +417,7 @@ CAPABILITIES: tuple[Capability, ...] = (
         performed_by="Payroll admin",
         approval="payroll_admin",
         reversible="yes_undo",
-        guardrail="Ten whitelisted keys within fixed bounds, a reason of 10+ characters, "
+        guardrail="Twelve whitelisted keys within fixed bounds, a reason of 10+ characters, "
         "an explicit confirm to turn auto-resolve on; refused in the deployed Locked profile. "
         "Never retroactive. Writes only the settings row and the audit log; reset is the undo.",
         audit_actions=("settings_changed", "settings_reset"),
@@ -470,6 +470,46 @@ CAPABILITIES: tuple[Capability, ...] = (
             "tests/test_briefing_api.py::test_workers_get_403_and_unknown_actors_are_refused",
             "tests/test_briefing_api.py::test_refresh_is_rate_limited_and_capped",
         ),
+    ),
+    # ---------------------------------------------------------------- employee Q&A (Phase 20)
+    A(
+        key="qa_answered",
+        title="Answer a worker's question",
+        actor_type="llm_agent",
+        performed_by="LLM agent",
+        approval="none",
+        reversible="not_applicable",
+        guardrail="Own data only: the server sets the worker, code picks a closed intent and "
+        "builds the facts; every number, date, ID and name is checked, one correction, else "
+        "the template. Changes no data.",
+        audit_actions=("qa_answered",),
+        audit_actors=("agent",),
+    ),
+    A(
+        key="qa_fallback",
+        title="Use the template answer",
+        actor_type="system",
+        performed_by="Employee Q&A",
+        approval="none",
+        reversible="not_applicable",
+        guardrail="Used when the LLM is off, fails, is rate limited, times out, is over its "
+        "daily budget or fails the checks; built by code from the same facts; stores a reason "
+        "code only. Changes no data.",
+        audit_actions=("qa_fallback",),
+        audit_actors=("system",),
+    ),
+    A(
+        key="qa_refused",
+        title="Refuse a worker's question",
+        actor_type="system",
+        performed_by="Employee Q&A",
+        approval="none",
+        reversible="not_applicable",
+        guardrail="Code refuses questions about other people, pay, changes, rule changes or "
+        "other topics before any LLM call, with a fixed reply that names the supervisor. "
+        "Changes no data.",
+        audit_actions=("qa_refused",),
+        audit_actors=("system",),
     ),
     # ---------------------------------------------------------------- never
     A(
@@ -570,6 +610,22 @@ CAPABILITIES: tuple[Capability, ...] = (
         "as-of time and every other server setting are refused (403 setting_locked).",
         proof_tests=(
             "tests/test_runtime_settings.py::test_locked_keys_and_policy_rules_are_refused",
+        ),
+    ),
+    A(
+        key="never_qa_acts",
+        title="Change, approve or promise anything from a worker's question",
+        actor_type="llm_agent",
+        performed_by="Employee Q&A",
+        approval="none",
+        reversible="not_applicable",
+        kind="never",
+        guardrail="The Q&A reads in a READ ONLY transaction and imports no writer; code "
+        "refuses change requests, and the checks reject promises, approval claims and other "
+        "people's data.",
+        proof_tests=(
+            "tests/test_qa_api.py::test_qa_never_writes_source_data_and_imports_no_writer",
+            "tests/test_qa_validate.py::test_promises_actions_and_approval_claims_are_rejected",
         ),
     ),
     A(

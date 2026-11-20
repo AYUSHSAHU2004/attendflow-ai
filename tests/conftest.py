@@ -164,6 +164,12 @@ def make_api_settings(db_engine, **changes):
         briefing_min_interval_seconds=0,
         briefing_max_llm_calls_per_day=40,
         briefing_llm_deadline_seconds=20,
+        # Phase 20: the employee Q&A with its documented defaults.
+        qa_enabled=True,
+        qa_max_question_chars=300,
+        qa_questions_per_hour=10,
+        qa_max_llm_calls_per_day=60,
+        qa_llm_deadline_seconds=15,
     )
     return replace(settings, **changes)
 

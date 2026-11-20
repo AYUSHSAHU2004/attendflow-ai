@@ -54,6 +54,9 @@ EXPECTED_PATHS = {
     ("get", "/api/tool-calls"),
     ("get", "/api/worker/messages"),
     ("get", "/api/worker/history"),  # Phase 17
+    ("post", "/api/worker/ask"),  # Phase 20
+    ("get", "/api/worker/ask/history"),  # Phase 20
+    ("get", "/api/admin/worker-questions"),  # Phase 20
     ("get", "/api/briefing"),  # Phase 17
     ("post", "/api/briefing/refresh"),  # Phase 17
     ("get", "/api/supervisor/queue"),

@@ -9,6 +9,11 @@ export type WorkerInboxData = { items: WorkerMessage[]; notices: WorkerNotice[] 
 export type WorkerReceipt = Schemas['WorkerReplyOut']
 export type WorkerHistoryItem = Schemas['WorkerHistoryItemOut']
 export type Briefing = Schemas['BriefingOut']
+export type AskAnswer = Schemas['AskAnswerOut']
+export type AskResult = Schemas['AskResultOut']
+export type AskHistory = Schemas['AskHistoryOut']
+export type AskLimits = Schemas['AskLimitsOut']
+export type AskSource = Schemas['AskSourceOut']
 export type InvestigationJob = Schemas['InvestigationJobOut']
 export type InvestigationCase = Schemas['InvestigationCase']
 
@@ -88,6 +93,18 @@ export async function getWorkerHistory(signal?: AbortSignal): Promise<WorkerHist
   return (await request<Schemas['WorkerHistoryOut']>(
     '/api/worker/history', workerActor.id, { signal },
   )).body.items
+}
+
+// Phase 20: employee Q&A. Asking may call the LLM (rate-limited, checked by code);
+// reading the history never does.
+export async function askQuestion(question: string): Promise<AskResult> {
+  return (await request<AskResult>('/api/worker/ask', workerActor.id, {
+    method: 'POST', body: JSON.stringify({ question }),
+  })).body
+}
+
+export async function getAskHistory(signal?: AbortSignal): Promise<AskHistory> {
+  return (await request<AskHistory>('/api/worker/ask/history', workerActor.id, { signal })).body
 }
 
 // Phase 17: the daily briefing. Reading never calls the LLM; refresh may (rate-limited).

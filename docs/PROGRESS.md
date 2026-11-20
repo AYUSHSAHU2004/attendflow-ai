@@ -1267,7 +1267,7 @@ and your two additions. My own calls:
 
 **Status (owner report):** committed and pushed as `e9e4a7b`. Verified with
 `./scripts/check-all.sh` on the Windows PC: 836 backend tests passed, 2 skipped; 108
-frontend tests passed. **CI: pending** (the owner confirms the green tick).
+frontend tests passed. **CI: green.**
 
 **Next:** Phase 18 (settings backend).
 
@@ -1347,6 +1347,139 @@ after a restart, so review them before go-live; CORS allows PUT.
 
 **Verify:** `python -m uv run alembic upgrade head`, then `REQUIRE_DB=1 python -m uv run
 pytest tests/test_runtime_settings.py` and section 13 of
+[DEMO_WALKTHROUGH.md](DEMO_WALKTHROUGH.md).
+
+**Status (owner report):** committed as `c945421`. **CI: green.**
+
+**Next:** Phase 20 (employee Q&A). Phases 19 (admin UI) and 21 (analytics) are skipped on
+purpose (owner decision, 2026-11-20); the settings stay read-only on `/admin`.
+
+## Phase 20: Employee Q&A (2026-11-20)
+
+Phases 19 (admin UI) and 21 (analytics) are skipped on purpose (owner decision).
+
+**Built**
+- **Ask tab** in Amit's phone inbox (`WorkerAsk.tsx`): a question box with a character
+  counter, five suggestion chips, an answer card labelled **AI answer**, **Template answer**
+  or **Can't answer**, and source chips. A policy chip opens the policy.md text inline; a
+  case chip opens the case in My history when Amit was asked about it, else its summary.
+  56 px targets, dark mode, no horizontal scroll at 375 px. Opening the tab reads the
+  history only and never calls the LLM.
+- **Code first** (`qa/intents.py`): refusals with no LLM call for questions about another
+  person, pay or salary, changes ("approve my case"), rule-changing text and other
+  languages. Dates come from code only (the first date mentioned wins); the previous and
+  current Mon-Sun weeks are answerable, anything else is out of range. Keywords pick from a
+  closed list of six intents; the model picks from the same list only when keywords find
+  none or more than two, and its reply is checked.
+- **Facts packet** (`qa/facts.py`): one READ ONLY transaction through the existing tool
+  functions with the asker's ID set by code; at most 3000 characters. P17 cases never
+  enter it; a day whose only case is P17 gets a fixed "please ask your supervisor" line.
+- **Answer** (`qa/generate.py`, `qa/validate.py`): at most 3 calls (intent only when
+  needed, answer, one correction after a failed check). Provider error, HTTP 429 (own
+  reason `rate_limited`) or the deadline: template at once. The Phase 17 checks moved to
+  `grounding.py` and are shared (no change in the briefing's behaviour; its 53 tests pass).
+  Q&A adds checks for pay, other people, leaks, "I changed" claims and sources.
+- **Storage and audit:** `worker_questions` (migration `0012`), visible to the asker and
+  Priya (`GET /api/admin/worker-questions`). Audit rows `qa_answered` (agent),
+  `qa_fallback`, `qa_refused` (system) carry codes and counts, never text. Autonomy rows
+  and the never row `never_qa_acts`; README regenerated. Feed: Priya only.
+- **Limits:** 300 characters, 10 questions per worker per hour, 60 Q&A calls a day, 15 s
+  deadline, per-worker lock. Runtime settings `qa_questions_per_hour` (1-30) and
+  `qa_max_llm_calls_per_day` (0-100); `qa_enabled` read-only.
+- **Golden set** `tests/qa_golden.json`: 20 questions (12 answers, 8 refusals incl. the P17
+  line), run through the template path and a scripted model.
+
+**Decisions:** all 22 recommended defaults, plus your three additions (packet under 3000
+characters with 429 as its own provider reason and token usage per call; the own name and
+own supervisor never trigger the other-person refusal; the fixed P17 line). My calls:
+- A sixth intent, `my_supervisor`, so "Can I ask Ravi about this?" gets a real answer. The
+  supervisor may be named only as the person to ask (contact verb, not possessive);
+  "Ravi's leave" or "How many sick days does Ravi have?" is refused.
+- Policy IDs anywhere in the facts count as grounded (P14's text names P8 and P1).
+- An AI answer that cites nothing shows no source chips (no fallback chips under "I can't
+  answer that").
+- The submit button is "Send" (the tab is "Ask").
+
+**Checks (Mac, project `.venv`; `uv` is not installed here)**
+- Backend `REQUIRE_DB=1 pytest` (one run, API stopped): **1052 passed, 2 skipped** (the opt-in real-LLM tests). New:
+  `test_qa_api.py` 35, `test_qa_validate.py` 40, `test_qa_intents.py` 66,
+  `test_qa_golden.py` 3. Updated: endpoint list, settings list, autonomy coverage map.
+- `ruff check .`, `ruff format --check .`, `attendflow-validate`, autonomy `--check`
+  (run as `python -m attendflow.scripts.autonomy_cli`; the `.venv` has no
+  `attendflow-autonomy` script). Migration 0012 upgrade, downgrade, upgrade.
+- Frontend: `api:generate` then `api:check` (no drift), **119 tests passed** (8 new),
+  type-check, build. The bundle has no `URLSearchParams` and no `Neha`.
+- Live check (`attendflow_phase20`, API :8020, Vite :5190, launch configs
+  `phase20-api-mac` / `phase20-web-mac`, unreachable LLM): Ask tab at 375 px in light and
+  dark mode, template answer with case and policy chips, refusal card, no horizontal
+  scroll, 56 px targets, no console errors from the app.
+- Not run here: `./scripts/check-all.sh` as one script and the Windows checks.
+
+**Real-key check** (2 Groq calls, cap set to 2, then 1 approved re-run; key never printed)
+- "How many sick days do I have left?": keywords chose `leave_balance` (no intent call);
+  the first draft passed every check, no retry; 1 call, 1.02 s model, 1.03 s end to end;
+  571 prompt + 61 completion tokens. Answer: "You have 11 sick days left for 2026."
+- "Why was my punch on Tuesday flagged, and will it be fixed today?": keywords chose
+  `my_cases` + `my_punches` (no intent call); the first draft passed every check; 1 call,
+  0.51 s model, 0.53 s end to end; 572 + 52 tokens. The model said it could not answer and
+  sent Amit to Ravi Kumar, which was correct for the facts it got: **bug found**, the date
+  step took "today" (Thursday) instead of "Tuesday". Fixed (the first date mentioned wins)
+  with tests.
+- **Re-run after the fix** (owner-approved, exactly 1 Groq call, daily cap set to 1): the
+  code chose Tue 14 Apr 2026 and `my_cases` + `my_punches` (keywords, no intent call); the
+  facts held P1-E001-2026-04-14 and P14-E001-2026-04-14-P0037 (2008 characters). The first
+  draft passed every check, no retry; 1 call, 1.08 s model, 1.10 s end to end; 1014 + 164
+  tokens. Answer: the clock-out punch is missing (P1), the case is being reviewed by the
+  supervisor and "has not been fixed yet"; no promise. Sources: P1 and the P1 case. It did
+  not mention the P14 holiday case (grounded but incomplete; no check required every case
+  at the time). Both gaps are fixed in the follow-up below.
+- No validation check rejected harmless wording; nothing was loosened.
+- **Where the cap was set:** only in the throwaway scripts outside the repo (scratchpad
+  `qa_real.py` and `qa_real_one.py`), as an in-memory `replace(settings,
+  qa_max_llm_calls_per_day=2 / 1)`. `.env` has no QA_ line and was not touched (last
+  changed 19 Nov), no database holds a Q&A override (`attendflow_phase20` has no
+  `runtime_overrides` row), and the code default, `.env.example` and docs stay at 60. There
+  was nothing to restore.
+
+**Follow-up: status words and day coverage** (user request after the real-model re-run; no
+further Groq calls)
+- Each case in the facts now carries code-built `status_words` (open = "flagged, not yet
+  reviewed", awaiting_supervisor = "with your supervisor for review", awaiting_worker =
+  "waiting for your answer", escalated = "with payroll for review", resolved, rejected =
+  "closed by payroll with no change to your record"; resolved and rejected cases also keep
+  the code-built outcome). The prompt tells the model to reuse that wording and to name
+  every case of a one-day question. Case chips show "Status: ..." from the same words.
+- New check `status_word_failures`: plain status phrases are checked even without a case
+  ID, against the sentence's own case IDs, else every case in the facts. "Reviewed by /
+  awaiting / with your supervisor" needs an awaiting_supervisor case, "under review"
+  awaiting_supervisor or escalated, "waiting for / needs your answer" awaiting_worker, "is
+  resolved / fixed" resolved, "is closed" resolved or rejected, "escalated / with payroll"
+  escalated. Negated phrases ("not yet reviewed by your supervisor", "has not been fixed")
+  are not claims. Code-built message, e.g. "the answer says a case is with the supervisor,
+  but in the facts P1 is flagged, not yet reviewed; P14 is flagged, not yet reviewed".
+- New check `incomplete_day`: a one-day question with N > 1 visible cases must cover each
+  by case ID or policy ID, else "the answer must cover all 2 items on that day (P1, P14)".
+  The P17-only rule is unchanged (P17 is never a visible case). The day template now lists
+  every visible case with its status words. Both failures use the one correction request.
+- Regression tests with the two real examples (the exact real answer; an answer covering
+  only P1), correct wordings that pass (open = "flagged, not yet reviewed"; both cases by
+  ID or by policy ID; an awaiting_supervisor case "with your supervisor"), the other status
+  phrases, the complete template, the correction path over the API and the fallback after
+  two failed drafts. Golden set: the Tuesday answers now cover P1 and P14 with the right
+  status, the real Tuesday question is a golden item, and "who-supervisor" was dropped to
+  stay at 20 ("ask-ravi" covers that intent). No other check changed.
+- Not changed: the worker's My history (Phase 17 `outcome()`) still says "Your supervisor
+  is reviewing it." for an open case.
+- Checks: `ruff check .`, `ruff format --check .`, autonomy `--check`, `api:check` (no
+  OpenAPI drift; no frontend file changed in this step), backend `REQUIRE_DB=1 pytest` (one run, API stopped): **1063 passed, 2 skipped**.
+  `test_qa_api.py` now 37, `test_qa_validate.py` 49.
+
+**Phase 22 checklist (added):** the Q&A endpoints trust `X-Actor-Id`; `worker_questions`
+holds personal text (proposed retention 90 days, no purge job yet); keep diagnostics off
+and set the QA caps for the Groq plan.
+
+**Verify:** `python -m uv run alembic upgrade head`, then `REQUIRE_DB=1 python -m uv run
+pytest tests/test_qa_api.py tests/test_qa_golden.py` and section 14 of
 [DEMO_WALKTHROUGH.md](DEMO_WALKTHROUGH.md). **CI: pending** (not committed yet).
 
-**Next:** Phase 19 (admin UI: edit the settings from `/admin`).
+**Next:** Phase 22 (deployment).

@@ -393,3 +393,43 @@ class BriefingRow(Base):
     requested_by: Mapped[str | None] = mapped_column(String(8))
     workflow_at: Mapped[datetime] = mapped_column(DateTime(timezone=False))
     created_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class WorkerQuestionRow(Base):
+    """Phase 20: one question a worker asked the employee Q&A, and the answer shown.
+
+    Visible only to the asker (their own history) and the payroll admin. `kind` is
+    "answer" or "refusal"; `source` says who wrote the text (llm, template or refusal).
+    `attempts` holds code-built check codes, call stages and token counts only, never model
+    text; a rejected draft is never stored. `facts_hash` identifies the facts packet the
+    answer was checked against (the packet itself is not kept). `workflow_at` is the demo
+    clock; `created_utc` is real time and drives the rate limits. Retention: see
+    docs/PROGRESS.md Phase 20 (a demo reset clears the table).
+    """
+
+    __tablename__ = "worker_questions"
+    __table_args__ = (
+        CheckConstraint(_in("kind", ("answer", "refusal")), "kind"),
+        CheckConstraint(_in("source", ("llm", "template", "refusal")), "source"),
+        Index("ix_worker_questions_employee_id", "employee_id", "id"),
+        Index("ix_worker_questions_created_utc", "created_utc"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    employee_id: Mapped[str] = mapped_column(ForeignKey("employees.employee_id"))
+    question: Mapped[str] = mapped_column(Text)
+    intents: Mapped[list[Any]]
+    plan_source: Mapped[str] = mapped_column(String(10))
+    kind: Mapped[str] = mapped_column(String(8))
+    source: Mapped[str] = mapped_column(String(8))
+    reason: Mapped[str] = mapped_column(String(40))
+    refusal_code: Mapped[str | None] = mapped_column(String(20))
+    answer: Mapped[str] = mapped_column(Text)
+    sources: Mapped[list[Any]]
+    facts_hash: Mapped[str | None] = mapped_column(String(64))
+    attempts: Mapped[list[Any]]
+    llm_calls: Mapped[int] = mapped_column(SmallInteger)
+    model: Mapped[str | None] = mapped_column(Text)
+    latency_ms: Mapped[float | None] = mapped_column(Float)
+    workflow_at: Mapped[datetime] = mapped_column(DateTime(timezone=False))
+    created_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True))

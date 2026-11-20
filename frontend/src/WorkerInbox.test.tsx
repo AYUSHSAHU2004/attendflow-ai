@@ -2,8 +2,8 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
-  confirmWorkerTime, getWorkerHistory, getWorkerInbox, sendReply, submitManualTime,
-  type WorkerHistoryItem, type WorkerMessage,
+  askQuestion, confirmWorkerTime, getAskHistory, getWorkerHistory, getWorkerInbox, sendReply,
+  submitManualTime, type WorkerHistoryItem, type WorkerMessage,
 } from './api'
 import { WorkerInbox } from './WorkerInbox'
 
@@ -13,6 +13,8 @@ vi.mock('./api', () => ({
   sendReply: vi.fn(),
   confirmWorkerTime: vi.fn(),
   submitManualTime: vi.fn(),
+  askQuestion: vi.fn(),
+  getAskHistory: vi.fn(),
 }))
 
 const item: WorkerMessage = {
@@ -280,5 +282,41 @@ describe('worker inbox', () => {
     expect(await screen.findByRole('heading', { name: /Thanks, Amit. One more step./ })).toHaveFocus()
     expect(screen.getByLabelText('Exact clock-out time')).toBeVisible()
     expect(screen.queryByRole('button', { name: 'See my history' })).not.toBeInTheDocument()
+  })
+
+  it('has an Ask tab whose case source opens the case in My history', async () => {
+    vi.mocked(getWorkerInbox).mockResolvedValue({ items: [], notices: [] })
+    vi.mocked(getAskHistory).mockResolvedValue({
+      items: [],
+      limits: {
+        max_chars: 300, questions_per_hour: 10, questions_left_this_hour: 10,
+        retry_after_seconds: null, llm_configured: false, llm_calls_left_today: 60,
+      },
+    })
+    vi.mocked(askQuestion).mockResolvedValue({
+      question_id: 3, question: 'Why was my punch on Tuesday flagged?', kind: 'answer',
+      source: 'template', label: 'Template answer', reason: 'llm_unavailable', refusal_code: null,
+      answer: 'You have 1 attendance case on Tue 14 Apr 2026.',
+      sources: [{ kind: 'case', id: item.exception_id, label: 'P1 · 2026-04-14', text: 'Clock-in 09:00', in_history: true }],
+      intents: ['my_cases'], asked_at: '2026-04-16T08:00:00', llm_calls: 0, latency_ms: null,
+      limits: {
+        max_chars: 300, questions_per_hour: 10, questions_left_this_hour: 9,
+        retry_after_seconds: null, llm_configured: false, llm_calls_left_today: 60,
+      },
+    })
+    vi.mocked(getWorkerHistory).mockResolvedValue([{
+      exception_id: item.exception_id, date: item.date, updated_at: '2026-04-16T08:00:00',
+      outcome: { state: 'with_supervisor', text: 'Your supervisor is reviewing it.', reason: null },
+      questions: [{ asked_at: '2026-04-16T08:00:00', message: item.message, reminded_at: null, answer: null }],
+    }])
+    const user = userEvent.setup()
+    render(<WorkerInbox />)
+    await user.click(screen.getByRole('button', { name: 'Ask' }))
+    expect(screen.getByRole('button', { name: 'Ask' })).toHaveAttribute('aria-pressed', 'true')
+    await user.click(await screen.findByRole('button', { name: 'Why was my punch on Tuesday flagged?' }))
+    await user.click(await screen.findByRole('button', { name: /P1 · 2026-04-14/ }))
+    const card = await screen.findByRole('article', { name: /Case from/ })
+    expect(card).toHaveClass('focused')
+    expect(screen.getByRole('button', { name: 'My history' })).toHaveAttribute('aria-pressed', 'true')
   })
 })

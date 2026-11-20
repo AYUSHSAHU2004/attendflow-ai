@@ -378,6 +378,10 @@ COVERED_ELSEWHERE = {
     "briefing_fallback": (
         "tests/test_briefing_api.py::test_scheduled_briefing_once_per_workflow_day_after_new_activity"
     ),
+    # Phase 20: the story asks no question.
+    "qa_answered": "tests/test_qa_api.py::test_ai_answer_is_stored_audited_and_sourced",
+    "qa_fallback": "tests/test_qa_api.py::test_llm_off_gives_the_template_answer",
+    "qa_refused": "tests/test_qa_api.py::test_other_person_is_refused_with_no_llm_call",
 }
 
 

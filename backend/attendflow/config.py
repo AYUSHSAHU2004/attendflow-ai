@@ -107,6 +107,12 @@ class Settings:
     briefing_min_interval_seconds: float = 300
     briefing_max_llm_calls_per_day: int = 40
     briefing_llm_deadline_seconds: float = 20
+    # Phase 20: employee Q&A. Off = template answers only (no LLM call). Limits use real time.
+    qa_enabled: bool = True
+    qa_max_question_chars: int = 300
+    qa_questions_per_hour: int = 10  # per worker, rolling hour
+    qa_max_llm_calls_per_day: int = 60  # all workers, real UTC day
+    qa_llm_deadline_seconds: float = 15
     deployed: bool = False
     demo_password: str | None = field(default=None, repr=False)
     demo_reset_enabled: bool = True
@@ -147,6 +153,15 @@ class Settings:
         deadline = self.briefing_llm_deadline_seconds
         if not isfinite(deadline) or deadline <= 0:
             raise ValueError("BRIEFING_LLM_DEADLINE_SECONDS must be positive")
+        if not 20 <= self.qa_max_question_chars <= 1000:
+            raise ValueError("QA_MAX_QUESTION_CHARS must be between 20 and 1000")
+        if self.qa_questions_per_hour < 1:
+            raise ValueError("QA_QUESTIONS_PER_HOUR must be positive")
+        if self.qa_max_llm_calls_per_day < 0:
+            raise ValueError("QA_MAX_LLM_CALLS_PER_DAY must not be negative")
+        qa_deadline = self.qa_llm_deadline_seconds
+        if not isfinite(qa_deadline) or qa_deadline <= 0:
+            raise ValueError("QA_LLM_DEADLINE_SECONDS must be positive")
         if self.agent_max_steps < 1:
             raise ValueError("AGENT_MAX_STEPS must be positive")
         if self.llm_reasoning_effort not in {"off", "low", "medium", "high"}:
@@ -242,6 +257,11 @@ def get_settings(env_file: Path | None = REPO_ROOT / ".env") -> Settings:
         briefing_min_interval_seconds=float(os.getenv("BRIEFING_MIN_INTERVAL_SECONDS") or 300),
         briefing_max_llm_calls_per_day=int(os.getenv("BRIEFING_MAX_LLM_CALLS_PER_DAY") or 40),
         briefing_llm_deadline_seconds=float(os.getenv("BRIEFING_LLM_DEADLINE_SECONDS") or 20),
+        qa_enabled=_env_bool("QA_ENABLED", default=True),
+        qa_max_question_chars=int(os.getenv("QA_MAX_QUESTION_CHARS") or 300),
+        qa_questions_per_hour=int(os.getenv("QA_QUESTIONS_PER_HOUR") or 10),
+        qa_max_llm_calls_per_day=int(os.getenv("QA_MAX_LLM_CALLS_PER_DAY") or 60),
+        qa_llm_deadline_seconds=float(os.getenv("QA_LLM_DEADLINE_SECONDS") or 15),
         deployed=deployed,
         demo_password=os.getenv("ATTENDFLOW_DEMO_PASSWORD") or None,
         demo_reset_enabled=_env_bool("ATTENDFLOW_DEMO_RESET_ENABLED", default=not deployed),

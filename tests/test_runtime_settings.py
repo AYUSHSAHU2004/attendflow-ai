@@ -54,6 +54,8 @@ EDITABLE = [
     "briefing_min_interval_seconds",
     "briefing_max_llm_calls_per_day",
     "briefing_scheduled",
+    "qa_questions_per_hour",  # Phase 20
+    "qa_max_llm_calls_per_day",  # Phase 20
     "overtime_warning_margin_hours",
 ]
 
@@ -127,6 +129,8 @@ def test_get_lists_every_setting_with_value_source_and_range(demo):
     assert ranges["no_reply_reminder_hours"] == (1, 72)
     assert ranges["no_reply_supervisor_hours"] == (2, 168)
     assert ranges["overtime_warning_margin_hours"] == (0.5, 20)
+    assert ranges["qa_questions_per_hour"] == (1, 30)
+    assert ranges["qa_max_llm_calls_per_day"] == (0, 100)
     reminder = next(i for i in editable if i["key"] == "no_reply_reminder_hours")
     assert (reminder["value"], reminder["source"], reminder["value_text"]) == (8, "default", "8 h")
     assert reminder["range_text"] == "a whole number from 1 to 72 h"

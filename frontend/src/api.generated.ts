@@ -324,6 +324,63 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/worker/ask": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ask a short question about your own attendance or the policy
+         * @description Worker-only (others get 403 worker_only). The employee is the caller; the question can never widen that. Code refuses questions about other people, pay, changes or other topics with no LLM call. Otherwise code picks the facts (own leave balance, schedule, punches, cases, policy text) and at most three LLM calls phrase the answer (intent pick only when needed, answer, one correction after a failed check); every number, date, ID and name is checked, else the template answer. 422 question_too_long, 429 qa_rate_limited (QA_QUESTIONS_PER_HOUR), 409 qa_busy. Changes no timecard, schedule or leave.
+         */
+        post: operations["worker_ask_api_worker_ask_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/worker/ask/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * My last questions and the answers I was shown
+         * @description Worker-only and scoped to the caller. Never calls the LLM and writes nothing.
+         */
+        get: operations["worker_ask_history_api_worker_ask_history_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/worker-questions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Questions workers asked the employee Q&A (payroll admin only, read-only) */
+        get: operations["admin_worker_questions_api_admin_worker_questions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/briefing": {
         parameters: {
             query?: never;
@@ -1291,6 +1348,66 @@ export interface components {
             items: components["schemas"]["AdminListItemOut"][];
             filter_options: components["schemas"]["AdminFilterOptionsOut"];
         };
+        /** AdminQuestionOut */
+        AdminQuestionOut: {
+            /** Question Id */
+            question_id: number;
+            /** Question */
+            question: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "answer" | "refusal";
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "llm" | "template" | "refusal";
+            /**
+             * Label
+             * @description AI answer, Template answer or Can't answer
+             */
+            label: string;
+            /**
+             * Reason
+             * @description validated, validated_after_retry, validation_failed, llm_error, rate_limited, timeout, no_budget, llm_unavailable, llm_disabled or refused
+             */
+            reason: string;
+            /**
+             * Refusal Code
+             * @description other_person, pay, action, injection, language, unsupported, out_of_range or ask_supervisor
+             */
+            refusal_code?: string | null;
+            /** Answer */
+            answer: string;
+            /** Sources */
+            sources: components["schemas"]["AskSourceOut"][];
+            /** Intents */
+            intents: string[];
+            /**
+             * Asked At
+             * Format: date-time
+             */
+            asked_at: string;
+            /** Llm Calls */
+            llm_calls: number;
+            /** Latency Ms */
+            latency_ms?: number | null;
+            /** Employee Id */
+            employee_id: string;
+            /** Employee Name */
+            employee_name: string;
+            /** Failed Checks */
+            failed_checks: string[];
+        };
+        /** AdminQuestionsOut */
+        AdminQuestionsOut: {
+            /** Items */
+            items: components["schemas"]["AdminQuestionOut"][];
+            /** Total */
+            total: number;
+        };
         /** AdminToolCallOut */
         AdminToolCallOut: {
             /** Run Id */
@@ -1485,6 +1602,156 @@ export interface components {
             audit_trail: components["schemas"]["AuditEntryOut"][];
             investigation_case?: components["schemas"]["InvestigationCase"] | null;
             detection: components["schemas"]["PostFixDetectionOut"];
+        };
+        /** AskAnswerOut */
+        AskAnswerOut: {
+            /** Question Id */
+            question_id: number;
+            /** Question */
+            question: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "answer" | "refusal";
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "llm" | "template" | "refusal";
+            /**
+             * Label
+             * @description AI answer, Template answer or Can't answer
+             */
+            label: string;
+            /**
+             * Reason
+             * @description validated, validated_after_retry, validation_failed, llm_error, rate_limited, timeout, no_budget, llm_unavailable, llm_disabled or refused
+             */
+            reason: string;
+            /**
+             * Refusal Code
+             * @description other_person, pay, action, injection, language, unsupported, out_of_range or ask_supervisor
+             */
+            refusal_code?: string | null;
+            /** Answer */
+            answer: string;
+            /** Sources */
+            sources: components["schemas"]["AskSourceOut"][];
+            /** Intents */
+            intents: string[];
+            /**
+             * Asked At
+             * Format: date-time
+             */
+            asked_at: string;
+            /** Llm Calls */
+            llm_calls: number;
+            /** Latency Ms */
+            latency_ms?: number | null;
+        };
+        /** AskHistoryOut */
+        AskHistoryOut: {
+            /** Items */
+            items: components["schemas"]["AskAnswerOut"][];
+            limits: components["schemas"]["AskLimitsOut"];
+        };
+        /** AskIn */
+        AskIn: {
+            /**
+             * Question
+             * @description The worker's question in their own words. The server also applies QA_MAX_QUESTION_CHARS (default 300; longer is 422 question_too_long).
+             * @example How many sick days do I have left?
+             */
+            question: string;
+        };
+        /** AskLimitsOut */
+        AskLimitsOut: {
+            /** Max Chars */
+            max_chars: number;
+            /** Questions Per Hour */
+            questions_per_hour: number;
+            /** Questions Left This Hour */
+            questions_left_this_hour: number;
+            /** Retry After Seconds */
+            retry_after_seconds?: number | null;
+            /** Llm Configured */
+            llm_configured: boolean;
+            /** Llm Calls Left Today */
+            llm_calls_left_today: number;
+        };
+        /** AskResultOut */
+        AskResultOut: {
+            /** Question Id */
+            question_id: number;
+            /** Question */
+            question: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "answer" | "refusal";
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "llm" | "template" | "refusal";
+            /**
+             * Label
+             * @description AI answer, Template answer or Can't answer
+             */
+            label: string;
+            /**
+             * Reason
+             * @description validated, validated_after_retry, validation_failed, llm_error, rate_limited, timeout, no_budget, llm_unavailable, llm_disabled or refused
+             */
+            reason: string;
+            /**
+             * Refusal Code
+             * @description other_person, pay, action, injection, language, unsupported, out_of_range or ask_supervisor
+             */
+            refusal_code?: string | null;
+            /** Answer */
+            answer: string;
+            /** Sources */
+            sources: components["schemas"]["AskSourceOut"][];
+            /** Intents */
+            intents: string[];
+            /**
+             * Asked At
+             * Format: date-time
+             */
+            asked_at: string;
+            /** Llm Calls */
+            llm_calls: number;
+            /** Latency Ms */
+            latency_ms?: number | null;
+            limits: components["schemas"]["AskLimitsOut"];
+        };
+        /** AskSourceOut */
+        AskSourceOut: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "policy" | "case" | "leave_balance" | "schedule" | "punches" | "supervisor";
+            /**
+             * Id
+             * @description Policy ID or case ID
+             */
+            id?: string | null;
+            /** Label */
+            label?: string | null;
+            /**
+             * Text
+             * @description Code-held detail: the policy.md section, or the case summary and where it is now. Never model text.
+             */
+            text?: string | null;
+            /**
+             * In History
+             * @description Cases only: the case is in the worker's My history
+             */
+            in_history?: boolean | null;
         };
         /** AskWorkerIn */
         AskWorkerIn: {
@@ -4766,6 +5033,157 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WorkerHistoryOut"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    worker_ask_api_worker_ask_post: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
+                "X-Actor-Id": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AskIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AskResultOut"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    worker_ask_history_api_worker_ask_history_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header: {
+                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
+                "X-Actor-Id": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AskHistoryOut"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    admin_worker_questions_api_admin_worker_questions_get: {
+        parameters: {
+            query?: {
+                employee_id?: string | null;
+                limit?: number;
+                offset?: number;
+            };
+            header: {
+                /** @description Employee ID of the person acting (no login yet), e.g. E101 for Ravi */
+                "X-Actor-Id": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminQuestionsOut"];
                 };
             };
             /** @description Forbidden */

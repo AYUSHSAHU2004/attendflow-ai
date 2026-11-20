@@ -164,6 +164,24 @@ EDITABLE: tuple[Spec, ...] = (
         "The scheduler writes Priya's briefing once per workflow day.",
     ),
     S(
+        "qa_questions_per_hour",
+        "Q&A questions per worker per hour",
+        "int",
+        "Employee Q&A",
+        "Questions one worker may ask in a rolling hour; more get a polite 'try later'.",
+        1,
+        30,
+    ),
+    S(
+        "qa_max_llm_calls_per_day",
+        "Q&A LLM calls per day",
+        "int",
+        "Employee Q&A",
+        "LLM calls the employee Q&A may make in one day (all workers). 0 = template answers only.",
+        0,
+        100,
+    ),
+    S(
         "overtime_warning_margin_hours",
         "Overtime warning margin",
         "half",
@@ -208,6 +226,13 @@ READ_ONLY: tuple[Spec, ...] = (
         "bool",
         "Daily briefing",
         "Off = template briefing only.",
+    ),
+    S(
+        "qa_enabled",
+        "LLM answers in the employee Q&A",
+        "bool",
+        "Employee Q&A",
+        "Off = template answers only.",
     ),
 )
 READ_ONLY_KEYS = {s.key for s in READ_ONLY}

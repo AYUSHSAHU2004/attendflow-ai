@@ -23,9 +23,13 @@ from attendflow.api.schemas import (
     ActorType,
     AdminCaseOut,
     AdminOverviewOut,
+    AdminQuestionsOut,
     AdminSort,
     ApproveIn,
     ApproveOut,
+    AskHistoryOut,
+    AskIn,
+    AskResultOut,
     AskWorkerIn,
     AuditEntryOut,
     AuditListOut,
@@ -96,6 +100,7 @@ from attendflow.errors import (
 )
 from attendflow.ingest.punches import PunchInput, Via, ingest_punch
 from attendflow.policy.models import PolicyConfig, load_policy_text
+from attendflow.qa import service as qa_service
 from attendflow.scheduler.cycle import set_watermark
 from attendflow.scheduler.runner import Scheduler
 
@@ -599,6 +604,75 @@ def worker_messages(actor_id: ActorId, session: SessionDep, clock: ClockDep):
 def worker_history(actor_id: ActorId, session: SessionDep):
     with session.begin():
         return worker_history_module.worker_history(session, actor_id)
+
+
+# ---------------------------------------------------------------- employee Q&A (Phase 20)
+
+
+@router.post(
+    "/worker/ask",
+    response_model=AskResultOut,
+    tags=["worker"],
+    summary="Ask a short question about your own attendance or the policy",
+    description="Worker-only (others get 403 worker_only). The employee is the caller; "
+    "the question can never widen that. Code refuses questions about other people, pay, "
+    "changes or other topics with no LLM call. Otherwise code picks the facts (own leave "
+    "balance, schedule, punches, cases, policy text) and at most three LLM calls phrase "
+    "the answer (intent pick only when needed, answer, one correction after a failed "
+    "check); every number, date, ID and name is checked, else the template answer. 422 "
+    "question_too_long, 429 qa_rate_limited (QA_QUESTIONS_PER_HOUR), 409 qa_busy. Changes "
+    "no timecard, schedule or leave.",
+    responses=_errors(403, 409, 422, 429),
+)
+def worker_ask(
+    body: AskIn,
+    actor_id: ActorId,
+    request: Request,
+    clock: ClockDep,
+    policy: PolicyDep,
+    settings: Annotated[Settings, Depends(get_settings_dep)],
+):
+    return qa_service.ask(
+        request.app.state.session_factory, actor_id, body.question, clock, policy, settings
+    )
+
+
+@router.get(
+    "/worker/ask/history",
+    response_model=AskHistoryOut,
+    tags=["worker"],
+    summary="My last questions and the answers I was shown",
+    description="Worker-only and scoped to the caller. Never calls the LLM and writes nothing.",
+    responses=_errors(403, 422),
+)
+def worker_ask_history(
+    actor_id: ActorId,
+    session: SessionDep,
+    settings: Annotated[Settings, Depends(get_settings_dep)],
+    limit: Annotated[int, Query(ge=1, le=50)] = 20,
+):
+    with session.begin():
+        return qa_service.history(session, actor_id, settings, limit=limit)
+
+
+@router.get(
+    "/admin/worker-questions",
+    response_model=AdminQuestionsOut,
+    tags=["admin"],
+    summary="Questions workers asked the employee Q&A (payroll admin only, read-only)",
+    responses=_errors(403, 422),
+)
+def admin_worker_questions(
+    actor_id: ActorId,
+    session: SessionDep,
+    employee_id: Annotated[str | None, Query(pattern=EMPLOYEE_ID)] = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+):
+    with session.begin():
+        return qa_service.admin_list(
+            session, actor_id, employee_id=employee_id, limit=limit, offset=offset
+        )
 
 
 # ---------------------------------------------------------------- briefing (Phase 17)
